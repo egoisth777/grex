@@ -7,7 +7,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "warn"
-ignore = []
+ignore = [
+    # Upstream gitoxide advisories, no fix in gix 0.70.
+    # Revisit at M8 release hardening.
+    "RUSTSEC-2025-0021",  # SHA-1 collision attacks not detected (gitoxide)
+    "RUSTSEC-2025-0140",  # TimeBuf::as_str non-utf8 String (gix-date)
+]
 
 [licenses]
 version = 2
