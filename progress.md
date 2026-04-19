@@ -1,9 +1,10 @@
 # progress — grex
 
 ## Where we are
-Pack-model design v1 is locked across philosophy, action vocab, pack-types, plugin APIs, concurrency model, and MCP surface. Ready to scaffold the Rust crate and begin M1.
+M1 scaffold underway; pending commit.
 
 ## Last endpoint (2026-04-19)
+- 2026-04-19 M1 scaffold in progress: cargo workspace + clap stubs + CI + LICENSE
 - Pack taxonomy locked: `meta`, `declarative`, `scripted` (3 built-in pack-types).
 - Tier 1 action vocabulary locked at 7 primitives: `symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`.
 - Action vocab grounded in real-world E:\repos scan (3 PowerShell scripts, 945 LOC) — frequencies drove the shortlist.
@@ -42,4 +43,4 @@ Pack-model design v1 is locked across philosophy, action vocab, pack-types, plug
 5. `.omne/cfg/README.md`
 
 ## Next action
-Start M1: `cargo init` workspace, clap skeleton with all 12 verb stubs, CI matrix (Win/Linux/Mac × stable+beta), README placeholder.
+Review M1 scaffold, run cargo check, commit, then start M2 (manifest + lockfile).
