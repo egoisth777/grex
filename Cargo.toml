@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/grex",
+    "crates/grex-core",
+    "crates/grex-plugins-builtin",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/egoisth777/grex"
+homepage = "https://github.com/egoisth777/grex"
+authors = ["egoisth777"]
+readme = "README.md"
+
+[workspace.dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# async runtime
+tokio = { version = "1", features = ["full"] }
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# git (pure Rust)
+gix = { version = "0.70", default-features = false, features = ["blocking-network-client", "worktree-mutation"] }
+
+# fs locking
+fd-lock = "4"
+
+# errors
+anyhow = "1"
+thiserror = "1"
+
+# tracing/logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# output formatting
+comfy-table = "7"
+owo-colors = "4"
+
+# internal workspace crates
+grex-core = { path = "crates/grex-core", version = "0.0.1" }
+grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "0.0.1" }
+
+# dev-dependencies (shared via workspace)
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+proptest = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug = true

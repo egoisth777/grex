@@ -1,0 +1,34 @@
+[package]
+name = "grex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+description = "Cross-platform dev-environment orchestrator. Pack-based, agent-native, Rust-fast."
+
+[[bin]]
+name = "grex"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+comfy-table = { workspace = true }
+owo-colors = { workspace = true }
+grex-core = { workspace = true }
+grex-plugins-builtin = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile = { workspace = true }
+proptest = { workspace = true }

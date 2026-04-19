@@ -1,1 +1,15 @@
 .omne
+
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
