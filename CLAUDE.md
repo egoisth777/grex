@@ -20,4 +20,4 @@ On every new session, read in order:
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: `feat-grex` (branch `feat/omne-rm-design`).
+Active feature: `feat-grex` (branch `feat/m1-scaffold`).
