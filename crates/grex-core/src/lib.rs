@@ -1,11 +1,13 @@
 //! grex-core — manifest, lockfile, scheduler, pack model, plugin traits.
 //!
-//! M1 scaffold: empty placeholders. Types land in M2–M6.
+//! M2 lands: manifest event log + lockfile + atomic file primitives.
 
 #![forbid(unsafe_code)]
 
-pub mod manifest {}
-pub mod lockfile {}
+pub mod fs;
+pub mod lockfile;
+pub mod manifest;
+
 pub mod pack {}
 pub mod scheduler {}
 pub mod plugin {}
