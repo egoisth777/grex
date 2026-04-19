@@ -67,3 +67,8 @@ strip = "symbols"
 [profile.dev]
 opt-level = 0
 debug = true
+
+# Workspace-wide clippy gates. Thresholds in clippy.toml.
+[workspace.lints.clippy]
+too_many_lines = "deny"
+cognitive_complexity = "deny"
