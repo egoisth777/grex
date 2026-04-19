@@ -112,7 +112,7 @@ fn valid_json_invalid_event_schema_tail_is_discarded() {
 //
 // Current impl treats only the *single* last line as torn. Earlier garbage
 // lines become ManifestError::Corruption. This test documents that behavior:
-// if any middle line is unparseable, we get a typed error — not a silent
+// if any middle line is unparsable, we get a typed error — not a silent
 // success.
 // ---------------------------------------------------------------------------
 #[test]
