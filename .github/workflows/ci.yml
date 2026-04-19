@@ -150,11 +150,8 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Mirror ignores from deny.toml (cargo-audit uses its own list).
-          # TODO(m5): drop once gitoxide publishes fixes for these advisories.
-          ignore: |
-            RUSTSEC-2025-0021
-            RUSTSEC-2025-0140
+          # Ignores are configured in .cargo/audit.toml (mirrors deny.toml).
+          # TODO(m5): drop once gitoxide publishes fixes for those advisories.
 
   # Gates 8 & 9: CBO per module <= 10 and cyclomatic per fn <= 15.
   # Implemented with rust-code-analysis-cli. Gate 10 (cognitive complexity)
