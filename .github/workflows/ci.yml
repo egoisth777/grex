@@ -83,7 +83,7 @@ jobs:
           pct=$(jq -r '.data[0].totals.lines.percent' cov.json)
           echo "Line coverage: ${pct}%"
           awk -v p="$pct" 'BEGIN { exit (p+0 >= 60) ? 0 : 1 }'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lcov
           path: lcov.info
