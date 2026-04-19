@@ -25,34 +25,32 @@ fn heal_torn_trailing_line(path: &Path) -> Result<(), ManifestError> {
         Err(e) => return Err(ManifestError::Io(e)),
     };
     let len = file.metadata()?.len();
-    if len == 0 {
+    if len == 0 || last_byte_is_newline(&mut file, len)? {
         return Ok(());
     }
+    truncate_to_last_newline(&mut file, len)
+}
 
-    // Peek last byte. If it's \n, file is clean.
+/// Returns `true` if the byte at `len - 1` is `\n`.
+fn last_byte_is_newline(file: &mut std::fs::File, len: u64) -> Result<bool, ManifestError> {
     let mut buf = [0u8; 1];
     file.seek(SeekFrom::Start(len - 1))?;
     file.read_exact(&mut buf)?;
-    if buf[0] == b'\n' {
-        return Ok(());
-    }
+    Ok(buf[0] == b'\n')
+}
 
-    // Scan backwards for the last newline. Truncate to just past it.
+/// Scan backwards from `len - 1` for the last `\n` and truncate to keep
+/// everything up to and including it. If no newline exists, truncate the
+/// whole file. Caller must have opened `file` for write.
+fn truncate_to_last_newline(file: &mut std::fs::File, len: u64) -> Result<(), ManifestError> {
+    let mut buf = [0u8; 1];
     // pos is the index of the byte we're about to inspect.
     let mut pos = len - 1;
-    loop {
-        if pos == 0 {
-            // No newline anywhere → whole file is a torn partial line.
-            tracing::warn!("healing manifest: truncating entire torn tail (no prior newline)");
-            file.set_len(0)?;
-            file.sync_data()?;
-            return Ok(());
-        }
+    while pos > 0 {
         pos -= 1;
         file.seek(SeekFrom::Start(pos))?;
         file.read_exact(&mut buf)?;
         if buf[0] == b'\n' {
-            // Keep bytes [0, pos] (inclusive of this newline); drop the rest.
             let keep = pos + 1;
             tracing::warn!(
                 truncated_from = len,
@@ -64,6 +62,11 @@ fn heal_torn_trailing_line(path: &Path) -> Result<(), ManifestError> {
             return Ok(());
         }
     }
+    // No newline anywhere → whole file is a torn partial line.
+    tracing::warn!("healing manifest: truncating entire torn tail (no prior newline)");
+    file.set_len(0)?;
+    file.sync_data()?;
+    Ok(())
 }
 
 /// Append one event to the manifest log, creating the file if missing.
