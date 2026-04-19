@@ -2,6 +2,7 @@
 
 use super::error::ManifestError;
 use super::event::Event;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -24,34 +25,32 @@ fn heal_torn_trailing_line(path: &Path) -> Result<(), ManifestError> {
         Err(e) => return Err(ManifestError::Io(e)),
     };
     let len = file.metadata()?.len();
-    if len == 0 {
+    if len == 0 || last_byte_is_newline(&mut file, len)? {
         return Ok(());
     }
+    truncate_to_last_newline(&mut file, len)
+}
 
-    // Peek last byte. If it's \n, file is clean.
+/// Returns `true` if the byte at `len - 1` is `\n`.
+fn last_byte_is_newline(file: &mut std::fs::File, len: u64) -> Result<bool, ManifestError> {
     let mut buf = [0u8; 1];
     file.seek(SeekFrom::Start(len - 1))?;
     file.read_exact(&mut buf)?;
-    if buf[0] == b'\n' {
-        return Ok(());
-    }
+    Ok(buf[0] == b'\n')
+}
 
-    // Scan backwards for the last newline. Truncate to just past it.
+/// Scan backwards from `len - 1` for the last `\n` and truncate to keep
+/// everything up to and including it. If no newline exists, truncate the
+/// whole file. Caller must have opened `file` for write.
+fn truncate_to_last_newline(file: &mut std::fs::File, len: u64) -> Result<(), ManifestError> {
+    let mut buf = [0u8; 1];
     // pos is the index of the byte we're about to inspect.
     let mut pos = len - 1;
-    loop {
-        if pos == 0 {
-            // No newline anywhere → whole file is a torn partial line.
-            tracing::warn!("healing manifest: truncating entire torn tail (no prior newline)");
-            file.set_len(0)?;
-            file.sync_data()?;
-            return Ok(());
-        }
+    while pos > 0 {
         pos -= 1;
         file.seek(SeekFrom::Start(pos))?;
         file.read_exact(&mut buf)?;
         if buf[0] == b'\n' {
-            // Keep bytes [0, pos] (inclusive of this newline); drop the rest.
             let keep = pos + 1;
             tracing::warn!(
                 truncated_from = len,
@@ -63,6 +62,11 @@ fn heal_torn_trailing_line(path: &Path) -> Result<(), ManifestError> {
             return Ok(());
         }
     }
+    // No newline anywhere → whole file is a torn partial line.
+    tracing::warn!("healing manifest: truncating entire torn tail (no prior newline)");
+    file.set_len(0)?;
+    file.sync_data()?;
+    Ok(())
 }
 
 /// Append one event to the manifest log, creating the file if missing.
@@ -106,88 +110,147 @@ pub fn append_event(path: &Path, event: &Event) -> Result<(), ManifestError> {
 /// We collect all raw lines up front (byte-oriented) so `is_last` can be
 /// decided by line index rather than by the presence of a trailing `\n`.
 pub fn read_all(path: &Path) -> Result<Vec<Event>, ManifestError> {
+    let Some(raw_lines) = slurp_raw_lines(path)? else {
+        return Ok(Vec::new());
+    };
+    let total = raw_lines.len();
+    let mut events = Vec::new();
+    for (idx, bytes) in raw_lines.into_iter().enumerate() {
+        let line_num = idx + 1;
+        let is_last = line_num == total;
+        match decode_and_parse_line(&bytes, line_num, is_last)? {
+            LineOutcome::Event(ev) => events.push(ev),
+            LineOutcome::Skip => continue,
+            LineOutcome::StopTorn => break,
+        }
+    }
+    emit_semantic_warnings(&events);
+    Ok(events)
+}
+
+/// Read every byte line from the file. Returns `None` if the file is missing.
+fn slurp_raw_lines(path: &Path) -> Result<Option<Vec<Vec<u8>>>, ManifestError> {
     let file = match OpenOptions::new().read(true).open(path) {
         Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(ManifestError::Io(e)),
     };
     let mut reader = BufReader::new(file);
-    let mut raw_lines: Vec<Vec<u8>> = Vec::new();
+    let mut lines: Vec<Vec<u8>> = Vec::new();
     loop {
         let mut buf: Vec<u8> = Vec::new();
         let n = reader.read_until(b'\n', &mut buf)?;
         if n == 0 {
             break;
         }
-        raw_lines.push(buf);
+        lines.push(buf);
     }
-    let total = raw_lines.len();
-    let mut events = Vec::new();
+    Ok(Some(lines))
+}
 
-    for (idx, bytes) in raw_lines.into_iter().enumerate() {
+enum LineOutcome {
+    Event(Event),
+    Skip,
+    StopTorn,
+}
+
+/// Strip line terminator, decide if the line is skippable, decode UTF-8, parse JSON.
+fn decode_and_parse_line(
+    bytes: &[u8],
+    line_num: usize,
+    is_last: bool,
+) -> Result<LineOutcome, ManifestError> {
+    // Strip trailing \n and optional \r.
+    let mut end = bytes.len();
+    if bytes.last() == Some(&b'\n') {
+        end -= 1;
+        if end > 0 && bytes[end - 1] == b'\r' {
+            end -= 1;
+        }
+    }
+    let content = &bytes[..end];
+    if content.iter().all(|b| b.is_ascii_whitespace()) {
+        return Ok(LineOutcome::Skip);
+    }
+    let s = match std::str::from_utf8(content) {
+        Ok(s) => s,
+        Err(_) if is_last => {
+            tracing::warn!(
+                line = line_num,
+                "discarding torn trailing line in manifest (invalid UTF-8)"
+            );
+            return Ok(LineOutcome::StopTorn);
+        }
+        Err(_) => {
+            tracing::error!(line = line_num, "manifest corruption detected (invalid UTF-8)");
+            return Err(ManifestError::Corruption {
+                line: line_num,
+                source: serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid UTF-8 in manifest line",
+                )),
+            });
+        }
+    };
+    match serde_json::from_str::<Event>(s) {
+        Ok(ev) => Ok(LineOutcome::Event(ev)),
+        Err(e) if is_last => {
+            tracing::warn!(line = line_num, error = %e, "discarding torn trailing line in manifest");
+            Ok(LineOutcome::StopTorn)
+        }
+        Err(e) => {
+            tracing::error!(line = line_num, error = %e, "manifest corruption detected");
+            Err(ManifestError::Corruption { line: line_num, source: e })
+        }
+    }
+}
+
+/// Scan parsed events for semantic anomalies and log `tracing::warn!` for each.
+///
+/// Anomalies detected:
+///   * **Duplicate Add**: two `Add` events for the same id. The fold layer
+///     treats the second `Add` as an override; we warn so callers notice.
+///   * **Orphan op**: `Update`/`Sync`/`Rm` referring to an id that never had
+///     a prior `Add` (or was already `Rm`'d). The fold layer silently ignores
+///     these; the warning surfaces the lost intent.
+///
+/// The folded state remains valid regardless — this is diagnostic only. A
+/// future `read_all_strict` could upgrade these to hard errors.
+fn emit_semantic_warnings(events: &[Event]) {
+    let mut live: HashSet<&str> = HashSet::new();
+    for (idx, ev) in events.iter().enumerate() {
         let line_num = idx + 1;
-        let is_last = line_num == total;
-
-        // Strip trailing \n and optional \r.
-        let mut content_end = bytes.len();
-        if bytes.last() == Some(&b'\n') {
-            content_end -= 1;
-            if content_end > 0 && bytes[content_end - 1] == b'\r' {
-                content_end -= 1;
-            }
-        }
-        let content = &bytes[..content_end];
-
-        // Empty / whitespace-only lines are skipped silently. ASCII
-        // whitespace is enough; we don't attempt UTF-8 decoding for this
-        // check so partial-multibyte tails still fall through to the parse
-        // step below.
-        if content.iter().all(|b| b.is_ascii_whitespace()) {
-            continue;
-        }
-
-        let s = match std::str::from_utf8(content) {
-            Ok(s) => s,
-            Err(_) if is_last => {
-                tracing::warn!(
-                    line = line_num,
-                    "discarding torn trailing line in manifest (invalid UTF-8)"
-                );
-                break;
-            }
-            Err(_) => {
-                tracing::error!(line = line_num, "manifest corruption detected (invalid UTF-8)");
-                return Err(ManifestError::Corruption {
-                    line: line_num,
-                    source: serde_json::Error::io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid UTF-8 in manifest line",
-                    )),
-                });
-            }
-        };
-
-        match serde_json::from_str::<Event>(s) {
-            Ok(ev) => events.push(ev),
-            Err(e) => {
-                if is_last {
+        match ev {
+            Event::Add { id, .. } => {
+                if !live.insert(id.as_str()) {
                     tracing::warn!(
                         line = line_num,
-                        error = %e,
-                        "discarding torn trailing line in manifest"
+                        id = %id,
+                        "duplicate Add for pack id; second Add overrides first"
                     );
-                    break;
                 }
-                tracing::error!(
-                    line = line_num,
-                    error = %e,
-                    "manifest corruption detected"
-                );
-                return Err(ManifestError::Corruption { line: line_num, source: e });
+            }
+            Event::Update { id, .. } | Event::Sync { id, .. } => {
+                if !live.contains(id.as_str()) {
+                    tracing::warn!(
+                        line = line_num,
+                        id = %id,
+                        op = ?std::mem::discriminant(ev),
+                        "manifest event references unknown pack id (no prior Add)"
+                    );
+                }
+            }
+            Event::Rm { id, .. } => {
+                if !live.remove(id.as_str()) {
+                    tracing::warn!(
+                        line = line_num,
+                        id = %id,
+                        "Rm for unknown pack id (no prior Add)"
+                    );
+                }
             }
         }
     }
-    Ok(events)
 }
 
 #[cfg(test)]

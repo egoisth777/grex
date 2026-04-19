@@ -32,3 +32,22 @@ assert_cmd = { workspace = true }
 predicates = { workspace = true }
 tempfile = { workspace = true }
 proptest = { workspace = true }
+
+[lints]
+workspace = true
+
+# M2 placeholder deps retained for M3+ wiring (CLI output, async runtime,
+# serde boundaries, in-process core integration). Remove from this ignore
+# list as each is actually used. TODO(m3): delete this block.
+[package.metadata.cargo-machete]
+ignored = [
+    "comfy-table",
+    "grex-core",
+    "grex-plugins-builtin",
+    "owo-colors",
+    "serde",
+    "serde_json",
+    "tokio",
+    "tracing",
+    "tracing-subscriber",
+]

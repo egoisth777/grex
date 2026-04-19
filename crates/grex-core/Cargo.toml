@@ -23,3 +23,13 @@ tracing = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
+
+# M2 placeholder deps retained for M3+ work (error adapters, git ops, YAML
+# manifest parsing, async scheduler). Remove from this list as each is
+# actually used. TODO(m3): delete this block.
+[package.metadata.cargo-machete]
+ignored = ["anyhow", "gix", "serde_yaml", "tokio"]
