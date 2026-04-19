@@ -86,10 +86,13 @@ fn atomic_write_interruption_keeps_original() {
     drop(f);
 
     assert_eq!(std::fs::read(&p).unwrap(), b"v1");
-    // Next successful atomic_write supersedes + cleans tmp.
+    // Next successful atomic_write supersedes the target. Under the
+    // uniquified-temp design (Fix 3) a foreign `.tmp` leftover is left
+    // strictly alone — each writer owns its own pid/nanos-suffixed temp,
+    // so touching another writer's file would be incorrect.
     grex_core::fs::atomic_write(&p, b"v2").unwrap();
     assert_eq!(std::fs::read(&p).unwrap(), b"v2");
-    assert!(!tmp.exists());
+    assert!(tmp.exists(), "foreign legacy tmp is left for the caller to GC");
 }
 
 // --- HIGH #1: truncation byte-boundary sweep ----------------------------

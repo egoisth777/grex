@@ -67,7 +67,7 @@ fn four_threads_append_under_lock() {
             let m = Arc::clone(&manifest);
             let lp = lock.clone();
             thread::spawn(move || {
-                let mut l = ManifestLock::open(&lp).unwrap();
+                let mut l = ManifestLock::open(&m, &lp).unwrap();
                 for i in 0..25 {
                     let ev = mk_event(&format!("t{tid}-p{i}"));
                     l.write(|| append_event(&m, &ev)).unwrap().unwrap();
@@ -99,7 +99,7 @@ fn writer_panic_midwrite_releases_lock() {
 
     // seed one good event
     {
-        let mut l = ManifestLock::open(&lock).unwrap();
+        let mut l = ManifestLock::open(&manifest, &lock).unwrap();
         l.write(|| append_event(&manifest, &mk_event("pre"))).unwrap().unwrap();
     }
 
@@ -107,7 +107,7 @@ fn writer_panic_midwrite_releases_lock() {
     let mp = manifest.clone();
     let lp = lock.clone();
     let a = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp).unwrap();
+        let mut l = ManifestLock::open(&mp, &lp).unwrap();
         let _ = panic::catch_unwind(AssertUnwindSafe(|| {
             l.write(|| {
                 // Hand-write a partial JSON fragment (no trailing newline) and
@@ -127,7 +127,7 @@ fn writer_panic_midwrite_releases_lock() {
         let mp = manifest.clone();
         let lp = lock.clone();
         move || {
-            let mut l = ManifestLock::open(&lp).unwrap();
+            let mut l = ManifestLock::open(&mp, &lp).unwrap();
             l.write(|| append_event(&mp, &mk_event("post"))).unwrap().unwrap();
         }
     });
@@ -143,7 +143,7 @@ fn writer_panic_midwrite_releases_lock() {
     let ids: Vec<_> = events.iter().map(|e| e.id().as_str().to_owned()).collect();
     assert!(ids.contains(&"pre".to_owned()), "prior event must survive panic");
     // And we must be able to take the lock again after the panic:
-    let mut l = ManifestLock::open(&lock).unwrap();
+    let mut l = ManifestLock::open(&manifest, &lock).unwrap();
     l.write(|| ()).unwrap();
 }
 
@@ -203,7 +203,7 @@ fn run_child_append(spec: &str) -> ! {
     let manifest = PathBuf::from(it.next().expect("manifest"));
     let lock = PathBuf::from(it.next().expect("lock"));
 
-    let mut l = ManifestLock::open(&lock).expect("child: open lock");
+    let mut l = ManifestLock::open(&manifest, &lock).expect("child: open lock");
     for i in 0..CHILD_EVENTS {
         let ev = mk_event(&format!("proc{tag}-{i}"));
         l.write(|| append_event(&manifest, &ev))
@@ -225,7 +225,7 @@ fn partial_line_append_then_concurrent_preserves_prior() {
 
     // prior complete event
     {
-        let mut l = ManifestLock::open(&lock).unwrap();
+        let mut l = ManifestLock::open(&manifest, &lock).unwrap();
         l.write(|| append_event(&manifest, &mk_event("prior"))).unwrap().unwrap();
     }
     // inject partial trailing line (no newline)
@@ -247,7 +247,7 @@ fn partial_line_append_then_concurrent_preserves_prior() {
             let lp = lock.clone();
             let b = Arc::clone(&barrier);
             thread::spawn(move || {
-                let mut l = ManifestLock::open(&lp).unwrap();
+                let mut l = ManifestLock::open(&m, &lp).unwrap();
                 b.wait();
                 l.write(|| append_event(&m, &mk_event(&format!("post-{tid}")))).unwrap().unwrap();
             })
@@ -286,7 +286,7 @@ fn high_thread_count_stress() {
             let m = Arc::clone(&manifest);
             let lp = lock.clone();
             thread::spawn(move || {
-                let mut l = ManifestLock::open(&lp).unwrap();
+                let mut l = ManifestLock::open(&m, &lp).unwrap();
                 for i in 0..PER_THREAD {
                     let ev = mk_event(&format!("stress-{tid}-{i}"));
                     l.write(|| append_event(&m, &ev)).unwrap().unwrap();
@@ -329,7 +329,7 @@ fn reader_blocks_during_active_write() {
     let lp = lock.clone();
     let ws = Arc::clone(&writer_started);
     let a = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp).unwrap();
+        let mut l = ManifestLock::open(&mp, &lp).unwrap();
         let _held = writer_hold_taken.lock().unwrap();
         l.write(|| {
             ws.wait();
@@ -348,7 +348,7 @@ fn reader_blocks_during_active_write() {
     let lp2 = lock.clone();
     let mp2 = manifest.clone();
     let b = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp2).unwrap();
+        let mut l = ManifestLock::open(&mp2, &lp2).unwrap();
         l.read(|| read_all(&mp2).unwrap()).unwrap()
     });
 
@@ -379,7 +379,7 @@ fn file_deleted_midlock_defined_behavior_unix() {
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
 
-    let mut l = ManifestLock::open(&lock).unwrap();
+    let mut l = ManifestLock::open(&manifest, &lock).unwrap();
     l.write(|| append_event(&manifest, &mk_event("pre"))).unwrap().unwrap();
 
     // Remove the manifest; the lock file itself stays.
@@ -406,7 +406,7 @@ fn file_deleted_midlock_defined_behavior_windows() {
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
 
-    let mut l = ManifestLock::open(&lock).unwrap();
+    let mut l = ManifestLock::open(&manifest, &lock).unwrap();
     l.write(|| append_event(&manifest, &mk_event("pre"))).unwrap().unwrap();
 
     // Best-effort delete; Windows may or may not allow it depending on
@@ -427,19 +427,18 @@ fn file_deleted_midlock_defined_behavior_windows() {
 #[cfg(windows)]
 #[test]
 fn windows_advisory_vs_mandatory_lock() {
-    // LockFileEx on Windows is mandatory at the OS level for byte-range
-    // locks on the same file handle. However, our ManifestLock locks a
-    // *separate* lock-file fd, not the manifest itself. That means a
-    // misbehaving actor who opens the manifest directly — bypassing
-    // ManifestLock — can write to it without being blocked.
+    // Windows `LockFileEx` is mandatory only on the locked handle. Our
+    // `ManifestLock` locks a dedicated sidecar (not the manifest) to keep
+    // the cooperating `append_event(path)` API functional. A non-grex
+    // writer that opens the manifest directly bypasses the sidecar lock.
     //
-    // This test pins that gap: we deliberately write to the manifest
-    // while a ManifestLock write-lock is held elsewhere and observe the
-    // write succeeds. If this test ever fails, the src agent should
-    // update the docs: the lock became effectively mandatory.
+    // This test pins that known gap (see rustdoc on `ManifestLock`): if it
+    // ever starts failing, the lock became effectively mandatory and the
+    // docs should be updated.
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
 
+    let mp = manifest.clone();
     let lp = lock.clone();
     let started = Arc::new(Barrier::new(2));
     let finish = Arc::new(Barrier::new(2));
@@ -447,7 +446,7 @@ fn windows_advisory_vs_mandatory_lock() {
     let f1 = Arc::clone(&finish);
 
     let holder = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp).unwrap();
+        let mut l = ManifestLock::open(&mp, &lp).unwrap();
         l.write(|| {
             s1.wait();
             f1.wait();
@@ -465,7 +464,7 @@ fn windows_advisory_vs_mandatory_lock() {
 
     assert!(bypass_ok, "advisory-only gap expected: bypass write should currently succeed");
     // The lock itself still works for compliant users:
-    let mut l = ManifestLock::open(&lock).unwrap();
+    let mut l = ManifestLock::open(&manifest, &lock).unwrap();
     l.write(|| ()).unwrap();
 }
 
@@ -476,12 +475,13 @@ fn windows_advisory_vs_mandatory_lock() {
 #[test]
 fn lock_drop_on_unwind_releases() {
     let dir = tempdir().unwrap();
-    let Paths { manifest: _, lock } = paths(dir.path());
+    let Paths { manifest, lock } = paths(dir.path());
 
     // Thread A panics inside the closure passed to ManifestLock::write.
+    let mp = manifest.clone();
     let lp = lock.clone();
     let a = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp).unwrap();
+        let mut l = ManifestLock::open(&mp, &lp).unwrap();
         let _ = panic::catch_unwind(AssertUnwindSafe(|| {
             l.write(|| panic!("inside-write-closure")).unwrap();
         }));
@@ -489,11 +489,12 @@ fn lock_drop_on_unwind_releases() {
     a.join().unwrap();
 
     // Thread B must be able to acquire the lock immediately afterwards.
+    let mp2 = manifest.clone();
     let lp2 = lock.clone();
     let acquired = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let acq2 = Arc::clone(&acquired);
     let b = thread::spawn(move || {
-        let mut l = ManifestLock::open(&lp2).unwrap();
+        let mut l = ManifestLock::open(&mp2, &lp2).unwrap();
         l.write(|| acq2.store(true, std::sync::atomic::Ordering::SeqCst)).unwrap();
     });
     b.join().unwrap();
@@ -512,7 +513,7 @@ fn timestamp_collision_not_corrupting() {
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
 
-    let mut l = ManifestLock::open(&lock).unwrap();
+    let mut l = ManifestLock::open(&manifest, &lock).unwrap();
     // Append four events with the SAME ts but distinct ids, in a known
     // order.
     let tags = ["a", "b", "c", "d"];

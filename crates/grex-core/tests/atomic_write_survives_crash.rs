@@ -34,13 +34,17 @@ fn crash_before_rename_preserves_original() {
 
     // Original untouched.
     assert_eq!(fs::read(&p).unwrap(), b"original contents");
-    // Temp is present — a subsequent atomic_write must clean it up.
+    // Temp is present — documents the prior-crash scenario.
     assert!(tmp.exists());
 
-    // Now run a successful atomic write.
+    // Now run a successful atomic write. Under the uniquified-temp design
+    // (Fix 3), atomic_write leaves foreign temps strictly alone: each
+    // writer owns its own `.tmp.<pid>.<nanos>.<ctr>` suffix, so touching
+    // a legacy `.tmp` leftover would risk stomping on another writer.
+    // Callers are responsible for any cleanup policy.
     grex_core::fs::atomic_write(&p, b"final").unwrap();
     assert_eq!(fs::read(&p).unwrap(), b"final");
-    assert!(!tmp.exists(), "stale temp must be cleaned");
+    assert!(tmp.exists(), "foreign temp left untouched by new uniquified-temp design");
 }
 
 #[test]
@@ -177,9 +181,8 @@ fn target_is_directory_returns_err() {
 // HIGH-4: symlink target behaviour (Unix only)
 // ---------------------------------------------------------------------------
 //
-// Documented behaviour: `fs::rename` on a symlink path REPLACES the symlink
-// with a regular file — the underlying pointee is NOT rewritten. This test
-// pins that behaviour so any future change is visible.
+// Current behaviour (post Fix 2): on Unix, `atomic_write` CANONICALIZES the
+// symlink and writes to the pointee. The link itself is preserved.
 #[cfg(unix)]
 #[test]
 fn symlink_target_not_replaced_as_regular_file() {
@@ -193,16 +196,20 @@ fn symlink_target_not_replaced_as_regular_file() {
 
     grex_core::fs::atomic_write(&link, b"VIA_LINK").unwrap();
 
-    // After rename, `link` is now a regular file with new content.
+    // `link` must still be a symlink after the write.
     let link_meta = fs::symlink_metadata(&link).unwrap();
-    assert!(!link_meta.file_type().is_symlink(), "rename replaces the symlink itself");
-    assert_eq!(fs::read(&link).unwrap(), b"VIA_LINK");
-    // And the original pointee is untouched.
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "atomic_write must follow the symlink, not replace it"
+    );
+    // The pointee now holds the new content.
     assert_eq!(
         fs::read(&real).unwrap(),
-        b"POINTEE",
-        "atomic_write must not follow symlinks into the pointee"
+        b"VIA_LINK",
+        "atomic_write must write through the symlink into the pointee"
     );
+    // Reading via the link sees the same updated content.
+    assert_eq!(fs::read(&link).unwrap(), b"VIA_LINK");
 }
 
 // ---------------------------------------------------------------------------
@@ -226,11 +233,9 @@ fn concurrent_writers_produce_one_winner() {
     let bar1 = Arc::clone(&barrier);
     let bar2 = Arc::clone(&barrier);
 
-    // NOTE: atomic_write uses a single `<path>.tmp` sibling. Two concurrent
-    // writers CAN collide on that temp and one may fail with ENOENT/EACCES.
-    // That's acceptable — the contract is "the final file matches exactly
-    // one writer's bytes, never a mix". Both Ok is also fine (last rename
-    // wins atomically).
+    // Post Fix 3: each writer uses a uniquified temp suffix
+    // (`<path>.tmp.<pid>.<nanos>.<ctr>`), so concurrent writers cannot
+    // collide on the temp. BOTH should succeed; the last rename wins.
     let h1 = thread::spawn(move || {
         bar1.wait();
         grex_core::fs::atomic_write(&p1, &a)
@@ -242,16 +247,26 @@ fn concurrent_writers_produce_one_winner() {
     let r1 = h1.join().unwrap();
     let r2 = h2.join().unwrap();
 
-    // At least one writer must have succeeded.
-    assert!(r1.is_ok() || r2.is_ok(), "both concurrent writes failed: {:?} / {:?}", r1, r2);
+    // With uniquified temp names, both writers must succeed independently.
+    assert!(r1.is_ok(), "writer 1 failed: {:?}", r1);
+    assert!(r2.is_ok(), "writer 2 failed: {:?}", r2);
 
     let final_bytes = fs::read(&p).unwrap();
     assert!(
         final_bytes == payload_a || final_bytes == payload_b,
         "final content must match exactly one writer's payload (no tearing)"
     );
-    // No stale temp left behind by either writer.
-    assert!(!tmp_sibling(&p).exists(), "stale temp left behind");
+    // No stale temp left behind at the legacy `<path>.tmp` name — and since
+    // each writer's own uniquified temp is renamed into place, no orphaned
+    // temps should linger in the directory.
+    assert!(!tmp_sibling(&p).exists(), "no legacy .tmp left behind");
+    let stray: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "race.txt")
+        .collect();
+    assert!(stray.is_empty(), "unexpected leftover temp files: {stray:?}");
 }
 
 // ---------------------------------------------------------------------------

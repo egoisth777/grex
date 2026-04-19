@@ -43,7 +43,7 @@ pub enum Event {
     /// Update a single field on an existing pack.
     ///
     /// `field` must be one of `"url"`, `"ref"`, `"path"`. Unknown field
-    /// names are ignored by [`crate::manifest::fold`] to keep forward
+    /// names are ignored by [`crate::manifest::fold::fold`] to keep forward
     /// compatibility.
     Update {
         /// Event timestamp.
