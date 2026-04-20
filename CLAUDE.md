@@ -20,4 +20,4 @@ On every new session, read in order:
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: `feat-grex` M3 Stage A (branch `feat/m3-pack-sync`).
+Active feature: `feat-grex` M3 Stage B (branch `feat/m3-pack-sync`, PR #6 for Stage A pending merge).
