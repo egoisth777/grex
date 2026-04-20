@@ -15,7 +15,7 @@
 //! `gix_worktree_state::checkout`. That sub-crate is already transitively in
 //! the tree via `gix`, so it adds no net download.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
 use gix::progress::Discard;
@@ -25,6 +25,7 @@ use gix::remote::Direction;
 
 use super::error::GitError;
 use super::{ClonedRepo, GitBackend};
+use crate::fs::ScopedLock;
 
 /// Pure-Rust [`GitBackend`] driven by the `gix` crate.
 ///
@@ -53,43 +54,43 @@ impl GitBackend for GixBackend {
     }
 
     fn clone(&self, url: &str, dest: &Path, r#ref: Option<&str>) -> Result<ClonedRepo, GitError> {
-        ensure_dest_empty(dest)?;
-        let repo = run_clone(url, dest, r#ref)?;
-        let head_sha = read_head_sha(&repo)?;
-        Ok(ClonedRepo { path: dest.to_path_buf(), head_sha })
+        // Per-repo lock: the sidecar lives in the parent dir (keyed by dest's
+        // last component) so the clone can still require `dest` to be empty.
+        // Once clone has happened, subsequent fetch/checkout continue to use
+        // the *same* sidecar — its path is a pure function of `dest`.
+        with_repo_lock(dest, || {
+            ensure_dest_empty(dest)?;
+            let repo = run_clone(url, dest, r#ref)?;
+            let head_sha = read_head_sha(&repo)?;
+            Ok(ClonedRepo { path: dest.to_path_buf(), head_sha })
+        })
     }
 
     fn fetch(&self, dest: &Path) -> Result<(), GitError> {
-        let repo = open_repo(dest)?;
-        let remote = repo
-            .find_default_remote(Direction::Fetch)
-            .ok_or_else(|| {
-                GitError::FetchFailed(dest.to_path_buf(), "no default remote configured".into())
-            })?
-            .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
-
-        let connection = remote
-            .connect(Direction::Fetch)
-            .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
-
-        let interrupt = AtomicBool::new(false);
-        let prepare = connection
-            .prepare_fetch(Discard, gix::remote::ref_map::Options::default())
-            .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
-
-        prepare
-            .receive(Discard, &interrupt)
-            .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
-
-        Ok(())
+        with_repo_lock(dest, || fetch_locked(dest))
     }
 
     fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), GitError> {
-        let repo = open_repo(dest)?;
-        ensure_clean_worktree(&repo, dest)?;
-        let target = resolve_ref(&repo, r#ref)?;
-        update_head_detached(&repo, r#ref, target)?;
-        materialise_tree(&repo, r#ref, target)
+        // Per-repo lock held across the whole operation. Cleanliness is
+        // validated AFTER the lock is acquired (a prior caller may have
+        // left the tree dirty between `is_dirty()` at t=0 and us observing
+        // it under the lock) and BEFORE HEAD is moved. Once we hold the
+        // lock the worktree cannot be dirtied by a cooperating caller
+        // before `materialise_tree`, so a single post-lock check is
+        // sufficient to close the TOCTOU window.
+        //
+        // `materialise_tree` calls into gix with `overwrite_existing: true`.
+        // That is safe here because cleanliness is enforced by this
+        // function under the lock; we deliberately do not rely on gix's
+        // `overwrite_existing: false` escape hatch (changing it to `false`
+        // would break legitimate sync-after-stale-files recovery flows).
+        with_repo_lock(dest, || {
+            let repo = open_repo(dest)?;
+            ensure_clean_worktree(&repo, dest)?;
+            let target = resolve_ref(&repo, r#ref)?;
+            update_head_detached(&repo, r#ref, target)?;
+            materialise_tree(&repo, r#ref, target)
+        })
     }
 
     fn head_sha(&self, dest: &Path) -> Result<String, GitError> {
@@ -101,6 +102,67 @@ impl GitBackend for GixBackend {
 // ---------------------------------------------------------------------------
 // helpers — each kept small so trait methods stay under cyclomatic budget.
 // ---------------------------------------------------------------------------
+
+/// Lock sidecar path for per-repo serialisation. Kept in the parent dir so
+/// the clone path can still require `dest` to be empty, and the sidecar
+/// survives a `rm -rf <dest>` rebuild between retries.
+fn repo_lock_path(dest: &Path) -> PathBuf {
+    let parent = dest.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    let stem = dest
+        .file_name()
+        .map_or_else(|| std::ffi::OsString::from("repo"), std::ffi::OsStr::to_os_string);
+    let mut name = std::ffi::OsString::from(".grex-backend-");
+    name.push(&stem);
+    name.push(".lock");
+    parent.join(name)
+}
+
+/// Run `op` while holding the per-repo filesystem lock for `dest`.
+///
+/// Lock is blocking (`fd_lock::RwLock::write`) — per-repo contention is
+/// rare and waiting is the right UX when it happens (e.g. two sync runs
+/// both wanting to `fetch` the same clone cooperate naturally). The
+/// workspace-level lock in [`crate::sync::run`] is the fast-failing guard
+/// that prevents two syncs from ever reaching this point concurrently on
+/// the same workspace.
+fn with_repo_lock<T, F>(dest: &Path, op: F) -> Result<T, GitError>
+where
+    F: FnOnce() -> Result<T, GitError>,
+{
+    let lock_path = repo_lock_path(dest);
+    let mut lock = ScopedLock::open(&lock_path)
+        .map_err(|e| GitError::Internal(format!("open repo lock {}: {e}", lock_path.display())))?;
+    let _guard = lock.acquire().map_err(|e| {
+        GitError::Internal(format!("acquire repo lock {}: {e}", lock_path.display()))
+    })?;
+    op()
+}
+
+/// Fetch body, factored out so the trait method stays a thin lock wrapper.
+fn fetch_locked(dest: &Path) -> Result<(), GitError> {
+    let repo = open_repo(dest)?;
+    let remote = repo
+        .find_default_remote(Direction::Fetch)
+        .ok_or_else(|| {
+            GitError::FetchFailed(dest.to_path_buf(), "no default remote configured".into())
+        })?
+        .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
+
+    let connection = remote
+        .connect(Direction::Fetch)
+        .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
+
+    let interrupt = AtomicBool::new(false);
+    let prepare = connection
+        .prepare_fetch(Discard, gix::remote::ref_map::Options::default())
+        .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
+
+    prepare
+        .receive(Discard, &interrupt)
+        .map_err(|e| GitError::FetchFailed(dest.to_path_buf(), e.to_string()))?;
+
+    Ok(())
+}
 
 /// Error unless `dest` is absent or an empty directory.
 fn ensure_dest_empty(dest: &Path) -> Result<(), GitError> {

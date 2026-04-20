@@ -7,4 +7,4 @@ pub mod atomic;
 pub mod lock;
 
 pub use atomic::atomic_write;
-pub use lock::ManifestLock;
+pub use lock::{ManifestLock, ScopedLock};
