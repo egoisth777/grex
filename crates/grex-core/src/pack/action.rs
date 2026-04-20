@@ -184,29 +184,15 @@ impl Action {
     /// [`PackParseError::EmptyActionEntry`] / [`PackParseError::MultipleActionKeys`],
     /// and unknown keys with [`PackParseError::UnknownActionKey`].
     pub fn from_yaml(value: &serde_yaml::Value) -> Result<Self, PackParseError> {
-        let mapping = value.as_mapping().ok_or(PackParseError::EmptyActionEntry)?;
-        match mapping.len() {
-            0 => return Err(PackParseError::EmptyActionEntry),
-            1 => {}
-            _ => {
-                let keys =
-                    mapping.iter().filter_map(|(k, _)| k.as_str().map(str::to_owned)).collect();
-                return Err(PackParseError::MultipleActionKeys { keys });
-            }
-        }
-
-        let (k, v) = mapping.iter().next().expect("len==1 checked above");
-        let key =
-            k.as_str().ok_or_else(|| PackParseError::UnknownActionKey { key: format!("{k:?}") })?;
-
-        match key {
-            "symlink" => Ok(Self::Symlink(serde_yaml::from_value(v.clone())?)),
-            "env" => Ok(Self::Env(serde_yaml::from_value(v.clone())?)),
-            "mkdir" => Ok(Self::Mkdir(serde_yaml::from_value(v.clone())?)),
-            "rmdir" => Ok(Self::Rmdir(serde_yaml::from_value(v.clone())?)),
-            "require" => Ok(Self::Require(parse_require(v)?)),
-            "when" => Ok(Self::When(parse_when(v)?)),
-            "exec" => Ok(Self::Exec(parse_exec(v)?)),
+        let (key, v) = single_key_entry(value)?;
+        match key.as_str() {
+            "symlink" => parse_symlink(v),
+            "env" => parse_env(v),
+            "mkdir" => parse_mkdir(v),
+            "rmdir" => parse_rmdir(v),
+            "require" => parse_require(v).map(Self::Require),
+            "when" => parse_when(v).map(Self::When),
+            "exec" => parse_exec(v).map(Self::Exec),
             other => Err(PackParseError::UnknownActionKey { key: other.to_string() }),
         }
     }
@@ -224,6 +210,42 @@ impl Action {
         })?;
         seq.iter().map(Self::from_yaml).collect()
     }
+}
+
+/// Validate that `value` is a single-key mapping and return the owned key
+/// plus a reference to its value. Emits the same errors the inline form did.
+fn single_key_entry(
+    value: &serde_yaml::Value,
+) -> Result<(String, &serde_yaml::Value), PackParseError> {
+    let mapping = value.as_mapping().ok_or(PackParseError::EmptyActionEntry)?;
+    match mapping.len() {
+        0 => return Err(PackParseError::EmptyActionEntry),
+        1 => {}
+        _ => {
+            let keys = mapping.iter().filter_map(|(k, _)| k.as_str().map(str::to_owned)).collect();
+            return Err(PackParseError::MultipleActionKeys { keys });
+        }
+    }
+    let (k, v) = mapping.iter().next().expect("len==1 checked above");
+    let key =
+        k.as_str().ok_or_else(|| PackParseError::UnknownActionKey { key: format!("{k:?}") })?;
+    Ok((key.to_string(), v))
+}
+
+fn parse_symlink(value: &serde_yaml::Value) -> Result<Action, PackParseError> {
+    Ok(Action::Symlink(serde_yaml::from_value(value.clone())?))
+}
+
+fn parse_env(value: &serde_yaml::Value) -> Result<Action, PackParseError> {
+    Ok(Action::Env(serde_yaml::from_value(value.clone())?))
+}
+
+fn parse_mkdir(value: &serde_yaml::Value) -> Result<Action, PackParseError> {
+    Ok(Action::Mkdir(serde_yaml::from_value(value.clone())?))
+}
+
+fn parse_rmdir(value: &serde_yaml::Value) -> Result<Action, PackParseError> {
+    Ok(Action::Rmdir(serde_yaml::from_value(value.clone())?))
 }
 
 fn parse_require(value: &serde_yaml::Value) -> Result<RequireSpec, PackParseError> {

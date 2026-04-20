@@ -114,48 +114,95 @@ impl Predicate {
     /// predicate kind. Depth-limited by [`MAX_REQUIRE_DEPTH`] to bound
     /// pathological nesting.
     pub fn from_yaml(value: &serde_yaml::Value, depth: usize) -> Result<Self, PackParseError> {
-        if depth >= MAX_REQUIRE_DEPTH {
-            return Err(PackParseError::RequireDepthExceeded { depth, max: MAX_REQUIRE_DEPTH });
+        let (key, v) = predicate_single_key(value, depth)?;
+        match key.as_str() {
+            "path_exists" => parse_path_exists(v),
+            "cmd_available" => parse_cmd_available(v),
+            "reg_key" => parse_reg_key(v),
+            "os" => parse_os(v),
+            "psversion" => parse_ps_version(v),
+            "symlink_ok" => parse_symlink_ok(v),
+            "all_of" => parse_all_of(v, depth),
+            "any_of" => parse_any_of(v, depth),
+            "none_of" => parse_none_of(v, depth),
+            other => Err(unknown_predicate_err(other)),
         }
+    }
+}
 
-        let mapping = value.as_mapping().ok_or_else(|| PackParseError::InvalidPredicate {
-            detail: "predicate must be a single-key mapping".to_string(),
-        })?;
+/// Enforce the depth bound and unwrap the single-key mapping shape shared by
+/// every predicate entry. Returns the owned key name and a reference to its
+/// value.
+fn predicate_single_key(
+    value: &serde_yaml::Value,
+    depth: usize,
+) -> Result<(String, &serde_yaml::Value), PackParseError> {
+    if depth >= MAX_REQUIRE_DEPTH {
+        return Err(PackParseError::RequireDepthExceeded { depth, max: MAX_REQUIRE_DEPTH });
+    }
 
-        if mapping.len() != 1 {
-            return Err(PackParseError::InvalidPredicate {
-                detail: format!(
-                    "predicate must be a single-key mapping (got {} keys)",
-                    mapping.len()
-                ),
-            });
-        }
+    let mapping = value.as_mapping().ok_or_else(|| PackParseError::InvalidPredicate {
+        detail: "predicate must be a single-key mapping".to_string(),
+    })?;
 
-        let (k, v) = mapping.iter().next().expect("len==1 checked above");
-        let key = k.as_str().ok_or_else(|| PackParseError::InvalidPredicate {
-            detail: "predicate key must be a string".to_string(),
-        })?;
+    if mapping.len() != 1 {
+        return Err(PackParseError::InvalidPredicate {
+            detail: format!("predicate must be a single-key mapping (got {} keys)", mapping.len()),
+        });
+    }
 
-        match key {
-            "path_exists" => Ok(Self::PathExists(string_arg(v, "path_exists")?)),
-            "cmd_available" => Ok(Self::CmdAvailable(string_arg(v, "cmd_available")?)),
-            "reg_key" => Ok(Self::RegKey { path: reg_path(v)?, name: reg_name(v)? }),
-            "os" => Ok(Self::Os(serde_yaml::from_value::<OsKind>(v.clone())?)),
-            "psversion" => Ok(Self::PsVersion(string_arg(v, "psversion")?)),
-            "symlink_ok" => Ok(Self::SymlinkOk {
-                src: map_string(v, "symlink_ok", "src")?,
-                dst: map_string(v, "symlink_ok", "dst")?,
-            }),
-            "all_of" => Ok(Self::AllOf(parse_list(v, depth + 1)?)),
-            "any_of" => Ok(Self::AnyOf(parse_list(v, depth + 1)?)),
-            "none_of" => Ok(Self::NoneOf(parse_list(v, depth + 1)?)),
-            other => Err(PackParseError::InvalidPredicate {
-                detail: format!(
-                    "unknown predicate {other:?}: valid kinds are path_exists, cmd_available, \
+    let (k, v) = mapping.iter().next().expect("len==1 checked above");
+    let key = k.as_str().ok_or_else(|| PackParseError::InvalidPredicate {
+        detail: "predicate key must be a string".to_string(),
+    })?;
+    Ok((key.to_string(), v))
+}
+
+fn parse_path_exists(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::PathExists(string_arg(value, "path_exists")?))
+}
+
+fn parse_cmd_available(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::CmdAvailable(string_arg(value, "cmd_available")?))
+}
+
+fn parse_reg_key(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::RegKey { path: reg_path(value)?, name: reg_name(value)? })
+}
+
+fn parse_os(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::Os(serde_yaml::from_value::<OsKind>(value.clone())?))
+}
+
+fn parse_ps_version(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::PsVersion(string_arg(value, "psversion")?))
+}
+
+fn parse_symlink_ok(value: &serde_yaml::Value) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::SymlinkOk {
+        src: map_string(value, "symlink_ok", "src")?,
+        dst: map_string(value, "symlink_ok", "dst")?,
+    })
+}
+
+fn parse_all_of(value: &serde_yaml::Value, depth: usize) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::AllOf(parse_list(value, depth + 1)?))
+}
+
+fn parse_any_of(value: &serde_yaml::Value, depth: usize) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::AnyOf(parse_list(value, depth + 1)?))
+}
+
+fn parse_none_of(value: &serde_yaml::Value, depth: usize) -> Result<Predicate, PackParseError> {
+    Ok(Predicate::NoneOf(parse_list(value, depth + 1)?))
+}
+
+fn unknown_predicate_err(key: &str) -> PackParseError {
+    PackParseError::InvalidPredicate {
+        detail: format!(
+            "unknown predicate {key:?}: valid kinds are path_exists, cmd_available, \
 reg_key, os, psversion, symlink_ok, all_of, any_of, none_of"
-                ),
-            }),
-        }
+        ),
     }
 }
 
