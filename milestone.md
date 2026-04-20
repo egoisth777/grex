@@ -44,18 +44,19 @@ The first universal operation: `grex sync`. Everything else bolts onto this.
 **Effort**: 4-6 days.
 **Depends on**: M2.
 
-## M4 — Action executor + 7 Tier 1 actions
-Built-in action vocab. Grounded in real E:\repos scan.
+## M4 — Plugin system + lockfile idempotency
+M3 shipped the executor + 7 built-ins directly. M4 formalizes the plugin surface, wires lockfile idempotency, and replaces the two conservative-false predicate stubs.
 
-- `ActionPlugin` trait with `fn execute(&self, ctx: &PackCtx, args: &Value) -> Result<ActionOutcome>`.
-- In-process plugin registry (`inventory` crate or explicit register).
-- 7 built-ins: `symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`.
-- Platform dispatch inside each action (native Win/Unix code paths).
-- Backup semantics for `symlink` + `rmdir`.
-- `require` predicates: path-exists, cmd-available, reg-key, os, psversion, symlink-ok.
+- `ActionPlugin` trait + `Registry` struct; 7 built-ins re-exported via `register_builtins(&mut Registry)`.
+- Executor dispatch via `Registry::get(name)` lookup (replaces direct enum match).
+- Lockfile `actions_hash` compute + compare; matching hash emits `ExecResult::Skipped`.
+- `reg_key` real Windows registry probe (`winreg`); `psversion` real PowerShell probe; both keep graceful degradation on non-Windows.
+- CLI: `--ref <sha|branch|tag>` override, `--only <glob>` pack filter, lockfile auto-read at sync start + auto-write at sync end.
+- Discovery: `register_builtins` is the canonical path in v1; optional `inventory::submit!` behind feature flag `plugin-inventory`.
+- Stage order: A (trait + Registry) → B (actions_hash / Skipped) → C (reg_key / psversion probes) → D (CLI flags + lockfile r/w) → E (discovery hook).
 
-**Acceptance**: each action has unit tests on each OS; `grex run <action> --filter <pack>` works; idempotent re-run is a no-op.
-**Effort**: 5-7 days.
+**Acceptance**: `ActionPlugin` trait + `Registry` shipped; 7 built-ins re-exported through Registry (no regression in M3 tests); `grex sync` twice on unchanged pack → second run emits `ExecResult::Skipped` for every action; `reg_key` + `psversion` return real probe results on Windows and `PredicateNotSupported` on non-Windows; `grex sync --ref <sha>` overrides pack default ref; `grex sync --only <glob>` filters to matching pack paths; lockfile reads on startup and writes post-sync. External plugin loading (dylib/WASM) remains out of scope per v2 backlog.
+**Effort**: 6-8 days.
 **Depends on**: M3.
 
 ## M5 — 3 pack-types + gitignore auto
