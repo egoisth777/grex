@@ -40,7 +40,7 @@ The first universal operation: `grex sync`. Everything else bolts onto this.
 - Cycle detection in pack graph (bail on cycle).
 - URL → path resolution (respect `path:` override, else last path segment).
 
-**Acceptance**: sync a 3-level nested pack tree end-to-end; cycle detection fires on self-referential pack; `--parallel N` honored.
+**Acceptance**: sync a 3-level nested pack tree end-to-end; cycle detection fires on self-referential pack; `--parallel N` honored. Note: `depends_on` satisfaction checking (external-prerequisite verification at plan phase) is **Stage B scope**, not Stage A. Stage A covers the `children` edge (ownership / walk) only.
 **Effort**: 4-6 days.
 **Depends on**: M2.
 
