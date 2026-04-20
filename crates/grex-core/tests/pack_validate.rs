@@ -210,3 +210,41 @@ actions:
     // Name is part of the diagnostic surface.
     assert_eq!(AlwaysFailsValidator.name(), "always_fails_test_only");
 }
+
+// ---------- cross-platform case handling (Fix D) ----------
+
+/// On case-insensitive filesystems (Windows NTFS, macOS APFS default), two
+/// `dst` literals differing only in ASCII case collide on disk. The
+/// validator must surface this at plan time.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn dup_symlink_case_fold_on_windows_macos() {
+    let yaml = "schema_version: \"1\"
+name: ok
+type: declarative
+actions:
+  - symlink: { src: a, dst: /tmp/foo }
+  - symlink: { src: b, dst: /tmp/FOO }
+";
+    let pack = parse(yaml).unwrap();
+    let errs = pack.validate_plan().expect_err("case-differing dsts must collide on NTFS/APFS");
+    assert_eq!(errs.len(), 1, "one pair => one error, got {errs:?}");
+    // The reported dst is the first authored literal, not the folded form.
+    assert_dup(&errs[0], "/tmp/foo", 0, 1);
+}
+
+/// On case-sensitive filesystems (Linux ext4/btrfs/xfs), `foo` and `FOO`
+/// are distinct paths; the validator must not false-positive.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn dup_symlink_case_exact_on_linux() {
+    let yaml = "schema_version: \"1\"
+name: ok
+type: declarative
+actions:
+  - symlink: { src: a, dst: /tmp/foo }
+  - symlink: { src: b, dst: /tmp/FOO }
+";
+    let pack = parse(yaml).unwrap();
+    pack.validate_plan().expect("case-differing dsts must NOT collide on Linux");
+}

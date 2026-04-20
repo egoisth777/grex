@@ -588,6 +588,35 @@ fn fs_env_user_scope_writes_registry_then_cleans_up() {
 
 #[cfg(windows)]
 #[test]
+fn fs_symlink_kind_auto_missing_src_errors() {
+    // Windows-only: `kind: auto` stats `src` to pick `symlink_file` vs.
+    // `symlink_dir`. When `src` is absent the executor must surface an
+    // actionable [`ExecError::SymlinkAutoKindUnresolvable`] instead of
+    // silently defaulting to `File` and producing a broken reparse point.
+    let (tmp, env) = fixture();
+    let missing_src = tmp.path().join("does-not-exist");
+    let dst = tmp.path().join("link");
+    let action = Action::Symlink(SymlinkArgs::new(
+        missing_src.to_string_lossy().into_owned(),
+        dst.to_string_lossy().into_owned(),
+        false,
+        false,
+        SymlinkKind::Auto,
+    ));
+    let err = FsExecutor::new()
+        .execute(&action, &ctx(&env, tmp.path()))
+        .expect_err("kind: auto + missing src must error");
+    match err {
+        ExecError::SymlinkAutoKindUnresolvable { src, .. } => {
+            assert_eq!(src, missing_src, "error must cite the offending src");
+        }
+        other => panic!("expected SymlinkAutoKindUnresolvable, got {other:?}"),
+    }
+    assert!(!dst.exists(), "dst must not have been created");
+}
+
+#[cfg(windows)]
+#[test]
 fn fs_env_machine_scope_denied_gracefully() {
     let (tmp, env) = fixture();
     let action = Action::Env(EnvArgs::new(
