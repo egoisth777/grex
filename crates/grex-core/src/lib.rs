@@ -14,7 +14,7 @@ pub mod tree;
 pub mod vars;
 
 pub use execute::{
-    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, PlanExecutor, Platform,
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
     PredicateOutcome, StepKind,
 };
 pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};

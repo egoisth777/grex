@@ -1,5 +1,7 @@
 //! Error taxonomy for the execute phase.
 
+use std::path::PathBuf;
+
 use thiserror::Error;
 
 use crate::vars::VarExpandError;
@@ -35,4 +37,85 @@ pub enum ExecError {
     /// An `exec` action had an internally inconsistent post-expansion shape.
     #[error("exec validation failed: {0}")]
     ExecInvalid(String),
+    /// A symlink target path is occupied by a non-symlink entry and
+    /// `backup: false`; the wet-run executor refuses to clobber blindly.
+    #[error("symlink destination `{}` is occupied; enable `backup: true` to rename it out of the way", dst.display())]
+    SymlinkDestOccupied {
+        /// Post-expansion destination path.
+        dst: PathBuf,
+    },
+    /// Symlink creation returned OS access-denied. On Windows this usually
+    /// means Developer Mode is disabled and the caller lacks
+    /// `SeCreateSymbolicLinkPrivilege`.
+    #[error("symlink creation denied (Windows: enable Developer Mode or run elevated): {detail}")]
+    SymlinkPrivilegeDenied {
+        /// Verbatim OS error detail for diagnostics.
+        detail: String,
+    },
+    /// A filesystem path exists in a shape incompatible with the requested
+    /// action (e.g. mkdir target is already a regular file).
+    #[error("path `{}` conflicts with action: {reason}", path.display())]
+    PathConflict {
+        /// Post-expansion path that conflicted.
+        path: PathBuf,
+        /// Stable short reason tag.
+        reason: &'static str,
+    },
+    /// `rmdir` without `force: true` attempted to delete a non-empty dir.
+    #[error("rmdir on non-empty directory `{}` without force", path.display())]
+    RmdirNotEmpty {
+        /// Post-expansion path.
+        path: PathBuf,
+    },
+    /// An `env` action requested a persistence scope this platform does not
+    /// implement.
+    #[error("env scope `{scope}` persistence not supported on {platform}")]
+    EnvPersistenceNotSupported {
+        /// Scope tag (`user` / `machine`).
+        scope: String,
+        /// Target platform tag.
+        platform: &'static str,
+    },
+    /// OS rejected an env-persistence write (e.g. HKLM without admin).
+    #[error("env scope `{scope}` persistence denied: {detail}")]
+    EnvPersistenceDenied {
+        /// Scope tag (`user` / `machine`).
+        scope: String,
+        /// Verbatim OS error detail.
+        detail: String,
+    },
+    /// An `exec` action returned a non-zero exit status under
+    /// `on_fail: error`.
+    #[error("exec exited with status {status}: {command}")]
+    ExecNonZero {
+        /// Process exit status.
+        status: i32,
+        /// Display-friendly command line.
+        command: String,
+    },
+    /// An `exec` action failed to spawn (program not found, permissions, ...).
+    #[error("exec spawn failed for `{command}`: {detail}")]
+    ExecSpawnFailed {
+        /// Display-friendly command line.
+        command: String,
+        /// Verbatim OS error detail.
+        detail: String,
+    },
+    /// Filesystem I/O error attributable to a specific op + path.
+    #[error("fs {op} failed on `{}`: {detail}", path.display())]
+    FsIo {
+        /// Stable op tag (`create_dir`, `remove_dir`, `symlink`, `rename`, ...).
+        op: &'static str,
+        /// Path involved in the op.
+        path: PathBuf,
+        /// Verbatim OS error detail.
+        detail: String,
+    },
+}
+
+/// Helper: wrap a [`std::io::Error`] into an [`ExecError::FsIo`] with op +
+/// path context. Intentionally not a `From` impl — blanket conversions would
+/// let unrelated callsites silently map io errors and obscure the op tag.
+pub(crate) fn io_to_fs(op: &'static str, path: PathBuf, err: std::io::Error) -> ExecError {
+    ExecError::FsIo { op, path, detail: err.to_string() }
 }

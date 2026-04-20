@@ -18,14 +18,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::pack::{
-    Action, Combiner, EnvArgs, ExecOnFail, ExecSpec, MkdirArgs, Predicate, RequireOnFail,
-    RequireSpec, RmdirArgs, SymlinkArgs, WhenSpec,
+    Action, Combiner, EnvArgs, ExecOnFail, ExecSpec, MkdirArgs, RequireOnFail, RequireSpec,
+    RmdirArgs, SymlinkArgs, WhenSpec,
 };
 use crate::vars::{expand, VarEnv};
 
 use super::ctx::ExecCtx;
 use super::error::ExecError;
-use super::predicate::evaluate;
+use super::predicate::{evaluate, evaluate_when_gate};
 use super::step::{ExecResult, ExecStep, PredicateOutcome, StepKind};
 use super::ActionExecutor;
 
@@ -189,32 +189,6 @@ fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
         result,
         details: StepKind::When { branch_taken, nested_steps },
     })
-}
-
-/// Evaluate the composite `when` gate. `os` and each combiner compose with
-/// AND semantics per `actions.md`.
-fn evaluate_when_gate(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> bool {
-    if let Some(os) = spec.os {
-        if !evaluate(&Predicate::Os(os), ctx) {
-            return false;
-        }
-    }
-    if let Some(list) = &spec.all_of {
-        if !list.iter().all(|p| evaluate(p, ctx)) {
-            return false;
-        }
-    }
-    if let Some(list) = &spec.any_of {
-        if !list.iter().any(|p| evaluate(p, ctx)) {
-            return false;
-        }
-    }
-    if let Some(list) = &spec.none_of {
-        if list.iter().any(|p| evaluate(p, ctx)) {
-            return false;
-        }
-    }
-    true
 }
 
 fn plan_nested(actions: &[Action], ctx: &ExecCtx<'_>) -> Result<Vec<ExecStep>, ExecError> {
