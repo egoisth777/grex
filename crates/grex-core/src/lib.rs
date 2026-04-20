@@ -11,9 +11,9 @@ pub mod pack;
 pub mod vars;
 
 pub use pack::{
-    Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs, OsKind,
-    PackManifest, PackParseError, PackType, Predicate, RequireOnFail, RequireSpec, RmdirArgs,
-    SchemaVersion, SymlinkArgs, SymlinkKind, WhenSpec,
+    run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,
+    OsKind, PackManifest, PackParseError, PackType, PackValidationError, Predicate, RequireOnFail,
+    RequireSpec, RmdirArgs, SchemaVersion, SymlinkArgs, SymlinkKind, Validator, WhenSpec,
 };
 pub use vars::{expand, VarEnv, VarExpandError};
 

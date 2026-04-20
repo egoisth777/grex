@@ -210,6 +210,30 @@ impl Action {
         })?;
         seq.iter().map(Self::from_yaml).collect()
     }
+
+    /// Walk this action (and any nested `when.actions`) yielding every
+    /// [`SymlinkArgs`] reached.
+    ///
+    /// * [`Action::Symlink`] yields the wrapped args.
+    /// * [`Action::When`] recurses into `when.actions` (which themselves may
+    ///   be `when` blocks — recursion is unbounded because the parse-time
+    ///   depth bound applies to predicate trees, not action nesting; in
+    ///   practice authors do not nest `when` deeply, and validators consume
+    ///   whatever the parser accepted).
+    /// * Every other variant yields an empty iterator.
+    ///
+    /// The iterator is boxed so variant-specific concrete iterator types can
+    /// share a single return shape. Boxing cost is negligible against the
+    /// outer YAML parse and well-bounded action lists; swapping to a custom
+    /// enum-iterator later is YAGNI for now.
+    #[must_use]
+    pub fn iter_symlinks(&self) -> Box<dyn Iterator<Item = &SymlinkArgs> + '_> {
+        match self {
+            Self::Symlink(s) => Box::new(std::iter::once(s)),
+            Self::When(w) => Box::new(w.actions.iter().flat_map(Self::iter_symlinks)),
+            _ => Box::new(std::iter::empty()),
+        }
+    }
 }
 
 /// Validate that `value` is a single-key mapping and return the owned key

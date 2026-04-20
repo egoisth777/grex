@@ -24,6 +24,7 @@
 pub mod action;
 pub mod error;
 pub mod predicate;
+pub mod validate;
 
 use std::collections::BTreeMap;
 
@@ -35,6 +36,7 @@ pub use action::{
 };
 pub use error::{PackParseError, MAX_REQUIRE_DEPTH};
 pub use predicate::{Combiner, ExecOnFail, OsKind, Predicate, RequireOnFail};
+pub use validate::{run_all, PackValidationError, Validator};
 
 /// Literal value accepted for `schema_version`. Bump only with a backwards-
 /// incompatible YAML migration.
@@ -184,6 +186,50 @@ pub struct PackManifest {
     /// Unknown `x-*` extension keys. Preserved verbatim for downstream
     /// plugins.
     pub extensions: BTreeMap<String, serde_yaml::Value>,
+}
+
+impl PackManifest {
+    /// Walk every action (including those nested inside `when` blocks),
+    /// yielding `(global_index, &symlink)` pairs.
+    ///
+    /// `global_index` is a 0-based counter across the flattened action-walk
+    /// — it is **not** the top-level index into [`PackManifest::actions`].
+    /// Two symlinks at the same top-level index but at different nesting
+    /// depths receive distinct global indices. This is the index space
+    /// [`PackValidationError`] variants refer to.
+    pub fn iter_all_symlinks(&self) -> impl Iterator<Item = (usize, &SymlinkArgs)> {
+        self.actions.iter().flat_map(Action::iter_symlinks).enumerate()
+    }
+
+    /// Run every default [`Validator`] over this manifest.
+    ///
+    /// Returns `Ok(())` when no validator emits an error; otherwise returns
+    /// `Err(Vec<_>)` carrying every error across every validator (not
+    /// fail-first — downstream consumers can decide whether to abort on the
+    /// first or surface the full batch).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PackValidationError`] variants aggregated across the
+    /// validator set. See [`validate::run_all`] for the exact default set.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use grex_core::pack::parse;
+    ///
+    /// let src = "schema_version: \"1\"\nname: ok\ntype: declarative\n";
+    /// let pack = parse(src).unwrap();
+    /// pack.validate_plan().unwrap();
+    /// ```
+    pub fn validate_plan(&self) -> Result<(), Vec<PackValidationError>> {
+        let errs = validate::run_all(self);
+        if errs.is_empty() {
+            Ok(())
+        } else {
+            Err(errs)
+        }
+    }
 }
 
 /// Parse a `pack.yaml` buffer into a [`PackManifest`].
