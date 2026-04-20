@@ -837,6 +837,6 @@ fn collect_dangling_starts(events: &[Event]) -> Vec<DanglingStart> {
         }
     }
     let mut out: Vec<DanglingStart> = open.into_values().collect();
-    out.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    out.sort_by_key(|a| a.started_at);
     out
 }
