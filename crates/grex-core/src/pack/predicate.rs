@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 use super::error::{PackParseError, MAX_REQUIRE_DEPTH};
 
 /// Operating-system matcher used by `os:` predicates and `when.os`.
+///
+/// Marked `#[non_exhaustive]` so future OS tags (BSD variants, WASM,
+/// embedded) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OsKind {
@@ -28,6 +32,10 @@ pub enum OsKind {
 ///
 /// Per `actions.md` §require, the legal set here is `error | skip | warn`.
 /// `ignore` (an `exec`-only form) is deliberately rejected at parse time.
+///
+/// Marked `#[non_exhaustive]` so future on-fail modes (e.g. `prompt`) can
+/// land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RequireOnFail {
@@ -44,6 +52,10 @@ pub enum RequireOnFail {
 ///
 /// Per `actions.md` §exec, the legal set here is `error | warn | ignore`.
 /// `skip` (a `require`-only form) is deliberately rejected at parse time.
+///
+/// Marked `#[non_exhaustive]` so future on-fail modes can land without
+/// breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecOnFail {
@@ -60,6 +72,10 @@ pub enum ExecOnFail {
 ///
 /// Parsed from a single-key YAML map via [`Predicate::from_yaml`]. The enum
 /// intentionally mirrors the key set documented in `actions.md`.
+///
+/// Marked `#[non_exhaustive]` so new leaf predicates (plugin-contributed or
+/// spec-extension) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum Predicate {
@@ -97,6 +113,10 @@ pub enum Predicate {
 
 /// The one-of combiner declared at the top level of a `require` or `when`
 /// block. Exactly one variant is populated at parse time.
+///
+/// Marked `#[non_exhaustive]` so new combiner shapes (e.g. `xor_of`,
+/// `majority_of`) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Combiner {
     /// `all_of:` — every predicate must hold (AND).

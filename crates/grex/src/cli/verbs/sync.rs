@@ -97,12 +97,29 @@ fn render_report(report: &SyncReport, dry_run: bool, quiet: bool) {
 
 fn print_step(s: &SyncStep, dry_run: bool) {
     use grex_core::ExecResult;
+    // `ExecResult::Skipped { reason }` gets a dedicated line so the
+    // reason string surfaces verbatim instead of being lost into a tag.
+    // Every other variant renders via the single-token tag path. The
+    // wildcard arm at the end is required because `ExecResult` is
+    // `#[non_exhaustive]`; future variants route to a generic `other`
+    // tag until they earn dedicated rendering.
+    if let ExecResult::Skipped { reason } = &s.exec_step.result {
+        println!(
+            "[skipped] pack={pack} action={kind} reason={reason}",
+            pack = s.pack,
+            kind = s.exec_step.action_name,
+        );
+        return;
+    }
     let tag = match (&s.exec_step.result, dry_run) {
         (ExecResult::PerformedChange, _) => "ok",
         (ExecResult::WouldPerformChange, true) => "would",
         (ExecResult::WouldPerformChange, false) => "ok",
         (ExecResult::AlreadySatisfied, _) => "skipped",
         (ExecResult::NoOp, _) => "noop",
+        // ExecResult is #[non_exhaustive]; Skipped is handled above, but
+        // future variants land here until they earn a dedicated tag.
+        _ => "other",
     };
     println!(
         "[{tag}] pack={pack} action={kind} idx={idx}",

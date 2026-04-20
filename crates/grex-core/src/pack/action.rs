@@ -18,6 +18,10 @@ use super::error::PackParseError;
 use super::predicate::{Combiner, ExecOnFail, OsKind, Predicate, RequireOnFail};
 
 /// Symlink link-kind selector.
+///
+/// Marked `#[non_exhaustive]` so future platform-specific kinds (e.g. NTFS
+/// junctions) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SymlinkKind {
@@ -31,6 +35,10 @@ pub enum SymlinkKind {
 }
 
 /// Environment-variable persistence scope.
+///
+/// Marked `#[non_exhaustive]` so future scopes (e.g. per-shell rc-file,
+/// systemd user-session) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EnvScope {
@@ -44,6 +52,11 @@ pub enum EnvScope {
 }
 
 /// `- symlink: { ... }`
+///
+/// Marked `#[non_exhaustive]` so spec additions (e.g. `relative`, `force`)
+/// in later milestones do not break external library consumers who
+/// destructure the struct.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymlinkArgs {
     /// Source path, relative to pack workdir.
@@ -65,7 +78,83 @@ fn default_true() -> bool {
     true
 }
 
+impl SymlinkArgs {
+    /// Construct a [`SymlinkArgs`] with all current fields in canonical
+    /// order. Exposed so external callers (and in-workspace test crates)
+    /// can materialise values even though the struct is
+    /// `#[non_exhaustive]`.
+    #[must_use]
+    pub fn new(src: String, dst: String, backup: bool, normalize: bool, kind: SymlinkKind) -> Self {
+        Self { src, dst, backup, normalize, kind }
+    }
+}
+
+impl EnvArgs {
+    /// Construct an [`EnvArgs`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(name: String, value: String, scope: EnvScope) -> Self {
+        Self { name, value, scope }
+    }
+}
+
+impl MkdirArgs {
+    /// Construct a [`MkdirArgs`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(path: String, mode: Option<String>) -> Self {
+        Self { path, mode }
+    }
+}
+
+impl RmdirArgs {
+    /// Construct a [`RmdirArgs`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(path: String, backup: bool, force: bool) -> Self {
+        Self { path, backup, force }
+    }
+}
+
+impl RequireSpec {
+    /// Construct a [`RequireSpec`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(combiner: Combiner, on_fail: RequireOnFail) -> Self {
+        Self { combiner, on_fail }
+    }
+}
+
+impl WhenSpec {
+    /// Construct a [`WhenSpec`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(
+        os: Option<OsKind>,
+        all_of: Option<Vec<Predicate>>,
+        any_of: Option<Vec<Predicate>>,
+        none_of: Option<Vec<Predicate>>,
+        actions: Vec<Action>,
+    ) -> Self {
+        Self { os, all_of, any_of, none_of, actions }
+    }
+}
+
+impl ExecSpec {
+    /// Construct an [`ExecSpec`] with all current fields in canonical order.
+    #[must_use]
+    pub fn new(
+        cmd: Option<Vec<String>>,
+        cmd_shell: Option<String>,
+        shell: bool,
+        cwd: Option<String>,
+        env: Option<BTreeMap<String, String>>,
+        on_fail: ExecOnFail,
+    ) -> Self {
+        Self { cmd, cmd_shell, shell, cwd, env, on_fail }
+    }
+}
+
 /// `- env: { ... }`
+///
+/// Marked `#[non_exhaustive]` so the spec can grow new knobs (e.g.
+/// `append`, `only_if_unset`) without breaking library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvArgs {
     /// Variable name.
@@ -78,6 +167,10 @@ pub struct EnvArgs {
 }
 
 /// `- mkdir: { ... }`
+///
+/// Marked `#[non_exhaustive]` so spec-level growth (ownership, umask
+/// overrides, …) is non-breaking for library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MkdirArgs {
     /// Directory to create.
@@ -88,6 +181,10 @@ pub struct MkdirArgs {
 }
 
 /// `- rmdir: { ... }`
+///
+/// Marked `#[non_exhaustive]` so spec-level growth (retention policy,
+/// tombstone dir override, …) is non-breaking for library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RmdirArgs {
     /// Directory to remove.
@@ -101,6 +198,11 @@ pub struct RmdirArgs {
 }
 
 /// `- require: { ... }` — prerequisite / idempotency gate.
+///
+/// Marked `#[non_exhaustive]` so M4 lockfile integration can attach
+/// additional audit fields (hash-pinning, cache tokens) without breaking
+/// downstream destructuring.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequireSpec {
     /// Combiner populated by `all_of` / `any_of` / `none_of`.
@@ -114,6 +216,10 @@ pub struct RequireSpec {
 /// Per `actions.md`, the shorthand `os:` and the explicit combiners
 /// compose conjunctively. Stage A preserves all fields as-is; evaluation
 /// logic is a later stage.
+///
+/// Marked `#[non_exhaustive]` so new shorthand gates can land without
+/// breaking library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhenSpec {
     /// Shorthand OS gate (equivalent to `os:` predicate in an implicit AND).
@@ -133,6 +239,10 @@ pub struct WhenSpec {
 /// The `cmd` XOR `cmd_shell` invariant is enforced in the custom
 /// deserializer. `shell=false` (default) requires `cmd`; `shell=true`
 /// requires `cmd_shell`.
+///
+/// Marked `#[non_exhaustive]` so spec growth (timeout, stdout capture,
+/// sandboxing flags) is non-breaking for library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExecSpec {
     /// Argv form. Populated when `shell=false`.
@@ -154,6 +264,11 @@ pub struct ExecSpec {
 }
 
 /// One entry in a pack's `actions:` (or `teardown:`) list.
+///
+/// Marked `#[non_exhaustive]` because M4 ships plugin-contributed action
+/// kinds; external match sites must carry a `_` arm so the Tier-1 registry
+/// can grow without a major-version bump.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// `symlink` primitive.

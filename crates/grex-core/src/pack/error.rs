@@ -17,6 +17,10 @@ pub const MAX_REQUIRE_DEPTH: usize = 32;
 /// `Display` (via `thiserror`), so `eprintln!("{err}")` is sufficient for a
 /// CLI diagnostic. File-path context, when available, is attached by the
 /// caller using [`PackParseError::with_source_path`].
+///
+/// Marked `#[non_exhaustive]` so new diagnostic variants can land without
+/// breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum PackParseError {
     /// `schema_version` is present but not the supported literal `"1"`.

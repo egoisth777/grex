@@ -22,6 +22,7 @@
 //! path. Blanket `From<std::io::Error>` is deliberately avoided so unrelated
 //! call sites cannot silently leak a context-free io error.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,7 +35,10 @@ use crate::vars::{expand, VarEnv};
 use super::ctx::ExecCtx;
 use super::error::{io_to_fs, ExecError};
 use super::predicate::{evaluate, evaluate_when_gate};
-use super::step::{ExecResult, ExecStep, PredicateOutcome, StepKind};
+use super::step::{
+    ExecResult, ExecStep, PredicateOutcome, StepKind, ACTION_ENV, ACTION_EXEC, ACTION_MKDIR,
+    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_WHEN,
+};
 use super::ActionExecutor;
 
 /// Wet-run [`ActionExecutor`] — performs real filesystem and process work.
@@ -108,7 +112,7 @@ fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecErr
     };
 
     Ok(ExecStep {
-        action_name: "symlink",
+        action_name: Cow::Borrowed(ACTION_SYMLINK),
         result,
         details: StepKind::Symlink {
             src,
@@ -195,7 +199,7 @@ fn fs_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let value = expand_field(&args.value, ctx.vars, "env.value")?;
     apply_env(&args.name, &value, args.scope)?;
     Ok(ExecStep {
-        action_name: "env",
+        action_name: Cow::Borrowed(ACTION_ENV),
         result: ExecResult::PerformedChange,
         details: StepKind::Env { name: args.name.clone(), value, scope: args.scope },
     })
@@ -271,7 +275,7 @@ fn fs_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
     let path = require_path(expand_field(&args.path, ctx.vars, "mkdir.path")?)?;
     let result = apply_mkdir(&path, args.mode.as_deref())?;
     Ok(ExecStep {
-        action_name: "mkdir",
+        action_name: Cow::Borrowed(ACTION_MKDIR),
         result,
         details: StepKind::Mkdir { path, mode: args.mode.clone() },
     })
@@ -317,7 +321,7 @@ fn fs_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
     let path = require_path(expand_field(&args.path, ctx.vars, "rmdir.path")?)?;
     let result = apply_rmdir(&path, args.backup, args.force)?;
     Ok(ExecStep {
-        action_name: "rmdir",
+        action_name: Cow::Borrowed(ACTION_RMDIR),
         result,
         details: StepKind::Rmdir { path, backup: args.backup, force: args.force },
     })
@@ -380,7 +384,7 @@ fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecErr
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
     let result = classify_require(satisfied, spec.on_fail)?;
     Ok(ExecStep {
-        action_name: "require",
+        action_name: Cow::Borrowed(ACTION_REQUIRE),
         result,
         details: StepKind::Require { outcome, on_fail: spec.on_fail },
     })
@@ -425,7 +429,7 @@ fn fs_when(exec: &FsExecutor, spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<Exec
         (ExecResult::NoOp, Vec::new())
     };
     Ok(ExecStep {
-        action_name: "when",
+        action_name: Cow::Borrowed(ACTION_WHEN),
         result,
         details: StepKind::When { branch_taken, nested_steps },
     })
@@ -441,7 +445,7 @@ fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let (cmdline, status) = spawn_exec(spec, cwd.as_deref(), ctx.vars)?;
     let result = classify_exec(status, spec.on_fail, &cmdline)?;
     Ok(ExecStep {
-        action_name: "exec",
+        action_name: Cow::Borrowed(ACTION_EXEC),
         result,
         details: StepKind::Exec { cmdline, cwd, on_fail: spec.on_fail, shell: spec.shell },
     })

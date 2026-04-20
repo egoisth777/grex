@@ -104,6 +104,10 @@ impl<'de> Deserialize<'de> for SchemaVersion {
 /// * [`PackType::Meta`] — composes child packs only (no actions).
 /// * [`PackType::Declarative`] — idempotent actions with automatic rollback.
 /// * [`PackType::Scripted`] — freeform actions with author-defined teardown.
+///
+/// Marked `#[non_exhaustive]` so new pack shapes (e.g. plugin-contributed
+/// kinds in M4+) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackType {
@@ -120,6 +124,10 @@ pub enum PackType {
 /// `path` is intentionally left `None` at parse time — callers that need
 /// the on-disk directory name should invoke [`ChildRef::effective_path`]
 /// which extracts the last URL segment as the default.
+///
+/// Marked `#[non_exhaustive]` so spec growth (e.g. `pin`, `shallow`) does
+/// not break library consumers who destructure the struct.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChildRef {
     /// Upstream git URL (any scheme `gix` can resolve).

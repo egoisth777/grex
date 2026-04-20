@@ -16,6 +16,10 @@ use crate::vars::VarEnv;
 /// exhaustive-checked. The [`Platform::Other`] escape hatch carries a
 /// `&'static str` rather than `String` — unsupported platforms are rare and
 /// don't warrant per-instance allocation.
+///
+/// Marked `#[non_exhaustive]` so dedicated tags for BSD variants, WASM, or
+/// other platforms can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     /// Linux (any distro).
@@ -81,6 +85,11 @@ impl Platform {
 /// driver. Owning data inside [`ExecCtx`] would either force clones per
 /// action or require interior mutability — both violate the framework goal
 /// of "future-proof, maximally decoupled".
+///
+/// Marked `#[non_exhaustive]` so future slots (plugin registry handle,
+/// scheduler token, teardown hook …) can land without breaking library
+/// consumers who destructure the struct.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct ExecCtx<'a> {
     /// Variable lookup table used by every `expand_*` call.

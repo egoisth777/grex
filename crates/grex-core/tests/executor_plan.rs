@@ -30,37 +30,33 @@ fn tmp() -> TempDir {
 }
 
 fn mk_symlink_action(src: &str, dst: &str) -> Action {
-    Action::Symlink(SymlinkArgs {
-        src: src.to_string(),
-        dst: dst.to_string(),
-        backup: false,
-        normalize: true,
-        kind: SymlinkKind::Auto,
-    })
+    Action::Symlink(SymlinkArgs::new(
+        src.to_string(),
+        dst.to_string(),
+        false,
+        true,
+        SymlinkKind::Auto,
+    ))
 }
 
 fn mk_env_action(name: &str, value: &str) -> Action {
-    Action::Env(EnvArgs {
-        name: name.to_string(),
-        value: value.to_string(),
-        scope: EnvScope::Session,
-    })
+    Action::Env(EnvArgs::new(name.to_string(), value.to_string(), EnvScope::Session))
 }
 
 fn mk_mkdir(path: &str) -> Action {
-    Action::Mkdir(MkdirArgs { path: path.to_string(), mode: None })
+    Action::Mkdir(MkdirArgs::new(path.to_string(), None))
 }
 
 fn mk_rmdir(path: &str) -> Action {
-    Action::Rmdir(RmdirArgs { path: path.to_string(), backup: false, force: false })
+    Action::Rmdir(RmdirArgs::new(path.to_string(), false, false))
 }
 
 fn mk_require(combiner: Combiner, on_fail: RequireOnFail) -> Action {
-    Action::Require(RequireSpec { combiner, on_fail })
+    Action::Require(RequireSpec::new(combiner, on_fail))
 }
 
 fn mk_when(os: Option<OsKind>, actions: Vec<Action>) -> Action {
-    Action::When(WhenSpec { os, all_of: None, any_of: None, none_of: None, actions })
+    Action::When(WhenSpec::new(os, None, None, None, actions))
 }
 
 // ---------- framework ----------
@@ -328,13 +324,13 @@ fn plan_when_conjunctive_os_plus_allof() {
     let vars = VarEnv::new();
     let existing = t.path().join("probe");
     std::fs::write(&existing, b"").unwrap();
-    let spec = WhenSpec {
-        os: Some(OsKind::Linux),
-        all_of: Some(vec![Predicate::PathExists(existing.to_str().unwrap().to_string())]),
-        any_of: None,
-        none_of: None,
-        actions: vec![mk_mkdir(t.path().join("out").to_str().unwrap())],
-    };
+    let spec = WhenSpec::new(
+        Some(OsKind::Linux),
+        Some(vec![Predicate::PathExists(existing.to_str().unwrap().to_string())]),
+        None,
+        None,
+        vec![mk_mkdir(t.path().join("out").to_str().unwrap())],
+    );
     let action = Action::When(spec);
     let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
     let step = PlanExecutor.execute(&action, &ctx).unwrap();
@@ -351,14 +347,14 @@ fn plan_exec_builds_cmdline_argv() {
     let t = tmp();
     let mut vars = VarEnv::new();
     vars.insert("BIN", "echo");
-    let spec = ExecSpec {
-        cmd: Some(vec!["$BIN".into(), "hello".into()]),
-        cmd_shell: None,
-        shell: false,
-        cwd: None,
-        env: None,
-        on_fail: ExecOnFail::Error,
-    };
+    let spec = ExecSpec::new(
+        Some(vec!["$BIN".into(), "hello".into()]),
+        None,
+        false,
+        None,
+        None,
+        ExecOnFail::Error,
+    );
     let step = PlanExecutor.execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
     match step.details {
         StepKind::Exec { cmdline, shell, .. } => {
@@ -375,14 +371,8 @@ fn plan_exec_builds_cmdline_shell() {
     let t = tmp();
     let mut vars = VarEnv::new();
     vars.insert("X", "there");
-    let spec = ExecSpec {
-        cmd: None,
-        cmd_shell: Some("echo hi $X".to_string()),
-        shell: true,
-        cwd: None,
-        env: None,
-        on_fail: ExecOnFail::Warn,
-    };
+    let spec =
+        ExecSpec::new(None, Some("echo hi $X".to_string()), true, None, None, ExecOnFail::Warn);
     let step = PlanExecutor.execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
     match step.details {
         StepKind::Exec { cmdline, shell, on_fail, .. } => {

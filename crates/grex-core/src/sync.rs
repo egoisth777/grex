@@ -75,6 +75,11 @@ impl SyncOptions {
 }
 
 /// One executed (or planned) action step in a sync run.
+///
+/// Marked `#[non_exhaustive]` so new observability fields (timestamps,
+/// plugin provenance) can land without breaking library consumers who
+/// destructure the struct.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SyncStep {
     /// Name of the pack that owned the action.
@@ -90,6 +95,10 @@ pub struct SyncStep {
 /// On fail-fast termination, `halted` carries the error that stopped the
 /// sync; every completed step up to that point is still in `steps` so
 /// callers can render a partial transcript.
+///
+/// Marked `#[non_exhaustive]` so new report-level fields (run id, metrics)
+/// can land without breaking library consumers who destructure the struct.
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct SyncReport {
     /// Fully-walked pack graph (present even on halted runs).

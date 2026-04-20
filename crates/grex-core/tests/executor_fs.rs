@@ -31,29 +31,29 @@ fn ctx<'a>(env: &'a VarEnv, root: &'a Path) -> ExecCtx<'a> {
 }
 
 fn mkdir_action(path: &Path) -> Action {
-    Action::Mkdir(MkdirArgs { path: path.to_string_lossy().into_owned(), mode: None })
+    Action::Mkdir(MkdirArgs::new(path.to_string_lossy().into_owned(), None))
 }
 
 fn rmdir_action(path: &Path, backup: bool, force: bool) -> Action {
-    Action::Rmdir(RmdirArgs { path: path.to_string_lossy().into_owned(), backup, force })
+    Action::Rmdir(RmdirArgs::new(path.to_string_lossy().into_owned(), backup, force))
 }
 
 fn require_path_exists(p: &Path, on_fail: RequireOnFail) -> Action {
-    Action::Require(RequireSpec {
-        combiner: Combiner::AllOf(vec![Predicate::PathExists(p.to_string_lossy().into_owned())]),
+    Action::Require(RequireSpec::new(
+        Combiner::AllOf(vec![Predicate::PathExists(p.to_string_lossy().into_owned())]),
         on_fail,
-    })
+    ))
 }
 
 fn exec_argv(argv: &[&str], on_fail: ExecOnFail) -> Action {
-    Action::Exec(ExecSpec {
-        cmd: Some(argv.iter().map(|s| (*s).to_string()).collect()),
-        cmd_shell: None,
-        shell: false,
-        cwd: None,
-        env: None,
+    Action::Exec(ExecSpec::new(
+        Some(argv.iter().map(|s| (*s).to_string()).collect()),
+        None,
+        false,
+        None,
+        None,
         on_fail,
-    })
+    ))
 }
 
 // ---------------------------------------------------------------- mkdir
@@ -208,14 +208,14 @@ fn fs_exec_argv_nonzero_ignore_returns_noop() {
 #[test]
 fn fs_exec_shell_basic_echo() {
     let (tmp, env) = fixture();
-    let action = Action::Exec(ExecSpec {
-        cmd: None,
-        cmd_shell: Some("exit 0".to_string()),
-        shell: true,
-        cwd: None,
-        env: None,
-        on_fail: ExecOnFail::Error,
-    });
+    let action = Action::Exec(ExecSpec::new(
+        None,
+        Some("exit 0".to_string()),
+        true,
+        None,
+        None,
+        ExecOnFail::Error,
+    ));
     let step = FsExecutor::new().execute(&action, &ctx(&env, tmp.path())).unwrap();
     assert!(matches!(step.result, ExecResult::PerformedChange));
     match step.details {
@@ -237,14 +237,14 @@ fn fs_exec_env_map_is_forwarded() {
         ("cmd", "/C", "if \"%%GREX_TEST_TOKEN%%\"==\"sentinel\" (exit 0) else (exit 5)");
     #[cfg(not(windows))]
     let (program, flag, script) = ("sh", "-c", "test \"$$GREX_TEST_TOKEN\" = sentinel");
-    let action = Action::Exec(ExecSpec {
-        cmd: Some(vec![program.into(), flag.into(), script.into()]),
-        cmd_shell: None,
-        shell: false,
-        cwd: None,
-        env: Some(env_map),
-        on_fail: ExecOnFail::Error,
-    });
+    let action = Action::Exec(ExecSpec::new(
+        Some(vec![program.into(), flag.into(), script.into()]),
+        None,
+        false,
+        None,
+        Some(env_map),
+        ExecOnFail::Error,
+    ));
     let step = FsExecutor::new().execute(&action, &ctx(&env, tmp.path())).unwrap();
     assert!(matches!(step.result, ExecResult::PerformedChange));
 }
@@ -300,13 +300,13 @@ fn nonmatching_os() -> OsKind {
 fn fs_when_gated_in_runs_inner_actions() {
     let (tmp, env) = fixture();
     let inner = tmp.path().join("created_via_when");
-    let when = Action::When(WhenSpec {
-        os: Some(matching_os()),
-        all_of: None,
-        any_of: None,
-        none_of: None,
-        actions: vec![mkdir_action(&inner)],
-    });
+    let when = Action::When(WhenSpec::new(
+        Some(matching_os()),
+        None,
+        None,
+        None,
+        vec![mkdir_action(&inner)],
+    ));
     let step = FsExecutor::new().execute(&when, &ctx(&env, tmp.path())).unwrap();
     assert!(matches!(step.result, ExecResult::PerformedChange));
     assert!(inner.is_dir(), "inner mkdir should have run");
@@ -323,13 +323,13 @@ fn fs_when_gated_in_runs_inner_actions() {
 fn fs_when_gated_out_noop() {
     let (tmp, env) = fixture();
     let inner = tmp.path().join("never_created");
-    let when = Action::When(WhenSpec {
-        os: Some(nonmatching_os()),
-        all_of: None,
-        any_of: None,
-        none_of: None,
-        actions: vec![mkdir_action(&inner)],
-    });
+    let when = Action::When(WhenSpec::new(
+        Some(nonmatching_os()),
+        None,
+        None,
+        None,
+        vec![mkdir_action(&inner)],
+    ));
     let step = FsExecutor::new().execute(&when, &ctx(&env, tmp.path())).unwrap();
     assert!(matches!(step.result, ExecResult::NoOp));
     assert!(!inner.exists(), "inner mkdir must not run when gated out");
@@ -339,13 +339,13 @@ fn fs_when_gated_out_noop() {
 
 #[cfg(unix)]
 fn symlink_action(src: &Path, dst: &Path, backup: bool) -> Action {
-    Action::Symlink(SymlinkArgs {
-        src: src.to_string_lossy().into_owned(),
-        dst: dst.to_string_lossy().into_owned(),
-        kind: SymlinkKind::Auto,
+    Action::Symlink(SymlinkArgs::new(
+        src.to_string_lossy().into_owned(),
+        dst.to_string_lossy().into_owned(),
         backup,
-        normalize: false,
-    })
+        false,
+        SymlinkKind::Auto,
+    ))
 }
 
 #[cfg(unix)]
@@ -411,11 +411,8 @@ fn fs_symlink_backup_false_errors_on_existing() {
 #[test]
 fn fs_env_persistence_unsupported_on_unix_errors_clearly() {
     let (tmp, env) = fixture();
-    let action = Action::Env(EnvArgs {
-        name: "GREX_TEST_PERSIST".to_string(),
-        value: "x".to_string(),
-        scope: EnvScope::User,
-    });
+    let action =
+        Action::Env(EnvArgs::new("GREX_TEST_PERSIST".to_string(), "x".to_string(), EnvScope::User));
     let err = FsExecutor::new().execute(&action, &ctx(&env, tmp.path())).unwrap_err();
     assert!(matches!(err, ExecError::EnvPersistenceNotSupported { .. }));
 }
@@ -424,11 +421,11 @@ fn fs_env_persistence_unsupported_on_unix_errors_clearly() {
 #[test]
 fn fs_env_session_scope_sets_process_env() {
     let (tmp, env) = fixture();
-    let action = Action::Env(EnvArgs {
-        name: "GREX_TEST_SESSION".to_string(),
-        value: "sentinel".to_string(),
-        scope: EnvScope::Session,
-    });
+    let action = Action::Env(EnvArgs::new(
+        "GREX_TEST_SESSION".to_string(),
+        "sentinel".to_string(),
+        EnvScope::Session,
+    ));
     let step = FsExecutor::new().execute(&action, &ctx(&env, tmp.path())).unwrap();
     assert!(matches!(step.result, ExecResult::PerformedChange));
     assert_eq!(std::env::var("GREX_TEST_SESSION").unwrap(), "sentinel");
@@ -438,13 +435,13 @@ fn fs_env_session_scope_sets_process_env() {
 
 #[cfg(windows)]
 fn symlink_action(src: &Path, dst: &Path, backup: bool) -> Action {
-    Action::Symlink(SymlinkArgs {
-        src: src.to_string_lossy().into_owned(),
-        dst: dst.to_string_lossy().into_owned(),
-        kind: SymlinkKind::Auto,
+    Action::Symlink(SymlinkArgs::new(
+        src.to_string_lossy().into_owned(),
+        dst.to_string_lossy().into_owned(),
         backup,
-        normalize: false,
-    })
+        false,
+        SymlinkKind::Auto,
+    ))
 }
 
 #[cfg(windows)]
@@ -476,11 +473,7 @@ fn fs_env_user_scope_writes_registry_then_cleans_up() {
     let (tmp, env) = fixture();
     let name = "GREX_TEST_USER_PERSIST";
     let value = "sentinel";
-    let action = Action::Env(EnvArgs {
-        name: name.to_string(),
-        value: value.to_string(),
-        scope: EnvScope::User,
-    });
+    let action = Action::Env(EnvArgs::new(name.to_string(), value.to_string(), EnvScope::User));
 
     let res = FsExecutor::new().execute(&action, &ctx(&env, tmp.path()));
     match res {
@@ -505,11 +498,11 @@ fn fs_env_user_scope_writes_registry_then_cleans_up() {
 #[test]
 fn fs_env_machine_scope_denied_gracefully() {
     let (tmp, env) = fixture();
-    let action = Action::Env(EnvArgs {
-        name: "GREX_TEST_MACHINE_PERSIST".to_string(),
-        value: "x".to_string(),
-        scope: EnvScope::Machine,
-    });
+    let action = Action::Env(EnvArgs::new(
+        "GREX_TEST_MACHINE_PERSIST".to_string(),
+        "x".to_string(),
+        EnvScope::Machine,
+    ));
     let res = FsExecutor::new().execute(&action, &ctx(&env, tmp.path()));
     match res {
         Ok(_) => {
