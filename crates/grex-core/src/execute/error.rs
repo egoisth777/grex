@@ -111,6 +111,27 @@ pub enum ExecError {
         /// Verbatim OS error detail.
         detail: String,
     },
+    /// Symlink was declared with `kind: auto` but `src` does not exist on
+    /// disk, so the Windows executor cannot infer whether to call
+    /// `symlink_file` or `symlink_dir`. The two Win32 syscalls are
+    /// distinct and picking the wrong one yields a reparse point the
+    /// shell will not resolve.
+    ///
+    /// Pack authors hitting this should set `kind: file` or
+    /// `kind: directory` explicitly, or ensure `src` exists before the
+    /// action runs (for example via an earlier `mkdir`). Only surfaced on
+    /// Windows; Unix's single `symlink(2)` does not require the hint.
+    #[error(
+        "cannot infer symlink kind for `{}`: `src` does not exist. \
+         Specify `kind: file` or `kind: directory` explicitly ({detail}).",
+        src.display()
+    )]
+    SymlinkAutoKindUnresolvable {
+        /// Post-expansion `src` path that failed to resolve.
+        src: PathBuf,
+        /// Human-readable context (typically the OS error from stat).
+        detail: String,
+    },
     /// Symlink creation failed *after* an existing `dst` was renamed aside
     /// to the backup slot. The original `dst` no longer exists at the
     /// requested path. Restore attempts also failed, so the backup file is

@@ -35,45 +35,119 @@ pub use self::error::VarExpandError;
 
 /// Environment map used by [`expand`].
 ///
-/// Wraps `HashMap<String, String>` behind a narrow API so a future slice can
-/// swap the backing store (for example, a case-insensitive map on Windows)
-/// without breaking callers.
+/// Keys are stored case-sensitively in `inner` so `iter`-style consumers
+/// (and debug output) see the original casing pack authors wrote. Lookup
+/// via [`VarEnv::get`] is platform-aware:
 ///
-/// Slice 1 stores keys case-sensitively on every platform. Case-insensitive
-/// Windows lookup is deferred to a later slice when this type is wired into
-/// the action-execute context.
+/// * **Unix/macOS** — direct case-sensitive lookup.
+/// * **Windows** — case-insensitive: a secondary `lookup_index` maps the
+///   ASCII-lowercased key to the original-cased key in `inner`. This
+///   mirrors OS behaviour where `%Path%` and `%PATH%` name the same var.
+///
+/// The double-map costs ~1 pointer per entry on Windows only. No new deps
+/// (`UniCase` et al. considered and rejected).
 #[derive(Debug, Default, Clone)]
 pub struct VarEnv {
     inner: HashMap<String, String>,
+    /// Windows-only: lowercase key → original-cased key present in `inner`.
+    ///
+    /// Kept in lock-step with `inner` by [`VarEnv::insert`]. Absent on
+    /// non-Windows targets so Unix behaviour is bit-identical to the prior
+    /// case-sensitive implementation.
+    #[cfg(windows)]
+    lookup_index: HashMap<String, String>,
 }
 
 impl VarEnv {
     /// Construct an empty environment.
     #[must_use]
     pub fn new() -> Self {
-        Self { inner: HashMap::new() }
+        Self {
+            inner: HashMap::new(),
+            #[cfg(windows)]
+            lookup_index: HashMap::new(),
+        }
     }
 
     /// Construct an environment snapshot from the current process.
     ///
-    /// Uses [`std::env::vars`]. Keys are stored case-sensitively even on
-    /// Windows — platform-aware casing is deferred to a later slice when
-    /// this type is wired into the exec context.
+    /// Uses [`std::env::vars`]. On Windows, after collecting the snapshot a
+    /// `HOME → %USERPROFILE%` fallback is materialised as a real entry when
+    /// `HOME` is absent and `USERPROFILE` is present, so pack authors can
+    /// write `${HOME}` portably. The fallback is applied in `from_os` only
+    /// — never in [`VarEnv::new`] or [`VarEnv::insert`] — so tests that
+    /// build envs explicitly see only what they inserted.
     #[must_use]
     pub fn from_os() -> Self {
-        let inner = std::env::vars().collect();
-        Self { inner }
+        let map: HashMap<String, String> = std::env::vars().collect();
+        Self::from_map(map)
+    }
+
+    /// Build a `VarEnv` from an explicit map, applying the same Windows
+    /// HOME→USERPROFILE fallback as [`VarEnv::from_os`].
+    ///
+    /// Exposed primarily for tests and advanced callers that construct a
+    /// synthetic environment. On non-Windows targets this is a thin
+    /// wrapper around the map; on Windows it populates `lookup_index` and
+    /// the HOME fallback.
+    #[must_use]
+    pub fn from_map(map: HashMap<String, String>) -> Self {
+        let mut env = Self::new();
+        for (k, v) in map {
+            env.insert(k, v);
+        }
+        #[cfg(windows)]
+        {
+            if env.get("HOME").is_none() {
+                if let Some(userprofile) = env.get("USERPROFILE").map(str::to_owned) {
+                    env.insert("HOME", userprofile);
+                }
+            }
+        }
+        env
     }
 
     /// Insert or overwrite a variable.
+    ///
+    /// On Windows, also refreshes the case-insensitive lookup index so
+    /// subsequent [`VarEnv::get`] calls match any casing of `name`.
     pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) {
-        self.inner.insert(name.into(), value.into());
+        let name = name.into();
+        let value = value.into();
+        #[cfg(windows)]
+        {
+            let lower = name.to_ascii_lowercase();
+            // Drop any prior original-cased entry that maps to the same
+            // lowercase slot so `iter()` does not surface two casings for
+            // one logical variable.
+            if let Some(prior) = self.lookup_index.get(&lower) {
+                if prior != &name {
+                    self.inner.remove(prior);
+                }
+            }
+            self.lookup_index.insert(lower, name.clone());
+        }
+        self.inner.insert(name, value);
     }
 
     /// Look up a variable by name.
+    ///
+    /// On Windows, an exact-case hit is tried first; on miss, the lookup
+    /// falls back to an ASCII-lowercased match via the secondary index.
+    /// On Unix/macOS the lookup is strictly case-sensitive.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.inner.get(name).map(String::as_str)
+        if let Some(v) = self.inner.get(name) {
+            return Some(v.as_str());
+        }
+        #[cfg(windows)]
+        {
+            let lower = name.to_ascii_lowercase();
+            if let Some(original) = self.lookup_index.get(&lower) {
+                return self.inner.get(original).map(String::as_str);
+            }
+        }
+        None
     }
 }
 
@@ -448,5 +522,48 @@ mod tests {
         assert_eq!(e.get("X"), Some("1"));
         e.insert("X", "2");
         assert_eq!(e.get("X"), Some("2"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn var_env_windows_case_insensitive_get() {
+        let mut e = VarEnv::new();
+        e.insert("PATH", "c:/bin");
+        assert_eq!(e.get("PATH"), Some("c:/bin"));
+        assert_eq!(e.get("Path"), Some("c:/bin"));
+        assert_eq!(e.get("path"), Some("c:/bin"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn var_env_windows_home_fallback_from_userprofile() {
+        // from_map (same fallback path as from_os) synthesises HOME when
+        // USERPROFILE is present and HOME is absent.
+        let mut seed = HashMap::new();
+        seed.insert("USERPROFILE".to_string(), r"C:\Users\y".to_string());
+        let env = VarEnv::from_map(seed);
+        assert_eq!(env.get("HOME"), Some(r"C:\Users\y"));
+        // Case-insensitive lookup also finds it.
+        assert_eq!(env.get("home"), Some(r"C:\Users\y"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn var_env_windows_home_fallback_not_applied_by_insert() {
+        // Plain insert() does NOT synthesise HOME — the fallback is a
+        // from_os/from_map-only convenience.
+        let mut e = VarEnv::new();
+        e.insert("USERPROFILE", r"C:\Users\y");
+        assert_eq!(e.get("HOME"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn var_env_unix_case_sensitive_still() {
+        let mut e = VarEnv::new();
+        e.insert("PATH", "/usr/bin");
+        assert_eq!(e.get("PATH"), Some("/usr/bin"));
+        assert_eq!(e.get("Path"), None);
+        assert_eq!(e.get("path"), None);
     }
 }

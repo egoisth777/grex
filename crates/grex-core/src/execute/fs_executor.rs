@@ -203,22 +203,36 @@ fn create_symlink(src: &Path, dst: &Path, _kind: SymlinkKind) -> Result<(), Exec
 
 #[cfg(windows)]
 fn create_symlink(src: &Path, dst: &Path, kind: SymlinkKind) -> Result<(), ExecError> {
-    let resolved = resolve_windows_symlink_kind(src, kind);
+    let resolved = resolve_windows_symlink_kind(src, kind)?;
     let result = match resolved {
         SymlinkKind::Directory => std::os::windows::fs::symlink_dir(src, dst),
-        // Auto is normalised to File below when src is absent.
+        // `Auto` is resolved to `File` or `Directory` by the helper above;
+        // seeing it here would be a logic bug, so fall back to File
+        // defensively rather than panicking.
         SymlinkKind::File | SymlinkKind::Auto => std::os::windows::fs::symlink_file(src, dst),
     };
     result.map_err(|e| map_windows_symlink_error(dst, e))
 }
 
+/// Resolve a `kind: auto` symlink declaration to `File` or `Directory` by
+/// stat-ing `src`. Explicit kinds pass through unchanged.
+///
+/// When `kind: auto` is set and `src` does not exist, the Win32 file vs.
+/// directory distinction cannot be inferred; returns
+/// [`ExecError::SymlinkAutoKindUnresolvable`] with an actionable message
+/// rather than silently picking `File` and producing a broken reparse
+/// point.
 #[cfg(windows)]
-fn resolve_windows_symlink_kind(src: &Path, kind: SymlinkKind) -> SymlinkKind {
+fn resolve_windows_symlink_kind(src: &Path, kind: SymlinkKind) -> Result<SymlinkKind, ExecError> {
     match kind {
-        SymlinkKind::File | SymlinkKind::Directory => kind,
+        SymlinkKind::File | SymlinkKind::Directory => Ok(kind),
         SymlinkKind::Auto => match std::fs::symlink_metadata(src) {
-            Ok(meta) if meta.file_type().is_dir() => SymlinkKind::Directory,
-            _ => SymlinkKind::File,
+            Ok(meta) if meta.file_type().is_dir() => Ok(SymlinkKind::Directory),
+            Ok(_) => Ok(SymlinkKind::File),
+            Err(e) => Err(ExecError::SymlinkAutoKindUnresolvable {
+                src: src.to_path_buf(),
+                detail: e.to_string(),
+            }),
         },
     }
 }
