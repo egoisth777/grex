@@ -35,6 +35,7 @@ use thiserror::Error;
 use crate::execute::{
     ActionExecutor, ExecCtx, ExecError, ExecStep, FsExecutor, PlanExecutor, Platform,
 };
+use crate::fs::ManifestLock;
 use crate::git::GixBackend;
 use crate::manifest::{append_event, Event, SCHEMA_VERSION};
 use crate::pack::PackValidationError;
@@ -190,13 +191,14 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
     }
 
     let event_log = event_log_path(pack_root);
+    let lock_path = event_lock_path(&event_log);
     let vars = VarEnv::from_os();
     let order = post_order(&graph);
 
     let mut report =
         SyncReport { graph, steps: Vec::new(), halted: None, event_log_warnings: Vec::new() };
 
-    run_actions(&mut report, &order, &vars, &workspace, &event_log, opts.dry_run);
+    run_actions(&mut report, &order, &vars, &workspace, &event_log, &lock_path, opts.dry_run);
     Ok(report)
 }
 
@@ -225,6 +227,12 @@ fn pack_root_dir(pack_root: &Path) -> PathBuf {
 /// Compute the `.grex/grex.jsonl` path next to the pack root.
 fn event_log_path(pack_root: &Path) -> PathBuf {
     pack_root_dir(pack_root).join(".grex").join("grex.jsonl")
+}
+
+/// Compute the sidecar lock path next to the event log. One canonical slot
+/// per pack root — cooperating grex procs serialize through this file.
+fn event_lock_path(event_log: &Path) -> PathBuf {
+    event_log.parent().map_or_else(|| PathBuf::from(".grex.lock"), |p| p.join(".grex.lock"))
 }
 
 /// Aggregate manifest-level + graph-level validators and return their output.
@@ -271,6 +279,7 @@ fn run_actions(
     vars: &VarEnv,
     workspace: &Path,
     event_log: &Path,
+    lock_path: &Path,
     dry_run: bool,
 ) {
     let plan = PlanExecutor::new();
@@ -287,7 +296,13 @@ fn run_actions(
                 if dry_run { plan.execute(action, &ctx) } else { fs.execute(action, &ctx) };
             match step_result {
                 Ok(step) => {
-                    append_step_event(event_log, &pack_name, &step, &mut report.event_log_warnings);
+                    append_step_event(
+                        event_log,
+                        lock_path,
+                        &pack_name,
+                        &step,
+                        &mut report.event_log_warnings,
+                    );
                     report.steps.push(SyncStep {
                         pack: pack_name.clone(),
                         action_idx: idx,
@@ -308,10 +323,26 @@ fn run_actions(
 /// Failures log a warning and are recorded in the report's
 /// `event_log_warnings`; they do not abort the sync (spec: event-log write
 /// failures are non-fatal).
-fn append_step_event(log: &Path, pack: &str, step: &ExecStep, warnings: &mut Vec<String>) {
+///
+/// # Concurrency
+///
+/// The append is serialized through a [`ManifestLock`] held across the
+/// write. The lock is acquired **per action** (not once across the full
+/// traversal) so cooperating grex processes can observe mid-progress log
+/// state between actions; fd-lock acquisition is cheap on modern kernels
+/// and sync runs are dominated by executor side effects, not lock waits.
+/// This closes the bypass gap surfaced by the M3 concurrency review where
+/// `append_event` was called without any cross-process serialisation.
+fn append_step_event(
+    log: &Path,
+    lock_path: &Path,
+    pack: &str,
+    step: &ExecStep,
+    warnings: &mut Vec<String>,
+) {
     let summary = format!("{}:{:?}", step.action_name, step.result);
     let event = Event::Sync { ts: Utc::now(), id: pack.to_string(), sha: summary };
-    if let Err(e) = append_event_with_dir(log, &event) {
+    if let Err(e) = append_event_locked(log, lock_path, &event) {
         tracing::warn!(target: "grex::sync", "manifest append failed: {e}");
         warnings.push(format!("{}: {e}", log.display()));
     }
@@ -321,11 +352,17 @@ fn append_step_event(log: &Path, pack: &str, step: &ExecStep, warnings: &mut Vec
     let _ = SCHEMA_VERSION;
 }
 
-fn append_event_with_dir(log: &Path, event: &Event) -> Result<(), String> {
+/// Acquire [`ManifestLock`] and append one event. Parent dir of the log is
+/// created lazily on first write.
+fn append_event_locked(log: &Path, lock_path: &Path, event: &Event) -> Result<(), String> {
     if let Some(parent) = log.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    append_event(log, event).map_err(|e| e.to_string())
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut lock = ManifestLock::open(log, lock_path).map_err(|e| e.to_string())?;
+    lock.write(|| append_event(log, event)).map_err(|e| e.to_string())?.map_err(|e| e.to_string())
 }
 
 /// Re-export a cheap helper so CLI renderers can label halted steps by node
@@ -333,4 +370,21 @@ fn append_event_with_dir(log: &Path, event: &Event) -> Result<(), String> {
 #[must_use]
 pub fn pack_display_name(node: &PackNode) -> &str {
     &node.name
+}
+
+/// Test-only hook: append one [`Event::Sync`] through the same
+/// [`ManifestLock`]-serialised path the sync driver uses.
+///
+/// Exposed so integration tests under `tests/` can exercise the locked
+/// append helper without spinning up a full pack tree. Not intended for
+/// downstream consumers — the signature may change without notice.
+#[doc(hidden)]
+pub fn __test_append_sync_event(
+    log: &Path,
+    lock_path: &Path,
+    pack: &str,
+    action_name: &str,
+) -> Result<(), String> {
+    let event = Event::Sync { ts: Utc::now(), id: pack.to_string(), sha: action_name.to_string() };
+    append_event_locked(log, lock_path, &event)
 }
