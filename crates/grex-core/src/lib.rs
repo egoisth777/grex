@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod execute;
 pub mod fs;
 pub mod git;
 pub mod lockfile;
@@ -12,6 +13,10 @@ pub mod pack;
 pub mod tree;
 pub mod vars;
 
+pub use execute::{
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, PlanExecutor, Platform,
+    PredicateOutcome, StepKind,
+};
 pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
 pub use pack::{
     run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,
