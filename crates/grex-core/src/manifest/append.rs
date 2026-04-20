@@ -249,6 +249,13 @@ fn emit_semantic_warnings(events: &[Event]) {
                     );
                 }
             }
+            // Action-audit variants are informational for crash recovery;
+            // they intentionally skip the live-set check because a pack's
+            // actions may run against a pack whose `Add` was emitted in a
+            // prior, now-compacted log.
+            Event::ActionStarted { .. }
+            | Event::ActionCompleted { .. }
+            | Event::ActionHalted { .. } => {}
         }
     }
 }

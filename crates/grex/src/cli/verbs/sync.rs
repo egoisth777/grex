@@ -16,7 +16,7 @@
 
 use crate::cli::args::{GlobalFlags, SyncArgs};
 use anyhow::Result;
-use grex_core::sync::{self, SyncError, SyncOptions, SyncReport, SyncStep};
+use grex_core::sync::{self, HaltedContext, SyncError, SyncOptions, SyncReport, SyncStep};
 
 /// Entry point for the `sync` verb.
 ///
@@ -72,6 +72,10 @@ fn run_impl(pack_root: &std::path::Path, opts: &SyncOptions, quiet: bool) -> Run
             eprintln!("execution error: {e}");
             RunOutcome::Exec
         }
+        Err(SyncError::Halted(ctx)) => {
+            print_halted_context(&ctx);
+            RunOutcome::Exec
+        }
         // SyncError is `#[non_exhaustive]`; future variants route to the
         // generic unrecoverable bucket until they get dedicated mapping.
         Err(other) => {
@@ -81,8 +85,24 @@ fn run_impl(pack_root: &std::path::Path, opts: &SyncOptions, quiet: bool) -> Run
     }
 }
 
+/// Format a [`HaltedContext`] to stderr with pack + action context and,
+/// when available, a human recovery hint.
+fn print_halted_context(ctx: &HaltedContext) {
+    eprintln!(
+        "sync halted at pack `{}` action #{} ({}):",
+        ctx.pack, ctx.action_idx, ctx.action_name
+    );
+    eprintln!("  error: {}", ctx.error);
+    if let Some(hint) = &ctx.recovery_hint {
+        eprintln!("  hint:  {hint}");
+    }
+}
+
 fn render_report(report: &SyncReport, dry_run: bool, quiet: bool) {
     if !quiet {
+        if let Some(rec) = &report.pre_run_recovery {
+            print_recovery_report(rec);
+        }
         for s in &report.steps {
             print_step(s, dry_run);
         }
@@ -91,7 +111,32 @@ fn render_report(report: &SyncReport, dry_run: bool, quiet: bool) {
         eprintln!("warning: {w}");
     }
     if let Some(err) = &report.halted {
-        eprintln!("halted: {err}");
+        match err {
+            SyncError::Halted(ctx) => print_halted_context(ctx),
+            other => eprintln!("halted: {other}"),
+        }
+    }
+}
+
+/// Emit a short, informational block listing any crash-recovery
+/// artifacts found before this sync started. Does not block the run.
+fn print_recovery_report(rec: &grex_core::sync::RecoveryReport) {
+    let total = rec.orphan_backups.len() + rec.orphan_tombstones.len() + rec.dangling_starts.len();
+    if total == 0 {
+        return;
+    }
+    eprintln!("warning: pre-run recovery scan found {total} artifact(s) from prior sync:");
+    for p in &rec.orphan_backups {
+        eprintln!("  orphan backup:    {}", p.display());
+    }
+    for p in &rec.orphan_tombstones {
+        eprintln!("  orphan tombstone: {}", p.display());
+    }
+    for d in &rec.dangling_starts {
+        eprintln!(
+            "  dangling start:   pack `{}` action #{} ({}) at {}",
+            d.pack, d.action_idx, d.action_name, d.started_at
+        );
     }
 }
 

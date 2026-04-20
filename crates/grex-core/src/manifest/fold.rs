@@ -40,29 +40,7 @@ fn apply(state: &mut HashMap<PackId, PackState>, event: Event) {
                 },
             );
         }
-        Event::Update { ts, id, field, value } => {
-            if let Some(p) = state.get_mut(&id) {
-                match field.as_str() {
-                    "url" => {
-                        if let Some(s) = value.as_str() {
-                            p.url = s.to_owned();
-                        }
-                    }
-                    "ref" => {
-                        p.ref_spec = value.as_str().map(str::to_owned);
-                    }
-                    "path" => {
-                        if let Some(s) = value.as_str() {
-                            p.path = s.to_owned();
-                        }
-                    }
-                    other => {
-                        tracing::warn!(field = other, "unknown update field, ignoring");
-                    }
-                }
-                p.updated_at = ts;
-            }
-        }
+        Event::Update { ts, id, field, value } => apply_update(state, &id, ts, &field, &value),
         Event::Rm { id, .. } => {
             state.remove(&id);
         }
@@ -72,7 +50,44 @@ fn apply(state: &mut HashMap<PackId, PackState>, event: Event) {
                 p.updated_at = ts;
             }
         }
+        // Action-audit variants are ignored by the fold: they carry
+        // crash-recovery context but do not mutate pack state. See
+        // [`Event::ActionStarted`].
+        Event::ActionStarted { .. }
+        | Event::ActionCompleted { .. }
+        | Event::ActionHalted { .. } => {}
     }
+}
+
+/// Apply an `Update` event: mutate the named field in place, bump
+/// `updated_at`. Unknown fields are logged and ignored (forward-compat).
+fn apply_update(
+    state: &mut HashMap<PackId, PackState>,
+    id: &PackId,
+    ts: chrono::DateTime<chrono::Utc>,
+    field: &str,
+    value: &serde_json::Value,
+) {
+    let Some(p) = state.get_mut(id) else { return };
+    match field {
+        "url" => {
+            if let Some(s) = value.as_str() {
+                p.url = s.to_owned();
+            }
+        }
+        "ref" => {
+            p.ref_spec = value.as_str().map(str::to_owned);
+        }
+        "path" => {
+            if let Some(s) = value.as_str() {
+                p.path = s.to_owned();
+            }
+        }
+        other => {
+            tracing::warn!(field = other, "unknown update field, ignoring");
+        }
+    }
+    p.updated_at = ts;
 }
 
 #[cfg(test)]
