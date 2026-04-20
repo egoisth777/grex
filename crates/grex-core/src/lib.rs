@@ -5,11 +5,13 @@
 #![forbid(unsafe_code)]
 
 pub mod fs;
+pub mod git;
 pub mod lockfile;
 pub mod manifest;
 pub mod pack;
 pub mod vars;
 
+pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
 pub use pack::{
     run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,
     OsKind, PackManifest, PackParseError, PackType, PackValidationError, Predicate, RequireOnFail,

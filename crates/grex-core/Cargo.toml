@@ -14,6 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 gix = { workspace = true }
+gix-worktree-state = { workspace = true }
 fd-lock = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
@@ -28,8 +29,8 @@ tracing-subscriber = { workspace = true }
 [lints]
 workspace = true
 
-# M2 placeholder deps retained for M3+ work (error adapters, git ops, YAML
+# M2 placeholder deps retained for M3+ work (error adapters, YAML
 # manifest parsing, async scheduler). Remove from this list as each is
 # actually used. TODO(m3): delete this block.
 [package.metadata.cargo-machete]
-ignored = ["anyhow", "gix", "serde_yaml", "tokio"]
+ignored = ["anyhow", "serde_yaml", "tokio"]
