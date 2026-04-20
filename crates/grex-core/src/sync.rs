@@ -29,7 +29,7 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::execute::{
@@ -37,7 +37,7 @@ use crate::execute::{
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
-use crate::manifest::{append_event, Event, SCHEMA_VERSION};
+use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 use crate::pack::PackValidationError;
 use crate::tree::{FsPackLoader, PackGraph, PackNode, TreeError, Walker};
 use crate::vars::VarEnv;
@@ -112,6 +112,35 @@ pub struct SyncReport {
     /// Kept as a separate field because spec marks event-log write failures
     /// as non-aborting.
     pub event_log_warnings: Vec<String>,
+    /// `Some(r)` when the pre-run teardown scan found orphaned backup
+    /// files or dangling [`Event::ActionStarted`] records from a prior
+    /// crashed run. Informational only — the report is still returned and
+    /// the sync proceeds. CLI renderers should surface a warning so the
+    /// operator can decide whether to run a future `grex doctor` verb.
+    pub pre_run_recovery: Option<RecoveryReport>,
+}
+
+/// Rich context attached to a [`SyncError::Halted`] variant.
+///
+/// Packages the pack + action position together with the underlying
+/// executor error and an optional human-readable recovery hint. Marked
+/// `#[non_exhaustive]` so future fields (step transcript, timestamp) can
+/// land without breaking `match` arms or struct destructures.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct HaltedContext {
+    /// Name of the pack that owned the halted action.
+    pub pack: String,
+    /// 0-based index into the pack's top-level `actions` vector.
+    pub action_idx: usize,
+    /// Short action kind tag (e.g. `"symlink"`, `"exec"`).
+    pub action_name: String,
+    /// Underlying executor error.
+    pub error: ExecError,
+    /// Optional next-step suggestion for the operator. `None` when no
+    /// generic hint applies — the executor error's own `Display` already
+    /// tells the story.
+    pub recovery_hint: Option<String>,
 }
 
 /// Error taxonomy surfaced by [`run`].
@@ -128,8 +157,22 @@ pub enum SyncError {
         errors: Vec<PackValidationError>,
     },
     /// An action executor returned an error.
+    ///
+    /// Retained for backward compatibility; new call sites should prefer
+    /// [`SyncError::Halted`] which carries full pack + action context.
+    /// Kept non-deprecated because [`From<ExecError>`] still materialises
+    /// the variant for non-sync-loop callers (e.g. ad-hoc helpers).
     #[error("action execution failed: {0}")]
     Exec(#[from] ExecError),
+    /// Action execution halted; full context (pack, action index, error,
+    /// optional recovery hint) lives in [`HaltedContext`]. This is the
+    /// variant the sync driver emits — [`SyncError::Exec`] is only
+    /// surfaced by ancillary code paths.
+    #[error(
+        "sync halted at pack `{}` action #{} ({}): {}",
+        .0.pack, .0.action_idx, .0.action_name, .0.error
+    )]
+    Halted(Box<HaltedContext>),
     /// Another `grex` process (or thread) already holds the workspace-level
     /// lock. The running sync refused to start to avoid racing two concurrent
     /// walkers into the same workspace. If the lock file at `lock_path` is
@@ -166,6 +209,15 @@ impl Clone for SyncError {
                     required: e.to_string(),
                 }],
             },
+            Self::Halted(ctx) => Self::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: ctx.pack.clone(),
+                    required: format!(
+                        "action #{} ({}): {}",
+                        ctx.action_idx, ctx.action_name, ctx.error
+                    ),
+                }],
+            },
             Self::WorkspaceBusy { workspace, lock_path } => {
                 Self::WorkspaceBusy { workspace: workspace.clone(), lock_path: lock_path.clone() }
             }
@@ -188,26 +240,8 @@ impl Clone for SyncError {
 /// the taxonomy.
 pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError> {
     let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
-    if !workspace.exists() {
-        std::fs::create_dir_all(&workspace).map_err(|e| SyncError::Validation {
-            errors: vec![PackValidationError::DependsOnUnsatisfied {
-                pack: "<workspace>".into(),
-                required: format!("{}: {e}", workspace.display()),
-            }],
-        })?;
-    }
-
-    // Workspace-level lock: prevent two concurrent `grex sync` runs from
-    // clobbering each other's clones/checkouts on the same workspace. Fail
-    // fast — the user almost certainly has two terminals open and needs to
-    // see the collision (waiting mode is deferred to M6 concurrency work).
-    let ws_lock_path = workspace_lock_path(&workspace);
-    let mut ws_lock = ScopedLock::open(&ws_lock_path).map_err(|e| SyncError::Validation {
-        errors: vec![PackValidationError::DependsOnUnsatisfied {
-            pack: "<workspace-lock>".into(),
-            required: format!("{}: {e}", ws_lock_path.display()),
-        }],
-    })?;
+    ensure_workspace_dir(&workspace)?;
+    let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
     let _ws_guard = match ws_lock.try_acquire() {
         Ok(Some(g)) => g,
         Ok(None) => {
@@ -216,14 +250,7 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
                 lock_path: ws_lock_path,
             });
         }
-        Err(e) => {
-            return Err(SyncError::Validation {
-                errors: vec![PackValidationError::DependsOnUnsatisfied {
-                    pack: "<workspace-lock>".into(),
-                    required: format!("{}: {e}", ws_lock_path.display()),
-                }],
-            });
-        }
+        Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
     };
 
     let loader = FsPackLoader::new();
@@ -240,11 +267,53 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
     let vars = VarEnv::from_os();
     let order = post_order(&graph);
 
-    let mut report =
-        SyncReport { graph, steps: Vec::new(), halted: None, event_log_warnings: Vec::new() };
+    // Pre-run recovery scan: non-blocking. Surface orphans / dangling
+    // starts to callers so they can inform the operator; a future
+    // `grex doctor` verb will act on them.
+    let pre_run_recovery =
+        scan_recovery(&pack_root_dir(pack_root), &event_log).ok().filter(|r| !r.is_empty());
+
+    let mut report = SyncReport {
+        graph,
+        steps: Vec::new(),
+        halted: None,
+        event_log_warnings: Vec::new(),
+        pre_run_recovery,
+    };
 
     run_actions(&mut report, &order, &vars, &workspace, &event_log, &lock_path, opts.dry_run);
     Ok(report)
+}
+
+/// Create the workspace directory if it does not yet exist.
+fn ensure_workspace_dir(workspace: &Path) -> Result<(), SyncError> {
+    if !workspace.exists() {
+        std::fs::create_dir_all(workspace).map_err(|e| SyncError::Validation {
+            errors: vec![PackValidationError::DependsOnUnsatisfied {
+                pack: "<workspace>".into(),
+                required: format!("{}: {e}", workspace.display()),
+            }],
+        })?;
+    }
+    Ok(())
+}
+
+/// Open (but do not acquire) the workspace-level lock file.
+fn open_workspace_lock(workspace: &Path) -> Result<(ScopedLock, PathBuf), SyncError> {
+    let ws_lock_path = workspace_lock_path(workspace);
+    let ws_lock = ScopedLock::open(&ws_lock_path)
+        .map_err(|e| workspace_lock_err(&ws_lock_path, &e.to_string()))?;
+    Ok((ws_lock, ws_lock_path))
+}
+
+/// Build a `Validation` error describing a workspace-lock failure.
+fn workspace_lock_err(ws_lock_path: &Path, reason: &str) -> SyncError {
+    SyncError::Validation {
+        errors: vec![PackValidationError::DependsOnUnsatisfied {
+            pack: "<workspace-lock>".into(),
+            required: format!("{}: {reason}", ws_lock_path.display()),
+        }],
+    }
 }
 
 /// Compute the default workspace path when `override_` is absent.
@@ -325,6 +394,17 @@ fn visit_post(graph: &PackGraph, id: usize, out: &mut Vec<usize>) {
 }
 
 /// Drive every action for every node; abort on the first [`ExecError`].
+///
+/// Each action is bracketed by three manifest events:
+/// 1. [`Event::ActionStarted`] — appended **before** `execute` returns.
+/// 2. [`Event::ActionCompleted`] — appended on `Ok(step)`.
+/// 3. [`Event::ActionHalted`] — appended on `Err(e)` before returning.
+///
+/// All three writes go through the same [`ManifestLock`]-wrapped path
+/// ([`append_manifest_event`]) and failures are recorded as non-fatal
+/// warnings so the executor's outcome always dominates. The third append
+/// (`ActionHalted`) lets a future `grex doctor` correlate crash recovery
+/// with the exact action that halted.
 fn run_actions(
     report: &mut SyncReport,
     order: &[usize],
@@ -344,29 +424,167 @@ fn run_actions(
         let actions = node.manifest.actions.clone();
         for (idx, action) in actions.iter().enumerate() {
             let ctx = ExecCtx::new(vars, &pack_path, workspace).with_platform(Platform::current());
+            let action_tag = action_kind_tag(action);
+            append_manifest_event(
+                event_log,
+                lock_path,
+                &Event::ActionStarted {
+                    ts: Utc::now(),
+                    pack: pack_name.clone(),
+                    action_idx: idx,
+                    action_name: action_tag.to_string(),
+                },
+                &mut report.event_log_warnings,
+            );
             let step_result =
                 if dry_run { plan.execute(action, &ctx) } else { fs.execute(action, &ctx) };
-            match step_result {
-                Ok(step) => {
-                    append_step_event(
-                        event_log,
-                        lock_path,
-                        &pack_name,
-                        &step,
-                        &mut report.event_log_warnings,
-                    );
-                    report.steps.push(SyncStep {
-                        pack: pack_name.clone(),
-                        action_idx: idx,
-                        exec_step: step,
-                    });
-                }
-                Err(e) => {
-                    report.halted = Some(SyncError::Exec(e));
-                    return;
-                }
+            if !record_action_outcome(
+                report,
+                event_log,
+                lock_path,
+                &pack_name,
+                idx,
+                action_tag,
+                step_result,
+            ) {
+                return;
             }
         }
+    }
+}
+
+/// Record one action outcome into `report` + event log. Returns `false`
+/// when the run must halt (on error); `true` otherwise.
+fn record_action_outcome(
+    report: &mut SyncReport,
+    event_log: &Path,
+    lock_path: &Path,
+    pack_name: &str,
+    idx: usize,
+    action_tag: &'static str,
+    step_result: Result<ExecStep, ExecError>,
+) -> bool {
+    match step_result {
+        Ok(step) => {
+            record_action_ok(report, event_log, lock_path, pack_name, idx, step);
+            true
+        }
+        Err(e) => {
+            record_action_err(report, event_log, lock_path, pack_name, idx, action_tag, e);
+            false
+        }
+    }
+}
+
+/// Success-path bookkeeping: emit legacy `Sync` summary + `ActionCompleted`
+/// audit event, then push the step onto the report.
+fn record_action_ok(
+    report: &mut SyncReport,
+    event_log: &Path,
+    lock_path: &Path,
+    pack_name: &str,
+    idx: usize,
+    step: ExecStep,
+) {
+    append_step_event(event_log, lock_path, pack_name, &step, &mut report.event_log_warnings);
+    append_manifest_event(
+        event_log,
+        lock_path,
+        &Event::ActionCompleted {
+            ts: Utc::now(),
+            pack: pack_name.to_string(),
+            action_idx: idx,
+            result_summary: format!("{:?}", step.result),
+        },
+        &mut report.event_log_warnings,
+    );
+    report.steps.push(SyncStep { pack: pack_name.to_string(), action_idx: idx, exec_step: step });
+}
+
+/// Halt-path bookkeeping: emit `ActionHalted` audit event, then stash the
+/// rich `HaltedContext` into `report.halted`.
+fn record_action_err(
+    report: &mut SyncReport,
+    event_log: &Path,
+    lock_path: &Path,
+    pack_name: &str,
+    idx: usize,
+    action_tag: &'static str,
+    e: ExecError,
+) {
+    let error_summary = truncate_error_summary(&e);
+    append_manifest_event(
+        event_log,
+        lock_path,
+        &Event::ActionHalted {
+            ts: Utc::now(),
+            pack: pack_name.to_string(),
+            action_idx: idx,
+            action_name: action_tag.to_string(),
+            error_summary,
+        },
+        &mut report.event_log_warnings,
+    );
+    let recovery_hint = recovery_hint_for(&e);
+    report.halted = Some(SyncError::Halted(Box::new(HaltedContext {
+        pack: pack_name.to_string(),
+        action_idx: idx,
+        action_name: action_tag.to_string(),
+        error: e,
+        recovery_hint,
+    })));
+}
+
+/// Short stable kind-tag for an [`crate::pack::Action`]. Mirrors the
+/// `ACTION_*` constants used by [`crate::execute::step`] so the audit log
+/// stays uniform.
+fn action_kind_tag(action: &crate::pack::Action) -> &'static str {
+    use crate::pack::Action;
+    match action {
+        Action::Symlink(_) => "symlink",
+        Action::Env(_) => "env",
+        Action::Mkdir(_) => "mkdir",
+        Action::Rmdir(_) => "rmdir",
+        Action::Require(_) => "require",
+        Action::When(_) => "when",
+        Action::Exec(_) => "exec",
+    }
+}
+
+/// Produce a bounded human summary of an [`ExecError`] for
+/// [`Event::ActionHalted::error_summary`]. Keeps the written JSONL line
+/// from pathological blowup when captured stderr is large.
+fn truncate_error_summary(err: &ExecError) -> String {
+    let mut s = err.to_string();
+    if s.len() > ACTION_ERROR_SUMMARY_MAX {
+        s.truncate(ACTION_ERROR_SUMMARY_MAX);
+        s.push_str("…[truncated]");
+    }
+    s
+}
+
+/// Best-effort recovery hint for common [`ExecError`] shapes. Returns
+/// `None` when no generic advice applies; the error's own `Display`
+/// output is already shown by the `Halted` variant's format string.
+fn recovery_hint_for(err: &ExecError) -> Option<String> {
+    match err {
+        ExecError::SymlinkDestOccupied { .. } => Some(
+            "set `backup: true` on the symlink action, or remove the conflicting entry by hand"
+                .into(),
+        ),
+        ExecError::SymlinkPrivilegeDenied { .. } => {
+            Some("enable Windows Developer Mode or re-run grex as administrator".into())
+        }
+        ExecError::SymlinkCreateAfterBackupFailed { backup, .. } => {
+            Some(format!("backup left at `{}`; restore manually then re-run", backup.display()))
+        }
+        ExecError::RmdirNotEmpty { .. } => {
+            Some("set `force: true` on the rmdir action to recurse".into())
+        }
+        ExecError::EnvPersistenceDenied { .. } => {
+            Some("re-run elevated (Machine scope needs admin)".into())
+        }
+        _ => None,
     }
 }
 
@@ -404,6 +622,17 @@ fn append_step_event(
     let _ = SCHEMA_VERSION;
 }
 
+/// Append a single [`Event`] under the shared [`ManifestLock`] path.
+/// Failures are logged and recorded as non-fatal warnings — the spec
+/// marks event-log write failures as non-aborting so a transient disk
+/// error must not kill a sync mid-stream.
+fn append_manifest_event(log: &Path, lock_path: &Path, event: &Event, warnings: &mut Vec<String>) {
+    if let Err(e) = append_event_locked(log, lock_path, event) {
+        tracing::warn!(target: "grex::sync", "manifest append failed: {e}");
+        warnings.push(format!("{}: {e}", log.display()));
+    }
+}
+
 /// Acquire [`ManifestLock`] and append one event. Parent dir of the log is
 /// created lazily on first write.
 fn append_event_locked(log: &Path, lock_path: &Path, event: &Event) -> Result<(), String> {
@@ -439,4 +668,175 @@ pub fn __test_append_sync_event(
 ) -> Result<(), String> {
     let event = Event::Sync { ts: Utc::now(), id: pack.to_string(), sha: action_name.to_string() };
     append_event_locked(log, lock_path, &event)
+}
+
+// ----------------------------------------------------------------------
+// PR E — pre-run teardown scan
+// ----------------------------------------------------------------------
+
+/// One `ActionStarted` event in the manifest log that has no matching
+/// `ActionCompleted` or `ActionHalted` peer.
+///
+/// Dangling starts are the primary crash signal: the process wrote the
+/// pre-action event, then died before the executor returned. Callers
+/// should surface these to the operator (diagnostics only this PR; a
+/// future `grex doctor` verb will act on them).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanglingStart {
+    /// Pack that owned the halted action.
+    pub pack: String,
+    /// 0-based action index within the pack.
+    pub action_idx: usize,
+    /// Short action kind tag.
+    pub action_name: String,
+    /// Timestamp the `ActionStarted` event was written.
+    pub started_at: DateTime<Utc>,
+}
+
+/// Summary of teardown artifacts found under a pack root before a sync
+/// begins.
+///
+/// Built by [`scan_recovery`]. All fields are diagnostic; the sync
+/// proceeds regardless of what the scan finds.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveryReport {
+    /// `<dst>.grex.bak` files sitting next to a non-symlink or missing
+    /// original (symlink-action rollback orphan).
+    pub orphan_backups: Vec<PathBuf>,
+    /// `<path>.grex.bak.<timestamp>` tombstones left by `rmdir` with
+    /// `backup: true`.
+    pub orphan_tombstones: Vec<PathBuf>,
+    /// `ActionStarted` events in the log with no matching
+    /// `ActionCompleted`/`ActionHalted`.
+    pub dangling_starts: Vec<DanglingStart>,
+}
+
+impl RecoveryReport {
+    /// `true` when the scan found nothing worth reporting.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.orphan_backups.is_empty()
+            && self.orphan_tombstones.is_empty()
+            && self.dangling_starts.is_empty()
+    }
+}
+
+/// Walk `pack_root` and the manifest log to find crash-recovery artifacts.
+///
+/// Inspects:
+///
+/// * `<pack_root>/.grex/workspace/**` (and the pack_root itself) for
+///   `.grex.bak` orphans and timestamped `.grex.bak.<ts>` tombstones.
+/// * `event_log` (the manifest JSONL) for `ActionStarted` entries that
+///   have no matching `ActionCompleted` / `ActionHalted` successor.
+///
+/// Non-blocking: scan errors are swallowed to an empty report so a
+/// half-readable directory cannot kill a sync that would otherwise
+/// succeed. Call sites that want to surface scan failures should read
+/// the manifest directly.
+///
+/// # Errors
+///
+/// Returns [`SyncError::Validation`] only when the manifest read itself
+/// reports corruption. Filesystem traversal errors are swallowed.
+pub fn scan_recovery(pack_root: &Path, event_log: &Path) -> Result<RecoveryReport, SyncError> {
+    let mut report = RecoveryReport::default();
+    let workspace_root = pack_root.join(".grex").join("workspace");
+    walk_for_backups(&workspace_root, &mut report);
+    // Also scan the pack root itself — symlink destinations often live at
+    // the top of the tree (e.g. `~/.config/foo`).
+    walk_for_backups(pack_root, &mut report);
+    if event_log.exists() {
+        match read_all(event_log) {
+            Ok(events) => {
+                report.dangling_starts = collect_dangling_starts(&events);
+            }
+            Err(e) => {
+                return Err(SyncError::Validation {
+                    errors: vec![PackValidationError::DependsOnUnsatisfied {
+                        pack: "<event-log>".into(),
+                        required: e.to_string(),
+                    }],
+                });
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// Shallow directory walker (bounded depth = 6) that categorizes
+/// `.grex.bak` and `.grex.bak.<ts>` filenames into the appropriate
+/// report slot. Depth-limited so a pathological workspace with a deep
+/// tree cannot stall the scan; realistic layouts are well under six
+/// levels.
+fn walk_for_backups(root: &Path, report: &mut RecoveryReport) {
+    walk_for_backups_inner(root, report, 0);
+}
+
+fn walk_for_backups_inner(dir: &Path, report: &mut RecoveryReport, depth: u32) {
+    const MAX_DEPTH: u32 = 6;
+    if depth > MAX_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else { continue };
+        if name_str.ends_with(".grex.bak") {
+            report.orphan_backups.push(path.clone());
+            continue;
+        }
+        if let Some(rest) = name_str.rsplit_once(".grex.bak.") {
+            // `rsplit_once` returns `(prefix, suffix)`; suffix is the
+            // timestamp chunk. Accept any non-empty suffix — the exact
+            // timestamp shape is `fs_executor` internal.
+            if !rest.1.is_empty() {
+                report.orphan_tombstones.push(path.clone());
+                continue;
+            }
+        }
+        // Recurse only into real directories (not symlinks, to avoid
+        // traversing into the workspace's cloned repos).
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_dir() {
+            walk_for_backups_inner(&path, report, depth + 1);
+        }
+    }
+}
+
+/// Reduce an event stream to a list of `ActionStarted` records with no
+/// matching terminator.
+///
+/// Matching is positional per `(pack, action_idx)`: a later
+/// `ActionCompleted` or `ActionHalted` with the same key clears the
+/// entry. Whatever remains in the map after the pass is dangling.
+fn collect_dangling_starts(events: &[Event]) -> Vec<DanglingStart> {
+    use std::collections::HashMap;
+    let mut open: HashMap<(String, usize), DanglingStart> = HashMap::new();
+    for ev in events {
+        match ev {
+            Event::ActionStarted { ts, pack, action_idx, action_name } => {
+                open.insert(
+                    (pack.clone(), *action_idx),
+                    DanglingStart {
+                        pack: pack.clone(),
+                        action_idx: *action_idx,
+                        action_name: action_name.clone(),
+                        started_at: *ts,
+                    },
+                );
+            }
+            Event::ActionCompleted { pack, action_idx, .. }
+            | Event::ActionHalted { pack, action_idx, .. } => {
+                open.remove(&(pack.clone(), *action_idx));
+            }
+            _ => {}
+        }
+    }
+    let mut out: Vec<DanglingStart> = open.into_values().collect();
+    out.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    out
 }
