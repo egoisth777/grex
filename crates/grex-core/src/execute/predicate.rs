@@ -17,10 +17,40 @@
 
 use std::path::Path;
 
-use crate::pack::{OsKind, Predicate};
+use crate::pack::{OsKind, Predicate, WhenSpec};
 use crate::vars::{expand, VarEnv};
 
 use super::ctx::ExecCtx;
+
+/// Evaluate the composite `when` gate.
+///
+/// `os` and each combiner compose with AND semantics per `actions.md`.
+/// Shared between [`super::plan::PlanExecutor`] and
+/// [`super::fs_executor::FsExecutor`] so dry-run and wet-run agree on which
+/// branches are taken.
+pub(super) fn evaluate_when_gate(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> bool {
+    if let Some(os) = spec.os {
+        if !evaluate(&Predicate::Os(os), ctx) {
+            return false;
+        }
+    }
+    if let Some(list) = &spec.all_of {
+        if !list.iter().all(|p| evaluate(p, ctx)) {
+            return false;
+        }
+    }
+    if let Some(list) = &spec.any_of {
+        if !list.iter().any(|p| evaluate(p, ctx)) {
+            return false;
+        }
+    }
+    if let Some(list) = &spec.none_of {
+        if list.iter().any(|p| evaluate(p, ctx)) {
+            return false;
+        }
+    }
+    true
+}
 
 /// Evaluate a predicate tree against `ctx`.
 pub(super) fn evaluate(predicate: &Predicate, ctx: &ExecCtx<'_>) -> bool {
