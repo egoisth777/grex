@@ -198,18 +198,18 @@ fn git_backend_concurrent_clone_distinct_dests() {
     let url = Arc::new(url);
 
     let barrier = Arc::new(Barrier::new(2));
-    let (ba, bb) = (Arc::clone(&barrier), Arc::clone(&barrier));
+    let (barrier_a, barrier_b) = (Arc::clone(&barrier), Arc::clone(&barrier));
     let (ua, ub) = (Arc::clone(&url), Arc::clone(&url));
     let ka = Arc::clone(&backend);
     let kb = Arc::clone(&backend);
     // `Arc<GixBackend>::clone` resolves to `Arc::clone`, not the
     // `GitBackend::clone` method. Disambiguate with UFCS.
     let ta = thread::spawn(move || {
-        ba.wait();
+        barrier_a.wait();
         <GixBackend as GitBackend>::clone(&*ka, &ua, &dest_a, Some("main"))
     });
     let tb = thread::spawn(move || {
-        bb.wait();
+        barrier_b.wait();
         <GixBackend as GitBackend>::clone(&*kb, &ub, &dest_b, Some("main"))
     });
     ta.join().unwrap().expect("clone a");
