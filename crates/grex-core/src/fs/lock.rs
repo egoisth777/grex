@@ -29,7 +29,7 @@
 use fd_lock::RwLock;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A cross-process lock guarding manifest reads and writes.
 ///
@@ -75,6 +75,99 @@ impl ManifestLock {
     }
 }
 
+/// A non-blocking cross-process exclusive lock used to serialise
+/// operations on a path-keyed resource (a workspace, a per-repo directory).
+///
+/// Unlike [`ManifestLock`] (which blocks on contention because the critical
+/// section is small and cooperating), `ScopedLock` uses `try_lock_write` and
+/// surfaces the busy condition to the caller. Callers decide whether to
+/// fail fast or retry.
+///
+/// The lock file is created (`O_CREAT`) if missing and kept open for the
+/// lifetime of the struct. A `.lock` suffix is conventional but not required
+/// — any path will do. The lock is released on drop.
+///
+/// # Layering vs `ManifestLock`
+///
+/// `ManifestLock` wraps a blocking read/write critical section around a
+/// manifest append path. `ScopedLock` is a try-lock guard held for an entire
+/// operation (e.g. `sync::run`, `GixBackend::checkout`) where waiting would
+/// be the wrong UX — the user likely launched two processes by accident and
+/// needs to see the collision, not block on a second terminal they forgot
+/// about.
+pub struct ScopedLock {
+    inner: RwLock<File>,
+    path: PathBuf,
+}
+
+impl ScopedLock {
+    /// Open (and create if missing) the sidecar lock file at `lock_path`.
+    /// Does **not** acquire the lock — call [`ScopedLock::try_acquire`].
+    ///
+    /// # Errors
+    ///
+    /// Returns any [`io::Error`] from `OpenOptions::open`.
+    pub fn open(lock_path: &Path) -> io::Result<Self> {
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        Ok(Self { inner: RwLock::new(file), path: lock_path.to_path_buf() })
+    }
+
+    /// Acquire the exclusive write lock, blocking until it is free.
+    ///
+    /// Use for per-resource serialisation where the right behaviour under
+    /// contention is to wait (e.g. two syncs both wanting to `fetch` the
+    /// same clone — the second simply runs after the first finishes).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any OS-level lock error from `fd-lock`.
+    pub fn acquire(&mut self) -> io::Result<fd_lock::RwLockWriteGuard<'_, File>> {
+        self.inner.write()
+    }
+
+    /// Try to acquire the exclusive write lock without blocking.
+    ///
+    /// Returns `Ok(Some(guard))` on success, `Ok(None)` if another process /
+    /// thread already holds the lock, or `Err(e)` on an unexpected OS error.
+    pub fn try_acquire(&mut self) -> io::Result<Option<fd_lock::RwLockWriteGuard<'_, File>>> {
+        match self.inner.try_write() {
+            Ok(guard) => Ok(Some(guard)),
+            Err(e) => {
+                // fd-lock exposes the contended condition via `WouldBlock`
+                // on Unix and `ERROR_LOCK_VIOLATION`/`WouldBlock` on Windows.
+                // Map both to `Ok(None)` so callers distinguish "busy" from
+                // "I/O went wrong".
+                if e.kind() == io::ErrorKind::WouldBlock {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Return the filesystem path of the sidecar lock file. Useful for
+    /// error messages — e.g. "remove `<path>` if stale".
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::fmt::Debug for ScopedLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopedLock").field("path", &self.path).finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +200,46 @@ mod tests {
         let mut l = ManifestLock::open(&m, &p).unwrap();
         let v = l.write(|| "ok").unwrap();
         assert_eq!(v, "ok");
+    }
+
+    #[test]
+    fn scoped_lock_creates_parent() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("nested").join(".grex.sync.lock");
+        let _l = ScopedLock::open(&p).unwrap();
+        assert!(p.exists());
+    }
+
+    #[test]
+    fn scoped_lock_try_acquire_succeeds_once() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join(".grex.sync.lock");
+        let mut l = ScopedLock::open(&p).unwrap();
+        let g = l.try_acquire().unwrap();
+        assert!(g.is_some(), "first acquire must succeed");
+    }
+
+    #[test]
+    fn scoped_lock_second_acquire_reports_busy() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join(".grex.sync.lock");
+        let mut l1 = ScopedLock::open(&p).unwrap();
+        let mut l2 = ScopedLock::open(&p).unwrap();
+        let _g1 = l1.try_acquire().unwrap().expect("first acquires");
+        let g2 = l2.try_acquire().unwrap();
+        assert!(g2.is_none(), "second acquire must report busy while first held");
+    }
+
+    #[test]
+    fn scoped_lock_reacquire_after_drop() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join(".grex.sync.lock");
+        let mut l1 = ScopedLock::open(&p).unwrap();
+        {
+            let _g = l1.try_acquire().unwrap().expect("held");
+        }
+        let mut l2 = ScopedLock::open(&p).unwrap();
+        let g2 = l2.try_acquire().unwrap();
+        assert!(g2.is_some(), "lock reacquires after first guard drops");
     }
 }

@@ -35,7 +35,7 @@ use thiserror::Error;
 use crate::execute::{
     ActionExecutor, ExecCtx, ExecError, ExecStep, FsExecutor, PlanExecutor, Platform,
 };
-use crate::fs::ManifestLock;
+use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
 use crate::manifest::{append_event, Event, SCHEMA_VERSION};
 use crate::pack::PackValidationError;
@@ -130,6 +130,19 @@ pub enum SyncError {
     /// An action executor returned an error.
     #[error("action execution failed: {0}")]
     Exec(#[from] ExecError),
+    /// Another `grex` process (or thread) already holds the workspace-level
+    /// lock. The running sync refused to start to avoid racing two concurrent
+    /// walkers into the same workspace. If the lock file at `lock_path` is
+    /// stale (no other grex is actually running), remove it by hand.
+    #[error(
+        "workspace `{workspace}` is locked by another grex process (remove {lock_path:?} if stale)"
+    )]
+    WorkspaceBusy {
+        /// Resolved workspace directory that the current run tried to lock.
+        workspace: PathBuf,
+        /// Sidecar lock file that is currently held.
+        lock_path: PathBuf,
+    },
 }
 
 impl Clone for SyncError {
@@ -153,6 +166,9 @@ impl Clone for SyncError {
                     required: e.to_string(),
                 }],
             },
+            Self::WorkspaceBusy { workspace, lock_path } => {
+                Self::WorkspaceBusy { workspace: workspace.clone(), lock_path: lock_path.clone() }
+            }
         }
     }
 }
@@ -180,6 +196,35 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
             }],
         })?;
     }
+
+    // Workspace-level lock: prevent two concurrent `grex sync` runs from
+    // clobbering each other's clones/checkouts on the same workspace. Fail
+    // fast — the user almost certainly has two terminals open and needs to
+    // see the collision (waiting mode is deferred to M6 concurrency work).
+    let ws_lock_path = workspace_lock_path(&workspace);
+    let mut ws_lock = ScopedLock::open(&ws_lock_path).map_err(|e| SyncError::Validation {
+        errors: vec![PackValidationError::DependsOnUnsatisfied {
+            pack: "<workspace-lock>".into(),
+            required: format!("{}: {e}", ws_lock_path.display()),
+        }],
+    })?;
+    let _ws_guard = match ws_lock.try_acquire() {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return Err(SyncError::WorkspaceBusy {
+                workspace: workspace.clone(),
+                lock_path: ws_lock_path,
+            });
+        }
+        Err(e) => {
+            return Err(SyncError::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: "<workspace-lock>".into(),
+                    required: format!("{}: {e}", ws_lock_path.display()),
+                }],
+            });
+        }
+    };
 
     let loader = FsPackLoader::new();
     let backend = GixBackend::new();
@@ -233,6 +278,13 @@ fn event_log_path(pack_root: &Path) -> PathBuf {
 /// per pack root — cooperating grex procs serialize through this file.
 fn event_lock_path(event_log: &Path) -> PathBuf {
     event_log.parent().map_or_else(|| PathBuf::from(".grex.lock"), |p| p.join(".grex.lock"))
+}
+
+/// Compute the sidecar lock path for the workspace itself. Lives at
+/// `<workspace>/.grex.sync.lock` — the workspace dir is already created by
+/// the `run()` prologue, so the lock sidecar lands beside the child clones.
+fn workspace_lock_path(workspace: &Path) -> PathBuf {
+    workspace.join(".grex.sync.lock")
 }
 
 /// Aggregate manifest-level + graph-level validators and return their output.
