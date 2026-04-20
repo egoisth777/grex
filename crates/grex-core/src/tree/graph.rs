@@ -30,6 +30,10 @@ use crate::pack::PackManifest;
 /// into it. `DependsOn` edges are *referential*: the walker recorded that the
 /// parent named this dep but did not hydrate it — resolution happens at
 /// validate time via `DependsOnValidator`.
+///
+/// Marked `#[non_exhaustive]` so new edge relations (e.g. `Provides`,
+/// `Conflicts`) can land without breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EdgeKind {
     /// Parent owns/walks this child (cloned + recursed).
@@ -43,6 +47,11 @@ pub enum EdgeKind {
 /// Every field is `pub` by design: the graph is a read-only value type, and
 /// exposing the full record here is simpler than hand-curating accessors for
 /// each field.
+///
+/// Marked `#[non_exhaustive]` so audit fields (resolved ref SHA, hydration
+/// timestamps) can land without breaking library consumers who destructure
+/// the struct.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct PackNode {
     /// Stable index inside the graph (equal to the `Vec` position).
@@ -61,6 +70,10 @@ pub struct PackNode {
 }
 
 /// An edge in the walked graph.
+///
+/// Marked `#[non_exhaustive]` so future edge-level metadata (priority,
+/// guard expression) is non-breaking for library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct PackEdge {
     /// Origin node id.
