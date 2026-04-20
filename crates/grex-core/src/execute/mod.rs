@@ -6,8 +6,8 @@
 //!
 //! * [`PlanExecutor`] — produces [`ExecStep`] records describing what a
 //!   wet-run _would_ do without mutating state. Safe to call over any pack.
-//! * A future `FsExecutor` (slice 5b) will perform the side effects and
-//!   return the same [`ExecStep`] shape with [`ExecResult::PerformedChange`].
+//! * [`FsExecutor`] (slice 5b) performs the side effects and returns the
+//!   same [`ExecStep`] shape with [`ExecResult::PerformedChange`].
 //!
 //! Keeping the trait narrow (one `execute` method, read-only [`ExecCtx`])
 //! means implementations can be tested in isolation and swapped freely.
@@ -20,6 +20,7 @@
 //! `false` until slice 5b grows real backends.
 
 pub mod error;
+pub mod fs_executor;
 pub mod plan;
 
 mod ctx;
@@ -30,6 +31,7 @@ use crate::pack::Action;
 
 pub use ctx::{ExecCtx, Platform};
 pub use error::ExecError;
+pub use fs_executor::FsExecutor;
 pub use plan::PlanExecutor;
 pub use step::{ExecResult, ExecStep, PredicateOutcome, StepKind};
 

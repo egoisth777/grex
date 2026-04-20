@@ -21,6 +21,11 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 
+# Windows-only: HKCU / HKLM env-variable persistence for `env` action in
+# FsExecutor. Minimal-feature build — we only touch string values.
+[target.'cfg(windows)'.dependencies]
+winreg = { version = "0.55", default-features = false }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
@@ -32,5 +37,10 @@ workspace = true
 # M2 placeholder deps retained for M3+ work (error adapters, YAML
 # manifest parsing, async scheduler). Remove from this list as each is
 # actually used. TODO(m3): delete this block.
+#
+# `winreg` is only referenced from a `#[cfg(windows)]` path in the FsExecutor
+# but is declared as a `[target.'cfg(windows)']` dep, so cargo-machete sees it
+# as unused on non-Windows hosts. Ignore it here until machete grows proper
+# target-cfg awareness.
 [package.metadata.cargo-machete]
-ignored = ["anyhow", "serde_yaml", "tokio"]
+ignored = ["anyhow", "serde_yaml", "tokio", "winreg"]
