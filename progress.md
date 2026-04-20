@@ -3,7 +3,10 @@
 ## Where we are
 M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** all shipped to `main`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4 (plugin system) next.
 
-## Last endpoint (2026-04-20, post-M3-review)
+## Last endpoint (2026-04-20, plan/M4)
+- **Plan/M4 endpoint**: M4 Stage A-E scope locked, `milestone.md` M4 rewritten (plugin system), `openspec/feat-grex/spec.md` M4 section appended, `.omne/cfg/plugin-api.md` gaps filled (`Registry`, `register_builtins`, idempotency, `plugin-inventory` flag). Branch `plan/m4-plugin-system`. Next: M4-A implementation PR.
+
+## Prior endpoint (2026-04-20, post-M3-review)
 - Main head: `7ce186e` (post review series; all 5 fix PRs merged).
 - Workspace tests: **316 → 344** (+28 across fix PRs).
 - Review series: 8 parallel reviews (4 codex adversarial + 4 analytical subagent); 7 returned, security stalled twice.
@@ -140,11 +143,13 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-Start **M4 (plugin system) planning**. Scope to be refined against `.omne/cfg/` + `milestone.md`:
-- Custom action plugins (Tier 2+ actions beyond the 7 Tier 1).
-- Lockfile `actions_hash` idempotency skip (wire `ExecResult::Skipped`).
-- Plugin discovery + loading.
-- Possibly: `reg_key` / `psversion` real probes (currently stubs).
-- CLI: `--ref` override, `--only <pattern>`, lockfile read/write.
+Implement **M4-A** (ActionPlugin trait + Registry struct): move 7 built-ins behind trait; executor dispatch via registry lookup. Branch off `main` after plan PR merges.
 
-See `.omne/cfg/m3-review-findings.md` for the review-series master finding list and mapping table (finding → PR → resolution).
+Stage order reminder: A → B → C → D → E.
+- A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait.
+- B: Lockfile `actions_hash` compute + compare → `ExecResult::Skipped` emission.
+- C: `reg_key` + `psversion` real probes (replace stubs).
+- D: CLI `--ref`, `--only <pattern>`, lockfile read/write formalized.
+- E: Discovery hook (`inventory` behind `plugin-inventory` feature); v2 foundation.
+
+See `.omne/cfg/m3-review-findings.md` for the M3 review-series master finding list and mapping table (finding → PR → resolution).

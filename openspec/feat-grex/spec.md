@@ -111,3 +111,36 @@ Action-argument strings in `pack.yaml` carry variable placeholders as literals (
 - Wiring expansion into action execute path (slice 5).
 - Windows-specific case-insensitive env (later slice).
 - Auto-mapping `$HOME` → `%USERPROFILE%` on Windows (documented in actions.md; implemented when wiring env context).
+
+## M4 — Plugin system (Stage A slicing)
+
+M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-core::execute`. M4 formalizes plugin extensibility (trait + registry) and wires the lockfile idempotency path (`ExecResult::Skipped`) that PR #14 reserved. External plugin loading (dylib / WASM) stays deferred to v2; in-process registration is the only loading path in v1.
+
+### Requirements
+
+1. **`ActionPlugin` trait** at `crates/grex-core/src/plugin/mod.rs`. Method signatures (exact):
+   - `fn name(&self) -> &str`
+   - `async fn execute(&self, ctx: &ExecCtx<'_>, args: &Value) -> Result<ExecOutcome, ExecError>`
+   Rollback is NOT on the trait surface; it stays in the `ActionOutcome` contract as it does in the M3 executor shape. Rationale: matches the current executor's outcome-carrying model; promoting to a trait method is an M5+ decision if pack-type drivers require it.
+2. **`Registry` struct** with methods:
+   - `fn register<P: ActionPlugin + 'static>(&mut self, plugin: P)`
+   - `fn get(&self, name: &str) -> Option<&dyn ActionPlugin>`
+   - `fn bootstrap() -> Self` — returns a `Registry` pre-populated with all 7 built-ins via `register_builtins(&mut reg)`.
+3. **Built-in re-export**: the 7 current built-ins (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) move behind the `ActionPlugin` trait. Executor dispatch becomes `registry.get(action.name()).ok_or(UnknownAction)` instead of a direct match on the parsed `Action` enum. The `Action` enum stays as the parsed form; the trait layer is the execution form.
+4. **Lockfile `actions_hash`** computed per pack as sha256 of canonical JSON of the pack's `actions:` list plus the resolved commit sha. On sync, if the stored hash equals the recomputed hash the executor emits `ExecResult::Skipped { pack_path, actions_hash }` and performs no work for that pack. Stored in the existing lockfile JSONL via a new `Skipped` event; the variant was reserved in PR #14.
+5. **Real predicate probes**:
+   - `reg_key`: Windows uses the `winreg` crate (`RegOpenKeyEx` + `RegQueryValueEx`); non-Windows returns `PredicateNotSupported`.
+   - `psversion`: Windows probes `$PSVersionTable.PSVersion` via `powershell.exe -NoProfile -Command`; non-Windows returns `PredicateNotSupported`.
+   Both replace the conservative-false stubs flagged in M3 open questions.
+6. **CLI additions**:
+   - `--ref <sha|branch|tag>` — global override of a pack's default ref at sync time.
+   - `--only <glob>` — filters `grex sync` to matching pack paths (glob matching via `globset`).
+   - Lockfile is auto-read at sync start (already wired in M3; M4 formalizes the read path for `Skipped` comparison) and auto-written at sync end.
+7. **Discovery**: M4-E lands `register_builtins(&mut Registry)` as the canonical registration path. Optional `inventory::submit!` auto-registration lives behind the feature flag `plugin-inventory` (default off in v1) so `grex-core` carries no hard `inventory` dependency. External dylib / WASM loading remains v2.
+
+### Out of scope
+
+- External plugin loading: dylib (`libloading`), WASM (`wasmtime` / `extism`), `abi_stable` wiring.
+- Third-party crate plugin distribution (out-of-repo plugins).
+- Rollback as a trait method — stays in the `ActionOutcome` contract; promote to trait in M5+ if pack-type drivers require it.
+- `PackTypePlugin` trait work — that is M5 scope per `milestone.md`.
