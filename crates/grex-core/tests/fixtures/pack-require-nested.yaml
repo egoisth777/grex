@@ -1,0 +1,13 @@
+schema_version: "1"
+name: nested-guard
+type: declarative
+
+actions:
+  - require:
+      all_of:
+        - any_of:
+            - cmd_available: git
+            - none_of:
+                - os: linux
+        - os: windows
+      on_fail: warn
