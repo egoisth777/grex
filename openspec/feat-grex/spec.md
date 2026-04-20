@@ -80,3 +80,34 @@ Single crate `grex` (bin + lib). CLI verbs dispatch into the library. Data flow:
 ## Acceptance
 
 All success-criteria items PASS in the GitHub Actions matrix (Windows + Ubuntu + macOS × stable + beta toolchains). Lean4 `.olean` builds clean. `cargo install grex` works from crates.io on all three OSes. At least one reference pack repo (`grex-inst` or successor) is published as an installable example.
+
+## M3 Stage B — Variable expansion (slice 1)
+
+Action-argument strings in `pack.yaml` carry variable placeholders as literals (parser stays pure; see Stage A). Expansion is a **pure transformation** applied at action-execute time against an environment map.
+
+### Requirements
+
+1. **Supported forms** (equivalent, author-choice):
+   - `$NAME` — POSIX bare form. NAME boundary is the first byte not matching `[A-Za-z0-9_]` or end-of-input.
+   - `${NAME}` — POSIX braced form. Must close with `}`.
+   - `%NAME%` — Windows form. Must close with a second `%`.
+2. **Escapes** (the only escapes recognised):
+   - `$$` → literal `$`.
+   - `%%` → literal `%`.
+   - Backslash escapes (`\$`, `\%`) are NOT recognised; backslash passes through literally.
+3. **Platform scoping**: POSIX forms (`$NAME`, `${NAME}`) are accepted on every platform. `%NAME%` is also accepted on every platform at parse/expand time — `pack.yaml` is cross-platform-authored. Whether the variable resolves is determined purely by the env map passed at expand time.
+4. **Variable NAME regex**: `^[A-Za-z_][A-Za-z0-9_]*$`. Names violating this regex produce `InvalidVariableName` at expand time. Parser does NOT validate names — pack-parse stays a pure structural transform.
+5. **Missing variable policy**: a well-formed placeholder whose NAME is not present in the env map produces `MissingVariable { name, offset }`. Error is actionable (includes the name and byte offset into the input string).
+6. **Malformed placeholders**: `${FOO` (unclosed brace), `%FOO` (unclosed percent), `${}` (empty brace), `trailing$` (bare `$` with no following name char), `50% off` (isolated `%` with no second `%`) all produce typed errors at the offset of the opening token. Single `%` in the middle of a string is treated as an unclosed percent expansion — literal `%` requires `%%`.
+7. **No recursive expansion**: the expanded value is not re-scanned. If `$A` expands to `$B`, the final string contains the literal four bytes `$B`.
+8. **API shape** (`crates/grex-core/src/vars/`):
+   - `pub fn expand(input: &str, env: &VarEnv) -> Result<String, VarExpandError>`
+   - `VarEnv::new() / from_os() / insert / get`
+   - `VarExpandError` is `thiserror`-derived; `Display` messages include offset and, where applicable, variable name.
+9. **Platform-specific casing**: Stage B slice 1 stores env keys case-sensitively on every platform. Windows case-insensitive lookup is deferred to a later slice when wiring into the exec context; documented on `VarEnv::from_os`.
+
+### Out of scope for slice 1
+
+- Wiring expansion into action execute path (slice 5).
+- Windows-specific case-insensitive env (later slice).
+- Auto-mapping `$HOME` → `%USERPROFILE%` on Windows (documented in actions.md; implemented when wiring env context).
