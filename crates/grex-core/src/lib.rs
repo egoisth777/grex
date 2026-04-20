@@ -10,6 +10,7 @@ pub mod git;
 pub mod lockfile;
 pub mod manifest;
 pub mod pack;
+pub mod sync;
 pub mod tree;
 pub mod vars;
 
