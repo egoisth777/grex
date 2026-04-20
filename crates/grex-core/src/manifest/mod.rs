@@ -22,5 +22,5 @@ pub mod fold;
 pub use append::{append_event, read_all};
 pub use compact::compact;
 pub use error::ManifestError;
-pub use event::{Event, PackId, PackState, SCHEMA_VERSION};
+pub use event::{Event, PackId, PackState, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 pub use fold::fold;

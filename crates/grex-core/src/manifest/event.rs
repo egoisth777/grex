@@ -21,8 +21,23 @@ pub const SCHEMA_VERSION: &str = "1";
 /// ```json
 /// {"op":"add","ts":"...","id":"...","url":"...","path":"...","type":"...","schema_version":"1"}
 /// ```
+///
+/// # Action audit variants (PR E)
+///
+/// [`Event::ActionStarted`] is appended **before** the executor runs an
+/// action. [`Event::ActionCompleted`] is appended **after** success;
+/// [`Event::ActionHalted`] is appended **after** failure. A dangling
+/// `ActionStarted` with no matching completed/halted peer is a crash
+/// candidate — see [`crate::sync::scan_recovery`].
+///
+/// These variants are ignored by [`crate::manifest::fold::fold`] (they do
+/// not mutate pack state) so the folded projection is unchanged from the
+/// pre-PR-E schema; old readers decoding a log that contains them still
+/// parse successfully because the `op` discriminants are known lowercase
+/// tags with plain fields (unknown fields are tolerated per module docs).
+#[non_exhaustive]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "op", rename_all = "lowercase")]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum Event {
     /// Register a new pack in the workspace.
     Add {
@@ -62,25 +77,86 @@ pub enum Event {
         /// Pack identifier.
         id: PackId,
     },
-    /// Record a successful sync of the pack to a specific git SHA.
+    /// Record a completed action step. Emitted on the success path of
+    /// [`crate::sync::run`] along with [`Event::ActionCompleted`]; the
+    /// `sha` field carries a short human summary of the step outcome
+    /// (kept for backward-compat with M2 readers that folded only on this
+    /// variant).
     Sync {
         /// Event timestamp.
         ts: DateTime<Utc>,
         /// Pack identifier.
         id: PackId,
-        /// Resolved commit SHA.
+        /// Resolved commit SHA or short action summary.
         sha: String,
+    },
+    /// An executor is **about to run** an action. Written before
+    /// `executor.execute` so a crash mid-action leaves a discoverable
+    /// trace. A dangling `ActionStarted` with no matching completed/halted
+    /// peer signals a crashed run — see [`crate::sync::scan_recovery`].
+    ActionStarted {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Pack identifier owning the action.
+        pack: PackId,
+        /// 0-based index into the pack's top-level `actions` vector.
+        action_idx: usize,
+        /// Short action kind tag (e.g. `"symlink"`, `"mkdir"`).
+        action_name: String,
+    },
+    /// The executor returned `Ok`. Paired with a preceding
+    /// [`Event::ActionStarted`]. `result_summary` is a short
+    /// human-readable string (e.g. `"performed_change"`).
+    ActionCompleted {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Pack identifier owning the action.
+        pack: PackId,
+        /// 0-based index into the pack's top-level `actions` vector.
+        action_idx: usize,
+        /// Short outcome summary tag.
+        result_summary: String,
+    },
+    /// The executor returned `Err`. Paired with a preceding
+    /// [`Event::ActionStarted`]. `error_summary` is the error's `Display`
+    /// output truncated to a small limit so an audit trail line stays
+    /// single-event-sized.
+    ActionHalted {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Pack identifier owning the action.
+        pack: PackId,
+        /// 0-based index into the pack's top-level `actions` vector.
+        action_idx: usize,
+        /// Short action kind tag.
+        action_name: String,
+        /// Truncated error message (at most
+        /// [`ACTION_ERROR_SUMMARY_MAX`] bytes).
+        error_summary: String,
     },
 }
 
+/// Max bytes retained in [`Event::ActionHalted::error_summary`].
+///
+/// Truncation keeps one halt record on one JSONL line without
+/// pathological blowup when an executor surfaces a multi-KB error
+/// (e.g. captured stderr from an exec failure).
+pub const ACTION_ERROR_SUMMARY_MAX: usize = 2048;
+
 impl Event {
     /// Return the pack id the event applies to.
+    ///
+    /// Action-audit variants return the `pack` field; legacy variants
+    /// return their `id`.
     pub fn id(&self) -> &PackId {
         match self {
             Event::Add { id, .. }
             | Event::Update { id, .. }
             | Event::Rm { id, .. }
             | Event::Sync { id, .. } => id,
+            Event::ActionStarted { pack, .. }
+            | Event::ActionCompleted { pack, .. }
+            | Event::ActionHalted { pack, .. } => pack,
         }
     }
 
@@ -90,7 +166,10 @@ impl Event {
             Event::Add { ts, .. }
             | Event::Update { ts, .. }
             | Event::Rm { ts, .. }
-            | Event::Sync { ts, .. } => *ts,
+            | Event::Sync { ts, .. }
+            | Event::ActionStarted { ts, .. }
+            | Event::ActionCompleted { ts, .. }
+            | Event::ActionHalted { ts, .. } => *ts,
         }
     }
 }
@@ -185,5 +264,56 @@ mod tests {
         let e = Event::Sync { ts: ts(), id: "a".into(), sha: "s".into() };
         assert_eq!(e.id(), "a");
         assert_eq!(e.ts(), ts());
+    }
+
+    #[test]
+    fn action_started_roundtrip() {
+        let e = Event::ActionStarted {
+            ts: ts(),
+            pack: "warp".into(),
+            action_idx: 3,
+            action_name: "symlink".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""op":"action_started""#));
+        assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
+    }
+
+    #[test]
+    fn action_completed_roundtrip() {
+        let e = Event::ActionCompleted {
+            ts: ts(),
+            pack: "warp".into(),
+            action_idx: 1,
+            result_summary: "performed_change".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""op":"action_completed""#));
+        assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
+    }
+
+    #[test]
+    fn action_halted_roundtrip() {
+        let e = Event::ActionHalted {
+            ts: ts(),
+            pack: "warp".into(),
+            action_idx: 2,
+            action_name: "exec".into(),
+            error_summary: "non-zero exit 3".into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""op":"action_halted""#));
+        assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
+    }
+
+    #[test]
+    fn legacy_lowercase_tags_still_parse() {
+        // Historical writers used `rename_all = "lowercase"`. snake_case
+        // and lowercase are identical for the single-word legacy tags, so
+        // old logs must still decode.
+        let raw = r#"{"op":"add","ts":"2026-04-19T10:00:00Z","id":"a","url":"u","path":"a","type":"declarative","schema_version":"1"}"#;
+        let _: Event = serde_json::from_str(raw).unwrap();
+        let raw = r#"{"op":"sync","ts":"2026-04-19T10:00:00Z","id":"a","sha":"deadbeef"}"#;
+        let _: Event = serde_json::from_str(raw).unwrap();
     }
 }

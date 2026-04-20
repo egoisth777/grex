@@ -6,6 +6,12 @@ use thiserror::Error;
 
 use crate::vars::VarExpandError;
 
+/// Cap on captured-stderr length stored on
+/// [`ExecError::ExecNonZero::stderr`]. A 2 KiB window is enough to surface
+/// the tail of a typical shell error while keeping a halt-event log line
+/// bounded.
+pub const EXEC_STDERR_CAPTURE_MAX: usize = 2048;
+
 /// Errors surfaced by [`crate::execute::ActionExecutor::execute`]
 /// implementations.
 ///
@@ -86,12 +92,20 @@ pub enum ExecError {
     },
     /// An `exec` action returned a non-zero exit status under
     /// `on_fail: error`.
+    ///
+    /// `stderr` contains the captured standard-error stream, truncated to
+    /// [`EXEC_STDERR_CAPTURE_MAX`] bytes to keep a halt-event log line at
+    /// a bounded size. Empty string if the child produced none. PR E
+    /// recovery review: previously `cmd.status()` discarded output, so
+    /// debugging non-zero exits was blind.
     #[error("exec exited with status {status}: {command}")]
     ExecNonZero {
         /// Process exit status.
         status: i32,
         /// Display-friendly command line.
         command: String,
+        /// Captured stderr (truncated to [`EXEC_STDERR_CAPTURE_MAX`] bytes).
+        stderr: String,
     },
     /// An `exec` action failed to spawn (program not found, permissions, ...).
     #[error("exec spawn failed for `{command}`: {detail}")]

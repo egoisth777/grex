@@ -33,7 +33,7 @@ use crate::pack::{
 use crate::vars::{expand, VarEnv};
 
 use super::ctx::ExecCtx;
-use super::error::{io_to_fs, ExecError};
+use super::error::{io_to_fs, ExecError, EXEC_STDERR_CAPTURE_MAX};
 use super::predicate::{evaluate, evaluate_when_gate};
 use super::step::{
     ExecResult, ExecStep, PredicateOutcome, StepKind, ACTION_ENV, ACTION_EXEC, ACTION_MKDIR,
@@ -495,8 +495,8 @@ fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
         Some(s) => Some(require_path(expand_field(s, ctx.vars, "exec.cwd")?)?),
         None => None,
     };
-    let (cmdline, status) = spawn_exec(spec, cwd.as_deref(), ctx.vars)?;
-    let result = classify_exec(status, spec.on_fail, &cmdline)?;
+    let (cmdline, status, stderr) = spawn_exec(spec, cwd.as_deref(), ctx.vars)?;
+    let result = classify_exec(status, spec.on_fail, &cmdline, &stderr)?;
     Ok(ExecStep {
         action_name: Cow::Borrowed(ACTION_EXEC),
         result,
@@ -504,11 +504,19 @@ fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     })
 }
 
+/// Spawn the child and collect its exit code plus captured stderr.
+///
+/// Uses [`Command::output`] instead of [`Command::status`] so stderr is
+/// retained and can be folded into
+/// [`ExecError::ExecNonZero::stderr`] when the child exits non-zero.
+/// Stdout is captured as a side effect but currently dropped — the M3
+/// spec does not surface it and keeping the capture bounded is enough for
+/// the halt-diagnostics use case.
 fn spawn_exec(
     spec: &ExecSpec,
     cwd: Option<&Path>,
     vars: &VarEnv,
-) -> Result<(String, i32), ExecError> {
+) -> Result<(String, i32, String), ExecError> {
     let (mut cmd, display) = build_command(spec, vars)?;
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -519,11 +527,27 @@ fn spawn_exec(
             cmd.env(k, expanded);
         }
     }
-    let status = cmd.status().map_err(|e| ExecError::ExecSpawnFailed {
+    let out = cmd.output().map_err(|e| ExecError::ExecSpawnFailed {
         command: display.clone(),
         detail: e.to_string(),
     })?;
-    Ok((display, status.code().unwrap_or(-1)))
+    let code = out.status.code().unwrap_or(-1);
+    let stderr = truncate_stderr(&out.stderr);
+    Ok((display, code, stderr))
+}
+
+/// Lossy-decode captured stderr bytes into UTF-8 and truncate the tail to
+/// [`EXEC_STDERR_CAPTURE_MAX`] bytes.
+///
+/// We keep the **tail** (most recent output) because shell errors and
+/// stack traces typically surface diagnostic content at the end. Returns
+/// the empty string if the child produced no stderr.
+fn truncate_stderr(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    let start = bytes.len().saturating_sub(EXEC_STDERR_CAPTURE_MAX);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
 fn build_command(spec: &ExecSpec, vars: &VarEnv) -> Result<(Command, String), ExecError> {
@@ -560,17 +584,27 @@ fn build_shell_command(line: &str, vars: &VarEnv) -> Result<(Command, String), E
     Ok((cmd, expanded))
 }
 
-fn classify_exec(status: i32, on_fail: ExecOnFail, cmdline: &str) -> Result<ExecResult, ExecError> {
+fn classify_exec(
+    status: i32,
+    on_fail: ExecOnFail,
+    cmdline: &str,
+    stderr: &str,
+) -> Result<ExecResult, ExecError> {
     if status == 0 {
         return Ok(ExecResult::PerformedChange);
     }
     match on_fail {
-        ExecOnFail::Error => Err(ExecError::ExecNonZero { status, command: cmdline.to_string() }),
+        ExecOnFail::Error => Err(ExecError::ExecNonZero {
+            status,
+            command: cmdline.to_string(),
+            stderr: stderr.to_string(),
+        }),
         ExecOnFail::Warn => {
             tracing::warn!(
                 target: "grex::execute",
                 status,
                 command = %cmdline,
+                stderr = %stderr,
                 "exec returned non-zero (on_fail=warn)"
             );
             Ok(ExecResult::PerformedChange)
