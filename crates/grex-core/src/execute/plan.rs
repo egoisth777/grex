@@ -79,7 +79,7 @@ fn require_path(expanded: String) -> Result<PathBuf, ExecError> {
     Ok(PathBuf::from(expanded))
 }
 
-fn plan_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let src = require_path(expand_field(&args.src, ctx.vars, "symlink.src")?)?;
     let dst = require_path(expand_field(&args.dst, ctx.vars, "symlink.dst")?)?;
     let result = classify_symlink(&src, &dst);
@@ -106,7 +106,7 @@ fn classify_symlink(src: &Path, dst: &Path) -> ExecResult {
     }
 }
 
-fn plan_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let value = expand_field(&args.value, ctx.vars, "env.value")?;
     let result = classify_env(&args.name, &value, ctx.vars);
     Ok(ExecStep {
@@ -123,7 +123,7 @@ fn classify_env(name: &str, value: &str, vars: &VarEnv) -> ExecResult {
     }
 }
 
-fn plan_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "mkdir.path")?)?;
     let result =
         if path.is_dir() { ExecResult::AlreadySatisfied } else { ExecResult::WouldPerformChange };
@@ -134,7 +134,7 @@ fn plan_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError
     })
 }
 
-fn plan_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "rmdir.path")?)?;
     let result =
         if path.exists() { ExecResult::WouldPerformChange } else { ExecResult::AlreadySatisfied };
@@ -145,7 +145,7 @@ fn plan_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError
     })
 }
 
-fn plan_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let satisfied = evaluate_combiner(&spec.combiner, ctx);
     let outcome =
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
@@ -184,7 +184,7 @@ fn evaluate_combiner(combiner: &Combiner, ctx: &ExecCtx<'_>) -> bool {
     }
 }
 
-fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let branch_taken = evaluate_when_gate(spec, ctx);
     let nested_steps = if branch_taken { plan_nested(&spec.actions, ctx)? } else { Vec::new() };
     let result = if branch_taken { ExecResult::WouldPerformChange } else { ExecResult::NoOp };
@@ -195,12 +195,15 @@ fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
     })
 }
 
-fn plan_nested(actions: &[Action], ctx: &ExecCtx<'_>) -> Result<Vec<ExecStep>, ExecError> {
+pub(crate) fn plan_nested(
+    actions: &[Action],
+    ctx: &ExecCtx<'_>,
+) -> Result<Vec<ExecStep>, ExecError> {
     let planner = PlanExecutor;
     actions.iter().map(|a| planner.execute(a, ctx)).collect()
 }
 
-fn plan_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn plan_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let cwd = expand_optional_path(spec.cwd.as_deref(), ctx.vars, "exec.cwd")?;
     let cmdline = build_exec_cmdline(spec, ctx.vars)?;
     Ok(ExecStep {

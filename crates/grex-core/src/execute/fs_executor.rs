@@ -91,7 +91,7 @@ fn require_path(expanded: String) -> Result<PathBuf, ExecError> {
 
 // ---------------------------------------------------------------- symlink
 
-fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let src = require_path(expand_field(&args.src, ctx.vars, "symlink.src")?)?;
     let dst = require_path(expand_field(&args.dst, ctx.vars, "symlink.dst")?)?;
 
@@ -248,7 +248,7 @@ fn map_windows_symlink_error(dst: &Path, err: std::io::Error) -> ExecError {
 
 // ---------------------------------------------------------------- env
 
-fn fs_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let value = expand_field(&args.value, ctx.vars, "env.value")?;
     apply_env(&args.name, &value, args.scope)?;
     Ok(ExecStep {
@@ -324,7 +324,7 @@ fn apply_env_machine(_name: &str, _value: &str) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- mkdir
 
-fn fs_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "mkdir.path")?)?;
     let result = apply_mkdir(&path, args.mode.as_deref())?;
     Ok(ExecStep {
@@ -370,7 +370,7 @@ fn apply_mode(_path: &Path, _mode: Option<&str>) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- rmdir
 
-fn fs_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "rmdir.path")?)?;
     let result = apply_rmdir(&path, args.backup, args.force)?;
     Ok(ExecStep {
@@ -431,7 +431,7 @@ fn backup_with_timestamp(path: &Path) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- require
 
-fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let satisfied = evaluate_combiner(&spec.combiner, ctx);
     let outcome =
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
@@ -470,7 +470,11 @@ fn classify_require(satisfied: bool, on_fail: RequireOnFail) -> Result<ExecResul
 
 // ---------------------------------------------------------------- when
 
-fn fs_when(exec: &FsExecutor, spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_when(
+    exec: &FsExecutor,
+    spec: &WhenSpec,
+    ctx: &ExecCtx<'_>,
+) -> Result<ExecStep, ExecError> {
     let branch_taken = evaluate_when_gate(spec, ctx);
     let (result, nested_steps) = if branch_taken {
         let mut out = Vec::with_capacity(spec.actions.len());
@@ -490,7 +494,7 @@ fn fs_when(exec: &FsExecutor, spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<Exec
 
 // ---------------------------------------------------------------- exec
 
-fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let cwd = match spec.cwd.as_deref() {
         Some(s) => Some(require_path(expand_field(s, ctx.vars, "exec.cwd")?)?),
         None => None,

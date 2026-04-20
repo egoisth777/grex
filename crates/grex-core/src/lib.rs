@@ -29,5 +29,10 @@ pub use vars::{expand, VarEnv, VarExpandError};
 
 #[doc(hidden)]
 pub mod scheduler {}
-#[doc(hidden)]
-pub mod plugin {}
+
+pub mod plugin;
+
+pub use plugin::{
+    register_builtins, ActionPlugin, EnvPlugin, ExecPlugin, MkdirPlugin, Registry, RequirePlugin,
+    RmdirPlugin, SymlinkPlugin, WhenPlugin,
+};

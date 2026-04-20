@@ -326,6 +326,23 @@ impl Action {
         seq.iter().map(Self::from_yaml).collect()
     }
 
+    /// Short kebab-case identifier matching the YAML key that produced this
+    /// variant (and the name plugins register under). Returned as
+    /// `&'static str` so callers can zero-cost compare against constants
+    /// like [`crate::execute::ACTION_SYMLINK`].
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Symlink(_) => "symlink",
+            Self::Env(_) => "env",
+            Self::Mkdir(_) => "mkdir",
+            Self::Rmdir(_) => "rmdir",
+            Self::Require(_) => "require",
+            Self::When(_) => "when",
+            Self::Exec(_) => "exec",
+        }
+    }
+
     /// Walk this action (and any nested `when.actions`) yielding every
     /// [`SymlinkArgs`] reached.
     ///
