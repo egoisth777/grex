@@ -31,7 +31,7 @@ struct MockLoader {
     manifests: HashMap<PathBuf, Result<PackManifest, MockLoaderError>>,
 }
 
-/// Cheap clonable error shim so `MockLoader` can hand out the same error
+/// Cheap cloneable error shim so `MockLoader` can hand out the same error
 /// more than once (`TreeError` is not `Clone`).
 #[derive(Debug, Clone)]
 enum MockLoaderError {
