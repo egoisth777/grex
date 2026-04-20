@@ -1,39 +1,54 @@
 # progress — grex
 
 ## Where we are
-M1 scaffold underway; pending commit.
+M0/M1/M2/M2-hardening shipped to `main`. On `feat/m3-pack-sync` (cut from main, no commits) ready to start M3 Stage A.
 
 ## Last endpoint (2026-04-19)
-- 2026-04-19 M1 scaffold in progress: cargo workspace + clap stubs + CI + LICENSE
-- Pack taxonomy locked: `meta`, `declarative`, `scripted` (3 built-in pack-types).
-- Tier 1 action vocabulary locked at 7 primitives: `symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`.
-- Action vocab grounded in real-world E:\repos scan (3 PowerShell scripts, 945 LOC) — frequencies drove the shortlist.
-- Plugin trait APIs spec'd: `ActionPlugin`, `PackTypePlugin`, `Fetcher`. In-process registry v1; external loading v2.
-- `grex-inst` fixture/reference repo created + pushed (first-party example consumer of the pack protocol).
-- CLI verb surface frozen at 12: `init add rm ls status sync update doctor serve import run exec`.
-- Manifest split: `grex.jsonl` intent log + `grex.lock.jsonl` resolved state, both JSONL + atomic temp+rename.
-- Sync-as-universal-op principle adopted: every pack inherits `grex sync` for free.
-- Lean4 scope for v1 narrowed to one invariant: `Grex.Scheduler.no_double_lock`.
-- Embedded MCP stdio JSON-RPC confirmed (not subprocess wrapper).
-- TUI, external plugins, non-git fetchers, additional action/pack-types pushed to v2.
+- PR #1 merged — M1 scaffold: cargo workspace + clap skeleton + 78 tests + CI.
+- PR #2 merged — M2 manifest + lockfile JSONL + atomic fs + fd-lock; 174 tests; adversarial review applied.
+- PR #3 merged — M2 hardening: 4 src fixes + 10 CI quality gates; 180 tests, 119 in grex-core.
+
+## Test status
+180 tests / 20 suites / ~30s, all green on `main`.
+
+## CI gates active
+1. `fmt --check`
+2. `clippy -D warnings` (workspace lints: `too_many_lines = "deny"` ≤50 LOC, `cognitive_complexity = "deny"` ≤25)
+3. `cargo test --workspace`
+4. coverage (cargo-llvm-cov, threshold 60% — TODO M5: raise to 80%)
+5. `rustdoc -D warnings`
+6. msrv (Rust 1.75)
+7. cargo-machete (unused deps)
+8. cargo-deny (advisories + licenses + bans + sources)
+9. cargo-audit (RUSTSEC, `.cargo/audit.toml` ignores)
+10. code-metrics (CBO ≤10/module, cyclomatic ≤15/fn via rust-code-analysis)
+11. typos (`.typos.toml` allowlist)
+
+Supplementary:
+- semver-checks (skipped pre-v0.1.0, runs on release)
+- Dependabot weekly (cargo + github-actions)
+- CodeRabbit AI review
 
 ## Decisions locked
-- Pack = git repo + `.grex/` contract dir; outside `.grex/` is opaque.
-- Every pack is a meta-pack (uniform model, zero-children = leaf).
-- Repo sync is universal; install/update/teardown is per-pack-type.
-- 3 built-in pack-types, 7 built-in actions, both extensible via in-process plugin registry.
-- Manifest is append-only JSONL; lockfile separate JSONL; both atomic-rename on compact.
-- Scheduler = tokio runtime + bounded semaphore + per-pack `.grex-lock` + `fd-lock` for manifest.
-- Embedded MCP server; methods mirror CLI verbs 1:1.
-- Lean4 proves exactly one scheduler invariant in v1.
-- Plugins v1 are in-process Rust modules registered at startup; v2 opens dylib/WASM.
-- v1 ships without TUI, external plugin loading, or non-git fetchers.
+- Pack = git repo + `.grex/` contract dir; uniform meta-pack model (zero-children = leaf).
+- 3 built-in pack-types: `meta`, `declarative`, `scripted`.
+- 7 Tier 1 actions: `symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`.
+- Manifest = append-only JSONL; lockfile = separate JSONL; both atomic temp+rename.
+- Scheduler = tokio runtime + bounded semaphore.
+- Embedded MCP stdio JSON-RPC server (not subprocess wrapper).
+- Lean4 v1 invariant scope: `Grex.Scheduler.no_double_lock` only.
+- Plugin traits: `ActionPlugin`, `PackTypePlugin`, `Fetcher`. In-process registry v1.
+- v1 excludes: TUI (ratatui), external plugin loading, additional pack-types/actions.
+- Git backend: `gix` 0.70 (pure-Rust).
+- License: MIT.
+- Crate name: `grex` (binary `grex`).
+- Workspace: nested `crates/` w/ `grex` bin + `grex-core` lib + `grex-plugins-builtin` lib.
 
 ## Open questions
-- crates.io name: `grex` likely taken. Fallbacks: `grex-cli`, `grex-rm`, scoped `@grex-org/cli`.
-- Git backend: `git2` (libgit2 bindings, proven) vs `gix` (pure Rust, faster, less mature). Decision by M3.
-- License: MIT vs Apache-2.0 vs dual. Decision by M7.
-- Plugin trait ABI versioning strategy for v2 (semver on trait crate? ABI hash? inventory slot schema?).
+- crates.io name `grex` likely taken (real package: regex tool). Fallbacks: `grex-cli`, `grex-rm`, scoped `@grex-org/cli`. Check at v0.1.0 publish.
+- Windows mandatory `ManifestLock` — needs `append_event_on_fd` API refactor (deferred from M2 hardening).
+- Coverage threshold raise 60→80% as M3+ adds tests.
+- Semver baseline at v0.1.0 publish.
 
 ## Files to read for 0-state hop-in
 1. `CLAUDE.md`
@@ -43,4 +58,7 @@ M1 scaffold underway; pending commit.
 5. `.omne/cfg/README.md`
 
 ## Next action
-Review M1 scaffold, run cargo check, commit, then start M2 (manifest + lockfile).
+Start **M3 Stage A**: define `grex-core::pack` module — `PackManifest`, `PackType` (meta/declarative/scripted), `Action` enum (7 Tier 1 primitives), serde-yaml parse, round-trip tests. Pure logic, no git/I/O.
+
+## After M3 Stage A
+**M3 Stage B**: gix integration + sync engine + recursive pack tree walk + cycle detection + wire into `grex sync` verb.
