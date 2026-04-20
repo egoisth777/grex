@@ -1,9 +1,20 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B all shipped to `main`. **M3 complete (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb. Main head `d160c7c feat(m3-b6): grex sync verb`. M4 (plugin system) next.
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** all shipped to `main`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4 (plugin system) next.
 
-## Last endpoint (2026-04-20)
+## Last endpoint (2026-04-20, post-M3-review)
+- Main head: `7ce186e` (post review series; all 5 fix PRs merged).
+- Workspace tests: **316 → 344** (+28 across fix PRs).
+- Review series: 8 parallel reviews (4 codex adversarial + 4 analytical subagent); 7 returned, security stalled twice.
+- **Fix PRs landed (this session):**
+  - **PR #14 — semver hygiene**: `#[non_exhaustive]` on all public enums + arg structs (forward-compat for plugins); `ExecResult::Skipped` variant reserved for M4 lockfile idempotency; Action names switched to `Cow<'static, str>` to allow plugin heap names.
+  - **PR #15 — data integrity**: Manifest event stream bracketed by `ActionStarted` / `ActionCompleted` / `ActionHalted` (pre-existing `Sync` event remains readable); `ManifestLock` wraps every sync-path append (per-action scope); `SyncError::Halted(Box<HaltedContext>)` for partial-apply surfacing.
+  - **PR #16 — concurrency**: workspace-level fd-lock at `<workspace>/.grex.sync.lock` (non-blocking, fail-fast); per-repo fd-lock at `<dest>.grex-backend.lock` (sibling, not inside dest); dirty-check revalidated after lock acquire + immediately before `materialise_tree`.
+  - **PR #17 — cross-platform**: `VarEnv` two-map (inner + Windows `lookup_index` for ASCII-lowercase lookup); `HOME -> USERPROFILE` fallback only in `from_os` / `from_map` (not `insert`); `DupSymlinkValidator` case-folds `dst` on Windows/macOS (ASCII only); `kind: auto` errors when src missing (new `ExecError::SymlinkAutoKindUnresolvable`).
+  - **PR #18 — recovery**: Symlink backup rollback on create failure (rename `dst -> .grex.bak` succeeds but create fails → rename back; new `SymlinkCreateAfterBackupFailed` if rollback also fails); startup recovery scan (informational only; auto-cleanup deferred to `grex doctor` M4+); `ExecNonZero` carries truncated stderr (2 KB cap).
+
+## Prior milestone endpoint (pre-review)
 - PR #1 merged — M1 scaffold: cargo workspace + clap skeleton + 78 tests + CI.
 - PR #2 merged — M2 manifest + lockfile JSONL + atomic fs + fd-lock; 174 tests; adversarial review applied.
 - PR #3 merged — M2 hardening: 4 src fixes + 10 CI quality gates; 180 tests, 119 in grex-core.
@@ -19,15 +30,21 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B all shipped to `main`. **M3 complete 
 - Workspace tests: 180 → 316 (+136). Main head commit `d160c7c feat(m3-b6): grex sync verb`.
 - **.omne main** (ahead 2 earlier session) — 8 MUST-FIX spec gap closures: `when` precedence, empty-list validity, duplicate-symlink policy, variable escape `$$`/`%%`, YAML anchors/aliases rejected, type authority, lockfile hash scope, `children` vs `depends_on` semantics; plus name-regex letter-led tighten.
 
-## Architecture state (post-M3)
+## Architecture state (post-M3 + post-review)
 - `grex-core` modules: `pack`, `vars`, `git`, `tree`, `execute`, `pack::validate`, `sync`.
 - 2 executor impls (`PlanExecutor`, `FsExecutor`) share `ActionExecutor` trait — interchangeable by value.
 - 2 validator traits: `Validator` (per-manifest) + `GraphValidator` (per-graph).
 - `Walker` + `FsPackLoader` + `GixBackend` + validators + executors composed in `sync::run()`.
 - DFS post-order traversal (children installed before parent).
+- **New modules (review series):** `tests/concurrency.rs`, `tests/sync_recovery.rs`, `tests/sync_concurrent_append.rs`.
+- **`VarEnv`** is now a two-map (inner + Windows `lookup_index` for ASCII case-insensitive lookup).
+- **Workspace + repo fd-locks**: `<workspace>/.grex.sync.lock` (non-blocking, fail-fast) and `<dest>.grex-backend.lock` (sibling, not inside dest).
+- **Event stream**: `ActionStarted` / `ActionCompleted` / `ActionHalted` bracket each action append; `Sync` event retained for reader compat.
+- **Error surface**: `SyncError::Halted(Box<HaltedContext>)` carries partial-apply context; `ExecNonZero` truncates stderr at 2 KB.
+- **Recovery scan**: pre-run informational scan of stale locks + incomplete event brackets; auto-cleanup deferred to `grex doctor` (M4+).
 
 ## Test status
-316 tests all green on `main` (up from 180 pre-M3; +136 across Stage A + Stage B).
+**344 tests** all green on `main` (316 pre-review + 28 from fix PRs).
 
 ## CI gates active
 1. `fmt --check`
@@ -82,6 +99,23 @@ Supplementary:
 - Env persistence: session scope on all platforms; Windows user/machine via winreg; Unix user/machine returns NotSupported.
 - Symlink backup via `<dst>.grex.bak` rename.
 
+## Decisions locked during M3 review series (2026-04-20)
+- `#[non_exhaustive]` policy applied to all public enums + arg structs (forward-compat for plugin crates; full list in PR #14 description).
+- `ExecResult::Skipped` reserved for M4 lockfile idempotency; not emitted in M3.
+- Action names carried as `Cow<'static, str>` to allow plugin heap-allocated names (stays free for built-ins).
+- Manifest events bracketed by `ActionStarted` / `ActionCompleted` / `ActionHalted`; existing `Sync` event stays readable.
+- `ManifestLock` wraps every sync-path append (per-action scope, not per-sync).
+- Workspace-level fd-lock at `<workspace>/.grex.sync.lock` (non-blocking, fail-fast — concurrent sync is a hard error).
+- Per-repo fd-lock at `<dest>.grex-backend.lock` (sibling file, NOT inside dest so it survives dest wipe).
+- Dirty-check revalidated after lock acquire AND immediately before `materialise_tree` (TOCTOU closure).
+- `VarEnv` case-insensitive on Windows via two-map (inner preserves original case; `lookup_index` is ASCII-lowercase → inner key).
+- `HOME` → `USERPROFILE` fallback only in `from_os` / `from_map` constructors, NOT in `insert` (insert stays literal).
+- `DupSymlinkValidator` case-folds `dst` on Windows/macOS (ASCII only; full Unicode case-folding deferred).
+- `kind: auto` errors when `src` is missing (new `ExecError::SymlinkAutoKindUnresolvable`) — previously silently defaulted to file.
+- Symlink backup rollback on create failure: if `dst → .grex.bak` rename succeeds but create fails, rename back; new `SymlinkCreateAfterBackupFailed` if rollback also fails.
+- Startup recovery scan is informational only (logs stale locks + incomplete brackets); auto-cleanup deferred to `grex doctor` M4+.
+- `ExecNonZero` carries truncated stderr (2 KB cap) for diagnosis without unbounded event size.
+
 ## Open questions
 - crates.io name `grex` likely taken (real package: regex tool). Fallbacks: `grex-cli`, `grex-rm`, scoped `@grex-org/cli`. Check at v0.1.0 publish.
 - Windows mandatory `ManifestLock` — needs `append_event_on_fd` API refactor (deferred from M2 hardening).
@@ -92,6 +126,12 @@ Supplementary:
 - `reg_key` / `psversion` predicates are conservative stubs returning false — upgrade to real probes in M4.
 - Lockfile idempotency skip (via `actions_hash` compare) deferred from m3-b6 — M4 concern.
 
+## Carry-forwards from M3 review series (open)
+- **Perf TODOs** (not blocking M4): `Arc<PackManifest>` to avoid clones; batched manifest appends under single lock; predicate cache on `ExecCtx`; `Cow<str>` hot path in `vars::expand`; `gix` shallow-clone option exposed via `SyncOptions`.
+- **Docs TODOs**: README status line stale (claims M1 — actual: M3 complete); `CONTRIBUTING.md` missing; PR template missing; ~39% rustdoc gap concentrated in `grex` CLI crate; only 1 source file has rustdoc code examples.
+- **Security review**: codex attempted twice, stalled at synthesis both times — separate retry warranted (not on critical path for M4 kickoff).
+- **LOW / later**: Unicode NFC/NFD path equality on macOS; Windows `\\?\` long-path prefix for MAX_PATH; POSIX mode-on-Windows warning for `mkdir { mode: ... }`.
+
 ## Files to read for 0-state hop-in
 1. `CLAUDE.md`
 2. `progress.md` (this file)
@@ -100,9 +140,11 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-Start **M4 (plugin system)**. Scope to be refined against `.omne/cfg/` + `milestone.md`:
+Start **M4 (plugin system) planning**. Scope to be refined against `.omne/cfg/` + `milestone.md`:
 - Custom action plugins (Tier 2+ actions beyond the 7 Tier 1).
-- Lockfile `actions_hash` idempotency skip.
+- Lockfile `actions_hash` idempotency skip (wire `ExecResult::Skipped`).
 - Plugin discovery + loading.
 - Possibly: `reg_key` / `psversion` real probes (currently stubs).
 - CLI: `--ref` override, `--only <pattern>`, lockfile read/write.
+
+See `.omne/cfg/m3-review-findings.md` for the review-series master finding list and mapping table (finding → PR → resolution).
