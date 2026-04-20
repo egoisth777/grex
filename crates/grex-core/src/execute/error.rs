@@ -111,6 +111,37 @@ pub enum ExecError {
         /// Verbatim OS error detail.
         detail: String,
     },
+    /// Symlink creation failed *after* an existing `dst` was renamed aside
+    /// to the backup slot. The original `dst` no longer exists at the
+    /// requested path. Restore attempts also failed, so the backup file is
+    /// the only remaining artifact and the user must recover manually.
+    ///
+    /// Surfaced instead of plain [`ExecError::FsIo`] so callers can
+    /// distinguish "symlink create raced" (dst still present) from the
+    /// dangerous "backup orphan" state pinned by the M3 recovery review.
+    ///
+    /// NOTE: Logging backup intent into the event log before the rename is
+    /// a separate, related gap tracked for PR E (halt-state persistence);
+    /// this variant covers the in-executor rollback shape only.
+    #[error(
+        "symlink create failed after backup, dst `{}` could not be restored from `{}` (create: {create_error}; restore: {})",
+        dst.display(),
+        backup.display(),
+        restore_error.as_deref().unwrap_or("<none>"),
+    )]
+    SymlinkCreateAfterBackupFailed {
+        /// Original destination path the action targeted.
+        dst: PathBuf,
+        /// Surviving backup path (`<dst>.grex.bak`).
+        backup: PathBuf,
+        /// Error returned by the symlink create syscall.
+        create_error: String,
+        /// `Some(detail)` if the rename-back attempt also failed, else
+        /// `None`. When `None`, callers should prefer
+        /// [`ExecError::FsIo`] — this variant only fires when restore
+        /// also fails.
+        restore_error: Option<String>,
+    },
 }
 
 /// Helper: wrap a [`std::io::Error`] into an [`ExecError::FsIo`] with op +

@@ -105,9 +105,17 @@ fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecErr
             if !args.backup {
                 return Err(ExecError::SymlinkDestOccupied { dst: dst.clone() });
             }
-            backup_path(&dst)?;
-            create_symlink(&src, &dst, args.kind)?;
-            ExecResult::PerformedChange
+            // NOTE (PR E): logging backup intent into the event log before
+            // the rename belongs to halt-state persistence and is tracked
+            // separately; the in-executor rollback below is the minimum
+            // needed to avoid a "backup orphan" when create fails.
+            let backup = backup_path(&dst)?;
+            match create_symlink(&src, &dst, args.kind) {
+                Ok(()) => ExecResult::PerformedChange,
+                Err(create_err) => {
+                    return Err(rollback_or_orphan(&dst, &backup, create_err));
+                }
+            }
         }
     };
 
@@ -143,10 +151,13 @@ fn classify_symlink_dst(src: &Path, dst: &Path) -> SymlinkState {
 
 /// Rename `dst` to `<dst>.grex.bak`, overwriting any prior backup.
 ///
+/// Returns the backup path on success so the caller can attempt a rollback
+/// if the next step (e.g. symlink creation) fails.
+///
 /// This is a deliberately simple convention — one canonical backup slot per
 /// path. More elaborate tombstones (timestamped, rotated) belong in the
 /// future teardown runner.
-fn backup_path(dst: &Path) -> Result<(), ExecError> {
+fn backup_path(dst: &Path) -> Result<PathBuf, ExecError> {
     let mut backup = dst.as_os_str().to_owned();
     backup.push(".grex.bak");
     let backup = PathBuf::from(backup);
@@ -154,7 +165,35 @@ fn backup_path(dst: &Path) -> Result<(), ExecError> {
     // we let the rename surface a clean error rather than masking it.
     let _ = std::fs::remove_file(&backup);
     let _ = std::fs::remove_dir_all(&backup);
-    std::fs::rename(dst, &backup).map_err(|e| io_to_fs("rename", dst.to_path_buf(), e))
+    std::fs::rename(dst, &backup).map_err(|e| io_to_fs("rename", dst.to_path_buf(), e))?;
+    Ok(backup)
+}
+
+/// After a backup-then-create sequence where create failed, attempt to
+/// rename the backup back to `dst`. Maps the outcome to an appropriate
+/// [`ExecError`]:
+///
+/// * restore succeeds → [`ExecError::FsIo`] with op `"symlink"` (the
+///   original create failure, dst restored — user sees a clean symlink
+///   error and the prior file is back where it was).
+/// * restore fails → [`ExecError::SymlinkCreateAfterBackupFailed`] carrying
+///   both error strings so the operator knows the backup is the only
+///   remaining artifact.
+fn rollback_or_orphan(dst: &Path, backup: &Path, create_err: ExecError) -> ExecError {
+    let create_detail = create_err.to_string();
+    match std::fs::rename(backup, dst) {
+        Ok(()) => {
+            // Backup is restored; surface the original create failure so the
+            // caller knows the action did not complete.
+            create_err
+        }
+        Err(restore_err) => ExecError::SymlinkCreateAfterBackupFailed {
+            dst: dst.to_path_buf(),
+            backup: backup.to_path_buf(),
+            create_error: create_detail,
+            restore_error: Some(restore_err.to_string()),
+        },
+    }
 }
 
 #[cfg(unix)]
