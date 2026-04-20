@@ -40,13 +40,16 @@ pub enum ExecResult {
     /// Action was a no-op: `when.os` branch not taken, or `require` failed
     /// with `on_fail: skip | warn`. Not an error.
     NoOp,
-    /// Action was deliberately skipped by a caller-level policy (lockfile
-    /// actions-hash match, user decline, plugin veto, …). The `reason`
-    /// string is informational — consumers should render it verbatim. No
-    /// executor emits this variant in M3; it is reserved for M4+.
+    /// Action was deliberately skipped by a caller-level policy — in M4 the
+    /// trigger is a lockfile `actions_hash` match on the pack. The variant
+    /// carries the pack path and the matched hash so downstream audit
+    /// tooling can render "pack X at hash Y was skipped" without having to
+    /// thread extra context.
     Skipped {
-        /// Short human-readable explanation for audit / CLI display.
-        reason: String,
+        /// Path to the pack whose actions were skipped.
+        pack_path: std::path::PathBuf,
+        /// Actions-hash that matched the lockfile entry.
+        actions_hash: String,
     },
 }
 
@@ -178,3 +181,23 @@ pub const ACTION_REQUIRE: &str = "require";
 pub const ACTION_WHEN: &str = "when";
 /// Built-in `exec` action identifier.
 pub const ACTION_EXEC: &str = "exec";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skipped_carries_pack_path_and_hash() {
+        let r = ExecResult::Skipped {
+            pack_path: PathBuf::from("/tmp/packs/foo"),
+            actions_hash: "a".repeat(64),
+        };
+        match r {
+            ExecResult::Skipped { pack_path, actions_hash } => {
+                assert_eq!(pack_path, PathBuf::from("/tmp/packs/foo"));
+                assert_eq!(actions_hash.len(), 64);
+            }
+            _ => panic!("expected Skipped"),
+        }
+    }
+}

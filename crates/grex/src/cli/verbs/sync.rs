@@ -142,17 +142,20 @@ fn print_recovery_report(rec: &grex_core::sync::RecoveryReport) {
 
 fn print_step(s: &SyncStep, dry_run: bool) {
     use grex_core::ExecResult;
-    // `ExecResult::Skipped { reason }` gets a dedicated line so the
-    // reason string surfaces verbatim instead of being lost into a tag.
-    // Every other variant renders via the single-token tag path. The
-    // wildcard arm at the end is required because `ExecResult` is
-    // `#[non_exhaustive]`; future variants route to a generic `other`
-    // tag until they earn dedicated rendering.
-    if let ExecResult::Skipped { reason } = &s.exec_step.result {
+    // `ExecResult::Skipped { pack_path, actions_hash }` gets a dedicated
+    // line so the pack path + matched hash surface verbatim instead of
+    // being lost into a single tag. M4-B S2 reshaped the variant from
+    // `{ reason }` to carry the richer lockfile context. Every other
+    // variant renders via the single-token tag path. The wildcard arm
+    // at the end is required because `ExecResult` is `#[non_exhaustive]`;
+    // future variants route to a generic `other` tag until they earn
+    // dedicated rendering.
+    if let ExecResult::Skipped { pack_path, actions_hash } = &s.exec_step.result {
         println!(
-            "[skipped] pack={pack} action={kind} reason={reason}",
+            "[skipped] pack={pack} path={path} hash={hash}",
             pack = s.pack,
-            kind = s.exec_step.action_name,
+            path = pack_path.display(),
+            hash = actions_hash,
         );
         return;
     }

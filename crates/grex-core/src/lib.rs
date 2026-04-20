@@ -4,21 +4,25 @@
 
 #![forbid(unsafe_code)]
 
+pub mod env;
 pub mod execute;
 pub mod fs;
 pub mod git;
 pub mod lockfile;
+pub mod log;
 pub mod manifest;
 pub mod pack;
 pub mod sync;
 pub mod tree;
 pub mod vars;
 
+pub use env::EnvResolver;
 pub use execute::{
     ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
     PredicateOutcome, StepKind,
 };
 pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
+pub use log::{ActionLogger, LogLevel, TracingLogger};
 pub use pack::{
     run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,
     OsKind, PackManifest, PackParseError, PackType, PackValidationError, Predicate, RequireOnFail,

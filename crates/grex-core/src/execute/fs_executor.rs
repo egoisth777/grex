@@ -25,11 +25,13 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use crate::pack::{
     Action, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs, RequireOnFail, RequireSpec,
     RmdirArgs, SymlinkArgs, SymlinkKind, WhenSpec,
 };
+use crate::plugin::Registry;
 use crate::vars::{expand, VarEnv};
 
 use super::ctx::ExecCtx;
@@ -43,18 +45,46 @@ use super::ActionExecutor;
 
 /// Wet-run [`ActionExecutor`] — performs real filesystem and process work.
 ///
-/// Stateless by contract; cheap to clone and safe to share across threads.
+/// Dispatch is registry-driven (M4-B S1): every action is resolved to an
+/// [`crate::plugin::ActionPlugin`] via the embedded [`Registry`] and the
+/// plugin's `execute` method is invoked. The registry is wrapped in an
+/// [`Arc`] so the executor stays `Clone` and cheap to share across
+/// threads; cloning the executor bumps a refcount rather than duplicating
+/// plugin state.
+///
 /// Callers are responsible for driving the sequence (plan-phase validators,
 /// ordering, rollback on failure); `FsExecutor` operates on one action at a
 /// time and never looks at peers.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FsExecutor;
+#[derive(Debug, Clone)]
+pub struct FsExecutor {
+    registry: Arc<Registry>,
+}
+
+impl Default for FsExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FsExecutor {
-    /// Construct a fresh wet-run executor.
+    /// Construct a fresh wet-run executor backed by the full Tier-1
+    /// built-in registry ([`Registry::bootstrap`]). Equivalent to the
+    /// pre-M4-B signature; existing test sites continue to compile.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { registry: Arc::new(Registry::bootstrap()) }
+    }
+
+    /// Construct a wet-run executor backed by an explicit registry.
+    ///
+    /// Used by the sync driver (which builds one registry at CLI entry
+    /// and shares it across executors) and by tests that need to exercise
+    /// the [`ExecError::UnknownAction`] path or shadow a built-in. For
+    /// typical call sites the bootstrapped [`FsExecutor::new`] is the
+    /// right default.
+    #[must_use]
+    pub fn with_registry(registry: Arc<Registry>) -> Self {
+        Self { registry }
     }
 }
 
@@ -64,15 +94,10 @@ impl ActionExecutor for FsExecutor {
     }
 
     fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-        match action {
-            Action::Symlink(s) => fs_symlink(s, ctx),
-            Action::Env(e) => fs_env(e, ctx),
-            Action::Mkdir(m) => fs_mkdir(m, ctx),
-            Action::Rmdir(r) => fs_rmdir(r, ctx),
-            Action::Require(r) => fs_require(r, ctx),
-            Action::When(w) => fs_when(self, w, ctx),
-            Action::Exec(x) => fs_exec(x, ctx),
-        }
+        let name = action.name();
+        let plugin =
+            self.registry.get(name).ok_or_else(|| ExecError::UnknownAction(name.to_string()))?;
+        plugin.execute(action, ctx)
     }
 }
 

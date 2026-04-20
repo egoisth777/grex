@@ -27,18 +27,23 @@
 //! CLI callers. Errors aggregate into [`SyncError`] with a small, stable
 //! variant set.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::execute::{
-    ActionExecutor, ExecCtx, ExecError, ExecStep, FsExecutor, PlanExecutor, Platform,
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
+    StepKind,
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
+use crate::lockfile::{compute_actions_hash, read_lockfile, write_lockfile, LockEntry};
 use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
-use crate::pack::PackValidationError;
+use crate::pack::{Action, PackValidationError};
+use crate::plugin::Registry;
 use crate::tree::{FsPackLoader, PackGraph, PackNode, TreeError, Walker};
 use crate::vars::VarEnv;
 
@@ -253,25 +258,18 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
         Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
     };
 
-    let loader = FsPackLoader::new();
-    let backend = GixBackend::new();
-    let walker = Walker::new(&loader, &backend, workspace.clone());
-    let graph = walker.walk(pack_root)?;
-
-    if opts.validate {
-        validate_graph(&graph)?;
-    }
+    let graph = walk_and_validate(pack_root, &workspace, opts.validate)?;
 
     let event_log = event_log_path(pack_root);
     let lock_path = event_lock_path(&event_log);
     let vars = VarEnv::from_os();
     let order = post_order(&graph);
 
-    // Pre-run recovery scan: non-blocking. Surface orphans / dangling
-    // starts to callers so they can inform the operator; a future
-    // `grex doctor` verb will act on them.
     let pre_run_recovery =
         scan_recovery(&pack_root_dir(pack_root), &event_log).ok().filter(|r| !r.is_empty());
+    let lockfile_path = lockfile_path(pack_root);
+    let prior_lock = load_prior_lock(&lockfile_path)?;
+    let registry = Arc::new(Registry::bootstrap());
 
     let mut report = SyncReport {
         graph,
@@ -281,8 +279,82 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
         pre_run_recovery,
     };
 
-    run_actions(&mut report, &order, &vars, &workspace, &event_log, &lock_path, opts.dry_run);
+    let mut next_lock = prior_lock.clone();
+    run_actions(
+        &mut report,
+        &order,
+        &vars,
+        &workspace,
+        &event_log,
+        &lock_path,
+        opts.dry_run,
+        &prior_lock,
+        &mut next_lock,
+        &registry,
+    );
+
+    persist_lockfile_if_clean(&mut report, &lockfile_path, &next_lock, opts.dry_run);
     Ok(report)
+}
+
+/// Walk the pack tree rooted at `pack_root`, optionally running the
+/// plan-phase validators. Extracted so [`run`] stays under the
+/// workspace's 50-LOC per-function lint threshold.
+fn walk_and_validate(
+    pack_root: &Path,
+    workspace: &Path,
+    validate: bool,
+) -> Result<PackGraph, SyncError> {
+    let loader = FsPackLoader::new();
+    let backend = GixBackend::new();
+    let walker = Walker::new(&loader, &backend, workspace.to_path_buf());
+    let graph = walker.walk(pack_root)?;
+    if validate {
+        validate_graph(&graph)?;
+    }
+    Ok(graph)
+}
+
+/// Load the prior lockfile (`grex.lock.jsonl`). Missing file yields an
+/// empty map; parse errors are fatal since writes are atomic and a torn
+/// lockfile therefore indicates real corruption that must be resolved
+/// before a fresh sync is safe.
+fn load_prior_lock(
+    lockfile_path: &Path,
+) -> Result<std::collections::HashMap<String, LockEntry>, SyncError> {
+    read_lockfile(lockfile_path).map_err(|e| SyncError::Validation {
+        errors: vec![PackValidationError::DependsOnUnsatisfied {
+            pack: "<lockfile>".into(),
+            required: format!("{}: {e}", lockfile_path.display()),
+        }],
+    })
+}
+
+/// Persist `next_lock` atomically to `lockfile_path`, but only when the
+/// run completed without halting and was not a dry-run. A halt leaves
+/// `next_lock` at whatever state the last successful pack produced;
+/// partial-progress persistence is force-flag territory (M4-D). Write
+/// errors surface as non-fatal warnings on the report.
+fn persist_lockfile_if_clean(
+    report: &mut SyncReport,
+    lockfile_path: &Path,
+    next_lock: &std::collections::HashMap<String, LockEntry>,
+    dry_run: bool,
+) {
+    if report.halted.is_some() || dry_run {
+        return;
+    }
+    if let Err(e) = write_lockfile(lockfile_path, next_lock) {
+        tracing::warn!(target: "grex::sync", "lockfile write failed: {e}");
+        report.event_log_warnings.push(format!("{}: {e}", lockfile_path.display()));
+    }
+}
+
+/// Canonical location of the resolved-state lockfile
+/// (`<pack_root>/.grex/grex.lock.jsonl`). Colocated with the event log
+/// so both audit artifacts live under a single `.grex/` sidecar.
+fn lockfile_path(pack_root: &Path) -> PathBuf {
+    pack_root_dir(pack_root).join(".grex").join("grex.lock.jsonl")
 }
 
 /// Create the workspace directory if it does not yet exist.
@@ -405,6 +477,7 @@ fn visit_post(graph: &PackGraph, id: usize, out: &mut Vec<usize>) {
 /// warnings so the executor's outcome always dominates. The third append
 /// (`ActionHalted`) lets a future `grex doctor` correlate crash recovery
 /// with the exact action that halted.
+#[allow(clippy::too_many_arguments)]
 fn run_actions(
     report: &mut SyncReport,
     order: &[usize],
@@ -413,44 +486,162 @@ fn run_actions(
     event_log: &Path,
     lock_path: &Path,
     dry_run: bool,
+    prior_lock: &std::collections::HashMap<String, LockEntry>,
+    next_lock: &mut std::collections::HashMap<String, LockEntry>,
+    registry: &Arc<Registry>,
 ) {
-    let plan = PlanExecutor::new();
-    let fs = FsExecutor::new();
+    let plan = PlanExecutor::with_registry(registry.clone());
+    let fs = FsExecutor::with_registry(registry.clone());
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
         // Clone the data we need so report is borrow-free inside the loop.
         let pack_name = node.name.clone();
         let pack_path = node.path.clone();
         let actions = node.manifest.actions.clone();
-        for (idx, action) in actions.iter().enumerate() {
-            let ctx = ExecCtx::new(vars, &pack_path, workspace).with_platform(Platform::current());
-            let action_tag = action_kind_tag(action);
-            append_manifest_event(
-                event_log,
-                lock_path,
-                &Event::ActionStarted {
-                    ts: Utc::now(),
-                    pack: pack_name.clone(),
-                    action_idx: idx,
-                    action_name: action_tag.to_string(),
-                },
-                &mut report.event_log_warnings,
-            );
-            let step_result =
-                if dry_run { plan.execute(action, &ctx) } else { fs.execute(action, &ctx) };
-            if !record_action_outcome(
-                report,
-                event_log,
-                lock_path,
-                &pack_name,
-                idx,
-                action_tag,
-                step_result,
-            ) {
-                return;
-            }
+        // Skip-on-hash (M4-B S1): if the prior lockfile entry's
+        // `actions_hash` matches the freshly-computed hash over the
+        // current action list + commit sha, emit a single
+        // `ExecResult::Skipped` step for the pack and move on. The
+        // force-flag override lives in M4-D; S1 assumes force is absent.
+        if try_skip_pack(report, &pack_name, &pack_path, &actions, prior_lock, next_lock, dry_run) {
+            continue;
+        }
+        let pack_halted = run_pack_actions(
+            report, vars, workspace, event_log, lock_path, dry_run, &plan, &fs, &pack_name,
+            &pack_path, &actions,
+        );
+        if pack_halted {
+            return;
+        }
+        // Successful pack — record a fresh lockfile entry so the next
+        // run's skip-on-hash test can succeed. Commit SHA plumbing is a
+        // follow-up (the walker does not yet expose a resolved SHA per
+        // node); empty string keeps the hash stable for now. TODO(M4):
+        // thread real SHA through `PackNode`.
+        let actions_hash = compute_actions_hash(&actions, "");
+        upsert_lock_entry(next_lock, &pack_name, &actions_hash);
+    }
+}
+
+/// Per-pack execution loop. Returns `true` when the sync must halt.
+#[allow(clippy::too_many_arguments)]
+fn run_pack_actions(
+    report: &mut SyncReport,
+    vars: &VarEnv,
+    workspace: &Path,
+    event_log: &Path,
+    lock_path: &Path,
+    dry_run: bool,
+    plan: &PlanExecutor,
+    fs: &FsExecutor,
+    pack_name: &str,
+    pack_path: &Path,
+    actions: &[Action],
+) -> bool {
+    for (idx, action) in actions.iter().enumerate() {
+        let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
+        let action_tag = action_kind_tag(action);
+        append_manifest_event(
+            event_log,
+            lock_path,
+            &Event::ActionStarted {
+                ts: Utc::now(),
+                pack: pack_name.to_string(),
+                action_idx: idx,
+                action_name: action_tag.to_string(),
+            },
+            &mut report.event_log_warnings,
+        );
+        let step_result =
+            if dry_run { plan.execute(action, &ctx) } else { fs.execute(action, &ctx) };
+        if !record_action_outcome(
+            report,
+            event_log,
+            lock_path,
+            pack_name,
+            idx,
+            action_tag,
+            step_result,
+        ) {
+            return true;
         }
     }
+    false
+}
+
+/// Decide whether `pack_name` can be short-circuited via a lockfile
+/// hash match. When the prior hash matches the freshly-computed hash,
+/// emit a single [`ExecResult::Skipped`] step and carry the prior
+/// lockfile entry forward unchanged. Returns `true` when the pack was
+/// skipped.
+#[allow(clippy::too_many_arguments)]
+fn try_skip_pack(
+    report: &mut SyncReport,
+    pack_name: &str,
+    pack_path: &Path,
+    actions: &[Action],
+    prior_lock: &std::collections::HashMap<String, LockEntry>,
+    next_lock: &mut std::collections::HashMap<String, LockEntry>,
+    dry_run: bool,
+) -> bool {
+    if dry_run {
+        // Dry runs must always produce the planned-step transcript so
+        // authors can see what `sync` *would* do; skip-on-hash only
+        // applies to wet-run side-effect avoidance.
+        return false;
+    }
+    let Some(prior) = prior_lock.get(pack_name) else {
+        return false;
+    };
+    let hash = compute_actions_hash(actions, "");
+    if prior.actions_hash != hash {
+        return false;
+    }
+    let skipped_step = ExecStep {
+        action_name: Cow::Borrowed("pack"),
+        result: ExecResult::Skipped { pack_path: pack_path.to_path_buf(), actions_hash: hash },
+        details: StepKind::Require {
+            // Reusing the `Require` detail shape for a pack-level skip is
+            // a pragmatic choice: `StepKind` is `#[non_exhaustive]` and a
+            // dedicated variant belongs to the audit-schema work in M4-D.
+            // The outer `action_name: "pack"` disambiguates for renderers.
+            outcome: crate::execute::PredicateOutcome::Satisfied,
+            on_fail: crate::pack::RequireOnFail::Skip,
+        },
+    };
+    report.steps.push(SyncStep {
+        pack: pack_name.to_string(),
+        action_idx: 0,
+        exec_step: skipped_step,
+    });
+    // Carry the prior entry forward so the next-lock snapshot stays
+    // consistent with what's on disk.
+    next_lock.insert(pack_name.to_string(), prior.clone());
+    true
+}
+
+/// Insert or update a lockfile entry for `pack_name` with `actions_hash`.
+/// Preserves the prior entry's commit SHA / branch when present; falls
+/// back to empty strings for a first-ever install. The real commit-SHA
+/// thread-through lands with the walker work in a follow-up.
+fn upsert_lock_entry(
+    next_lock: &mut std::collections::HashMap<String, LockEntry>,
+    pack_name: &str,
+    actions_hash: &str,
+) {
+    let installed_at = Utc::now();
+    let entry = next_lock.get(pack_name).map_or_else(
+        || LockEntry {
+            id: pack_name.to_string(),
+            sha: String::new(),
+            branch: String::new(),
+            installed_at,
+            actions_hash: actions_hash.to_string(),
+            schema_version: "1".to_string(),
+        },
+        |prev| LockEntry { installed_at, actions_hash: actions_hash.to_string(), ..prev.clone() },
+    );
+    next_lock.insert(pack_name.to_string(), entry);
 }
 
 /// Record one action outcome into `report` + event log. Returns `false`

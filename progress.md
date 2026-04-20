@@ -1,9 +1,17 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** all shipped to `main`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4 (plugin system) next.
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4-A + M4-B** on `feat/m4-a-plugin-trait`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4-B shipped on branch (2026-04-20): dispatch via `registry.get(action.name())`, `actions_hash` compute + compare, `ExecResult::Skipped { pack_path, actions_hash }` emission, `ActionLogger` + `EnvResolver` traits defined. 344 → **361 tests**, all green. M4-C (registry probes: `reg_key` Windows winreg, `psversion` PowerShell) next.
 
-## Last endpoint (2026-04-20, feat/m4-a-plugin-trait)
+## Last endpoint (2026-04-20, feat/m4-a-plugin-trait — M4-B shipped)
+- **M4-B shipped (2026-04-20)** on `feat/m4-a-plugin-trait`: Stage B closes executor dispatch swap + lockfile idempotency + trait surface (S1–S5 streams).
+  - S1 dispatch refactor: `FsExecutor` / `PlanExecutor` carry `Arc<Registry>`; `execute` body swapped from `match action` to `registry.get(action.name()).ok_or(UnknownAction)`; `ExecError::UnknownAction(String)` variant added; `sync::run` bootstraps one `Arc<Registry>` and shares across both executors via `with_registry`.
+  - S2 hash + Skipped reshape: `lockfile::hash::compute_actions_hash` (sha256 of `b"grex-actions-v1\0" || canonical_json(actions) || b"\0" || commit_sha`, lowercase hex); `ExecResult::Skipped { pack_path, actions_hash }` variant; per-pack hash compare in `sync::run_actions` short-circuits when prior lock hash == freshly-computed hash (dry-run always re-plans); `PlanSkipped` reuses `StepKind::Require` shape with `action_name: "pack"` — dedicated variant deferred to M4-D audit-schema work.
+  - S3 logger + resolver traits: `grex-core::log::ActionLogger` + `TracingLogger` (default impl over `tracing` crate) + `LogLevel`; `grex-core::env::EnvResolver` with blanket impl for `VarEnv`; both trait-object-safe; `ExecCtx` field wiring deferred to M5 per plugin-api.md reconciliation.
+  - S5 doc reconciliation (.omne): `plugin-api.md` + `architecture.md` + `actions.md` aligned to shipped code — uniform `&str` across all three traits, `ExecStep` supersedes `ActionOutcome`, `log.rs` / `env.rs` added to architecture layout, `ExecCtx` pack_id/dry_run/logger deferral documented, builtins-in-`grex-core::plugin` acknowledged.
+  - Verification: fmt check clean, `clippy --all-targets -D warnings` clean, `cargo check --workspace` clean, `cargo test --workspace` 361 passed / 0 failed (30 binaries), zero `match action { Action::` in `crates/grex-core/src/execute/`, zero `ExecResult::Skipped { reason` anywhere in workspace.
+  - Documented-deferred (NOT drift): (a) `PlanExecutor` uses registry as name-oracle only — Tier-1 plugins are wet-run; planner keeps its own `plan_*` dry-run helpers. (b) Commit SHA wired as `""` in `sync::run_actions` with TODO(M4) — real SHA plumbing through `PackNode` is M4-D follow-up. (c) `StepKind::PackSkipped` dedicated variant not added; reused `StepKind::Require` with `action_name: "pack"` — spec does not mandate a dedicated variant. (d) `ExecCtx` field additions (pack_id, dry_run, logger wiring) deferred to M5; `ActionLogger` + `EnvResolver` traits defined and usable directly by plugins.
+  - Drift fixed: `plugin-api.md` ActionPlugin signature block now documents the v1 shipped shape (sync, `&Action`) alongside the v2-facing async + `&Value` target; prior wording described only the v2 form and contradicted code.
 - **M4-A audit complete (2026-04-20)**: docs reconciled across `spec.md`, `plugin-api.md`, `architecture.md` (trait signature, registration canonicality, `PackCtx.os` enum, `PackCtx.logger` field, rollback wording). Ready to commit M4-A WIP.
 - **M4-A scope relaxed (2026-04-20)**: executor dispatch swap (enum match → `registry.get(name)`) moved from M4-A to M4-B. Threading `Registry` through `FsExecutor` / `PlanExecutor` cascades into >50 test-constructor changes; shipping trait + registry + builtins first, dispatch refactor as its own unit. WIP `crates/grex-core/src/plugin/mod.rs` carries inline deferral note (~lines 20–31). Scope docs (`milestone.md`, `openspec/feat-grex/spec.md`, `.omne/cfg/plugin-api.md`) updated to match.
 - **Prior plan/M4 endpoint (2026-04-20)**: M4 Stage A-E scope locked, `milestone.md` M4 rewritten (plugin system), `openspec/feat-grex/spec.md` M4 section appended, `.omne/cfg/plugin-api.md` gaps filled (`Registry`, `register_builtins`, idempotency, `plugin-inventory` flag). Branch `plan/m4-plugin-system`.
@@ -49,7 +57,7 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** all shipped to
 - **Recovery scan**: pre-run informational scan of stale locks + incomplete event brackets; auto-cleanup deferred to `grex doctor` (M4+).
 
 ## Test status
-**344 tests** all green on `main` (316 pre-review + 28 from fix PRs).
+**361 tests** all green on `feat/m4-a-plugin-trait` (344 post-review + 17 from M4-A/M4-B streams: plugin registry bootstrap, actions_hash, ActionLogger/EnvResolver traits, executor registry-dispatch paths, Skipped reshape).
 
 ## CI gates active
 1. `fmt --check`
@@ -145,7 +153,7 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-Implement **M4-A (revised, 2026-04-20)** on branch `feat/m4-a-plugin-trait`: `ActionPlugin` trait + `Registry` struct + `register_builtins()` + 7 built-ins wired behind trait + re-exports + plugin-layer unit tests. **Dispatch unchanged** this stage — executor dispatch swap (direct `match Action` in `FsExecutor` / `PlanExecutor` → `registry.get(name)`) moved into M4-B. Reason: threading `Registry` through both executors cascades into >50 test-constructor changes; cleaner to ship trait + registry + builtins first, then do dispatch refactor as its own unit. In-code deferral note lives in `crates/grex-core/src/plugin/mod.rs` (~lines 20–31).
+**M4-C (registry probes: `reg_key` Windows winreg, `psversion` PowerShell)**. Replace the conservative-false stubs flagged in M3 open questions. Scope per `milestone.md` M4 Stage C: real `winreg` crate reads on Windows (`RegOpenKeyEx` + `RegQueryValueEx`); `powershell.exe -NoProfile -Command` for `$PSVersionTable.PSVersion` probe; non-Windows returns `PredicateNotSupported` error. Branch off M4-B merge once landed on `main`. Commit SHA plumbing from `PackNode` (to feed real commit_sha into `compute_actions_hash`) is M4-D — tracked as a carry-forward.
 
 Stage order reminder (updated 2026-04-20): A → B → C → D → E.
 - A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait; re-exports; plugin-layer unit tests. Dispatch unchanged.

@@ -43,6 +43,18 @@ pub enum ExecError {
     /// An `exec` action had an internally inconsistent post-expansion shape.
     #[error("exec validation failed: {0}")]
     ExecInvalid(String),
+    /// The executor's plugin registry has no entry registered under the
+    /// action's name. Emitted by the registry-dispatched [`FsExecutor`] /
+    /// [`PlanExecutor`] when a caller constructs them with a partial
+    /// registry that does not cover every variant present in the pack.
+    ///
+    /// The stock [`crate::plugin::Registry::bootstrap`] path registers all
+    /// seven Tier-1 built-ins, so the default [`FsExecutor::new`] /
+    /// [`PlanExecutor::new`] constructors never surface this variant — it
+    /// is only reachable through the explicit `with_registry` entry points
+    /// that accept a custom registry.
+    #[error("no plugin registered for action `{0}`")]
+    UnknownAction(String),
     /// A symlink target path is occupied by a non-symlink entry and
     /// `backup: false`; the wet-run executor refuses to clobber blindly.
     #[error("symlink destination `{}` is occupied; enable `backup: true` to rename it out of the way", dst.display())]

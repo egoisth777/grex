@@ -20,6 +20,7 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+sha2 = "0.10"
 
 # Windows-only: HKCU / HKLM env-variable persistence for `env` action in
 # FsExecutor. Minimal-feature build — we only touch string values.
