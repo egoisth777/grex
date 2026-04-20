@@ -1,0 +1,40 @@
+schema_version: "1"
+name: warp-cfg
+type: declarative
+version: "0.2.0"
+
+actions:
+  - require:
+      any_of:
+        - cmd_available: git
+        - os: windows
+      on_fail: error
+
+  - when:
+      os: windows
+      all_of:
+        - cmd_available: pwsh
+      actions:
+        - mkdir: { path: "$HOME/.warp" }
+        - symlink:
+            src: files/config.yaml
+            dst: "$HOME/.warp/config.yaml"
+            backup: true
+            normalize: true
+            kind: file
+        - env:
+            name: WARP_HOME
+            value: "$HOME/.warp"
+            scope: user
+
+  - exec:
+      cmd: ["git", "status"]
+      cwd: "$HOME"
+      shell: false
+      on_fail: warn
+
+teardown:
+  - rmdir:
+      path: "$HOME/.warp"
+      backup: true
+      force: false

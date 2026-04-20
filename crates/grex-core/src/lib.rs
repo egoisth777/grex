@@ -7,7 +7,13 @@
 pub mod fs;
 pub mod lockfile;
 pub mod manifest;
+pub mod pack;
 
-pub mod pack {}
+pub use pack::{
+    Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs, OsKind,
+    PackManifest, PackParseError, PackType, Predicate, RequireOnFail, RequireSpec, RmdirArgs,
+    SchemaVersion, SymlinkArgs, SymlinkKind, WhenSpec,
+};
+
 pub mod scheduler {}
 pub mod plugin {}
