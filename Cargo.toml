@@ -38,7 +38,6 @@ gix = { version = "0.70", default-features = false, features = [
 # Sub-crate of gitoxide already pinned transitively via gix 0.70. Used for
 # worktree materialisation on checkout (see GixBackend::checkout).
 gix-worktree-state = { version = "0.17", default-features = false }
-gix-worktree = { version = "0.39", default-features = false }
 
 # fs locking
 fd-lock = "4"

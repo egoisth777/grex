@@ -14,10 +14,27 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use grex_core::git::gix_backend::file_url_from_path;
 use grex_core::{ClonedRepo, GitBackend, GitError, GixBackend};
 use tempfile::TempDir;
+
+/// CI runners (ubuntu, macos) have no global `user.name`/`user.email`, which
+/// makes gix reject reflog/ref transactions during `checkout` and `fetch`.
+/// Set identity env vars exactly once per test binary; gix and git both honour
+/// `GIT_AUTHOR_*` / `GIT_COMMITTER_*` when no config is available.
+fn init_git_identity() {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        // Called once at test entry, before any test spawns threads that
+        // might observe a torn read of the environment.
+        std::env::set_var("GIT_AUTHOR_NAME", "grex-test");
+        std::env::set_var("GIT_AUTHOR_EMAIL", "test@grex.local");
+        std::env::set_var("GIT_COMMITTER_NAME", "grex-test");
+        std::env::set_var("GIT_COMMITTER_EMAIL", "test@grex.local");
+    });
+}
 
 // -------------------------------------------------------------------------
 // Bare-repo fixture helpers
@@ -26,6 +43,7 @@ use tempfile::TempDir;
 /// Build a bare repo with a single commit on `main` that adds `README.md`.
 /// Returns `(bare_path, head_sha)`.
 fn create_bare_repo(tmp: &Path) -> (PathBuf, String) {
+    init_git_identity();
     let work = tmp.join("seed-work");
     fs::create_dir_all(&work).unwrap();
 

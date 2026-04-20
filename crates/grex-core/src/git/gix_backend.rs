@@ -12,9 +12,8 @@
 //!
 //! [`GixBackend::checkout`] detaches HEAD at the resolved commit and then
 //! materialises that commit's tree into the working directory + index via
-//! `gix_worktree_state::checkout`. This pulls two gitoxide sub-crates
-//! (`gix-worktree-state`, `gix-worktree`) as direct deps — both are already
-//! transitively in the tree via `gix`, so there is no net extra download.
+//! `gix_worktree_state::checkout`. That sub-crate is already transitively in
+//! the tree via `gix`, so it adds no net download.
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
