@@ -89,6 +89,30 @@ pub struct SyncArgs {
     /// Recurse into child packs.
     #[arg(long, default_value_t = true)]
     pub recursive: bool,
+
+    /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
+    /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
+    pub pack_root: Option<std::path::PathBuf>,
+
+    /// Workspace directory for cloned children. Defaults to
+    /// `<pack_root>/.grex/workspace`.
+    #[arg(long)]
+    pub workspace: Option<std::path::PathBuf>,
+
+    /// Plan actions without touching the filesystem.
+    #[arg(long, short = 'n')]
+    pub dry_run: bool,
+
+    /// Suppress per-action log lines.
+    #[arg(long, short = 'q')]
+    pub quiet: bool,
+
+    /// Skip plan-phase validators. Debug-only escape hatch.
+    #[arg(long)]
+    pub no_validate: bool,
+    // TODO(m4): --only <pattern>
+    // TODO(m6): --parallel N  (dedicated; separate from global --parallel)
+    // TODO(slice-6b): --ref <ref>
 }
 
 #[derive(Args, Debug)]
