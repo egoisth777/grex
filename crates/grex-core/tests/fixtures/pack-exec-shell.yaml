@@ -1,0 +1,12 @@
+schema_version: "1"
+name: exec-shell
+type: declarative
+
+actions:
+  - exec:
+      cmd_shell: "echo hello world"
+      shell: true
+      cwd: "$HOME"
+      env:
+        FOO: bar
+      on_fail: ignore

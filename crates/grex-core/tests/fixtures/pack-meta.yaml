@@ -1,0 +1,10 @@
+schema_version: "1"
+name: dev-env
+type: meta
+
+children:
+  - url: git@github.com:u/foo.git
+  - url: git@github.com:u/bar.git
+    path: bar-override
+    ref: v1.2.0
+  - url: https://github.com/u/baz
