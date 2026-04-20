@@ -9,6 +9,7 @@ pub mod git;
 pub mod lockfile;
 pub mod manifest;
 pub mod pack;
+pub mod tree;
 pub mod vars;
 
 pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
@@ -17,6 +18,7 @@ pub use pack::{
     OsKind, PackManifest, PackParseError, PackType, PackValidationError, Predicate, RequireOnFail,
     RequireSpec, RmdirArgs, SchemaVersion, SymlinkArgs, SymlinkKind, Validator, WhenSpec,
 };
+pub use tree::{EdgeKind, FsPackLoader, PackGraph, PackLoader, PackNode, TreeError, Walker};
 pub use vars::{expand, VarEnv, VarExpandError};
 
 pub mod scheduler {}
