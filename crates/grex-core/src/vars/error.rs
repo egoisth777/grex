@@ -14,6 +14,10 @@ use thiserror::Error;
 /// `Display` (via `thiserror`), so `eprintln!("{err}")` is sufficient for a
 /// CLI diagnostic. The `offset` field always points at the first byte of the
 /// offending placeholder (`$`, `${`, or `%`), never inside it.
+///
+/// Marked `#[non_exhaustive]` so new diagnostic variants can land without
+/// breaking external match sites.
+#[non_exhaustive]
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VarExpandError {
     /// A well-formed placeholder referenced a variable name that was not

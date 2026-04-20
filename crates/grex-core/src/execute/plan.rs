@@ -15,6 +15,7 @@
 //! Anything else (`when.os` not matching, `require` skip/warn) emits an
 //! [`ExecStep`] with [`ExecResult::NoOp`] — "nothing to do here, carry on".
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use crate::pack::{
@@ -26,7 +27,10 @@ use crate::vars::{expand, VarEnv};
 use super::ctx::ExecCtx;
 use super::error::ExecError;
 use super::predicate::{evaluate, evaluate_when_gate};
-use super::step::{ExecResult, ExecStep, PredicateOutcome, StepKind};
+use super::step::{
+    ExecResult, ExecStep, PredicateOutcome, StepKind, ACTION_ENV, ACTION_EXEC, ACTION_MKDIR,
+    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_WHEN,
+};
 use super::ActionExecutor;
 
 /// Dry-run [`ActionExecutor`] — never mutates state.
@@ -80,7 +84,7 @@ fn plan_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecE
     let dst = require_path(expand_field(&args.dst, ctx.vars, "symlink.dst")?)?;
     let result = classify_symlink(&src, &dst);
     Ok(ExecStep {
-        action_name: "symlink",
+        action_name: Cow::Borrowed(ACTION_SYMLINK),
         result,
         details: StepKind::Symlink {
             src,
@@ -106,7 +110,7 @@ fn plan_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let value = expand_field(&args.value, ctx.vars, "env.value")?;
     let result = classify_env(&args.name, &value, ctx.vars);
     Ok(ExecStep {
-        action_name: "env",
+        action_name: Cow::Borrowed(ACTION_ENV),
         result,
         details: StepKind::Env { name: args.name.clone(), value, scope: args.scope },
     })
@@ -124,7 +128,7 @@ fn plan_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError
     let result =
         if path.is_dir() { ExecResult::AlreadySatisfied } else { ExecResult::WouldPerformChange };
     Ok(ExecStep {
-        action_name: "mkdir",
+        action_name: Cow::Borrowed(ACTION_MKDIR),
         result,
         details: StepKind::Mkdir { path, mode: args.mode.clone() },
     })
@@ -135,7 +139,7 @@ fn plan_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError
     let result =
         if path.exists() { ExecResult::WouldPerformChange } else { ExecResult::AlreadySatisfied };
     Ok(ExecStep {
-        action_name: "rmdir",
+        action_name: Cow::Borrowed(ACTION_RMDIR),
         result,
         details: StepKind::Rmdir { path, backup: args.backup, force: args.force },
     })
@@ -147,7 +151,7 @@ fn plan_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecE
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
     let result = classify_require(satisfied, spec.on_fail)?;
     Ok(ExecStep {
-        action_name: "require",
+        action_name: Cow::Borrowed(ACTION_REQUIRE),
         result,
         details: StepKind::Require { outcome, on_fail: spec.on_fail },
     })
@@ -185,7 +189,7 @@ fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
     let nested_steps = if branch_taken { plan_nested(&spec.actions, ctx)? } else { Vec::new() };
     let result = if branch_taken { ExecResult::WouldPerformChange } else { ExecResult::NoOp };
     Ok(ExecStep {
-        action_name: "when",
+        action_name: Cow::Borrowed(ACTION_WHEN),
         result,
         details: StepKind::When { branch_taken, nested_steps },
     })
@@ -200,7 +204,7 @@ fn plan_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> 
     let cwd = expand_optional_path(spec.cwd.as_deref(), ctx.vars, "exec.cwd")?;
     let cmdline = build_exec_cmdline(spec, ctx.vars)?;
     Ok(ExecStep {
-        action_name: "exec",
+        action_name: Cow::Borrowed(ACTION_EXEC),
         result: ExecResult::WouldPerformChange,
         details: StepKind::Exec { cmdline, cwd, on_fail: spec.on_fail, shell: spec.shell },
     })

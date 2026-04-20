@@ -27,5 +27,7 @@ pub use pack::{
 pub use tree::{EdgeKind, FsPackLoader, PackGraph, PackLoader, PackNode, TreeError, Walker};
 pub use vars::{expand, VarEnv, VarExpandError};
 
+#[doc(hidden)]
 pub mod scheduler {}
+#[doc(hidden)]
 pub mod plugin {}

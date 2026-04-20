@@ -17,11 +17,17 @@
 //! side-effect metadata (e.g. `backup_path`) without polluting the parse
 //! model.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use crate::pack::{EnvScope, ExecOnFail, RequireOnFail, SymlinkKind};
 
 /// Coarse-grained outcome of a single step.
+///
+/// Marked `#[non_exhaustive]` so future milestones (M4 plugin system,
+/// lockfile idempotency) can introduce additional outcomes without breaking
+/// downstream consumers. External match sites must include a `_` arm.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecResult {
     /// Wet-run executor actually mutated state.
@@ -34,9 +40,22 @@ pub enum ExecResult {
     /// Action was a no-op: `when.os` branch not taken, or `require` failed
     /// with `on_fail: skip | warn`. Not an error.
     NoOp,
+    /// Action was deliberately skipped by a caller-level policy (lockfile
+    /// actions-hash match, user decline, plugin veto, …). The `reason`
+    /// string is informational — consumers should render it verbatim. No
+    /// executor emits this variant in M3; it is reserved for M4+.
+    Skipped {
+        /// Short human-readable explanation for audit / CLI display.
+        reason: String,
+    },
 }
 
 /// Whether a `require` predicate tree evaluated to true.
+///
+/// Marked `#[non_exhaustive]` so predicate evaluation can grow richer
+/// outcomes (e.g. `Indeterminate` for deferred probes) without breaking
+/// downstream match sites.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateOutcome {
     /// Predicate(s) held.
@@ -51,6 +70,10 @@ pub enum PredicateOutcome {
 /// path field is a concrete OS path. Command lines remain [`String`]
 /// because argv joining for display is lossy by design — the wet-run
 /// executor re-reads the underlying [`crate::pack::ExecSpec`] when spawning.
+///
+/// Marked `#[non_exhaustive]` so the M4 plugin layer can contribute new
+/// step-detail shapes without breaking downstream renderers.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum StepKind {
     /// Resolved symlink descriptor.
@@ -119,12 +142,39 @@ pub enum StepKind {
 }
 
 /// Observable record of a single action's execution (or planned execution).
+///
+/// Marked `#[non_exhaustive]` so adding audit fields (duration, dry-run tag,
+/// plugin-contributed metadata) is a non-breaking change for downstream
+/// library consumers.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct ExecStep {
-    /// Short stable action identifier (one of the action-key strings).
-    pub action_name: &'static str,
+    /// Short stable action identifier (one of the action-key strings, or a
+    /// plugin-contributed label in future milestones).
+    ///
+    /// Typed as [`Cow<'static, str>`] so built-in executors can emit
+    /// zero-cost static strings via [`Cow::Borrowed`] while M4 plugins can
+    /// contribute heap-allocated names via [`Cow::Owned`].
+    pub action_name: Cow<'static, str>,
     /// Coarse outcome.
     pub result: ExecResult,
     /// Variant-specific detail.
     pub details: StepKind,
 }
+
+/// Short stable action identifiers emitted by built-in executors. Exposed
+/// for downstream consumers that need to match step kinds without
+/// hard-coding string literals.
+pub const ACTION_SYMLINK: &str = "symlink";
+/// Built-in `env` action identifier.
+pub const ACTION_ENV: &str = "env";
+/// Built-in `mkdir` action identifier.
+pub const ACTION_MKDIR: &str = "mkdir";
+/// Built-in `rmdir` action identifier.
+pub const ACTION_RMDIR: &str = "rmdir";
+/// Built-in `require` action identifier.
+pub const ACTION_REQUIRE: &str = "require";
+/// Built-in `when` action identifier.
+pub const ACTION_WHEN: &str = "when";
+/// Built-in `exec` action identifier.
+pub const ACTION_EXEC: &str = "exec";
