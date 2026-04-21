@@ -921,6 +921,7 @@ fn run_pack_lifecycle(
             fs,
             pack_name,
             pack_path,
+            manifest,
             &manifest.actions,
         ),
         crate::pack::PackType::Meta | crate::pack::PackType::Scripted => dispatch_pack_type_plugin(
@@ -945,6 +946,7 @@ fn run_pack_lifecycle(
 /// per-action event-log bracket (`ActionStarted` → `ActionCompleted` |
 /// `ActionHalted`). Returns `true` when the sync must halt.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_declarative_actions(
     report: &mut SyncReport,
     vars: &VarEnv,
@@ -956,8 +958,21 @@ fn run_declarative_actions(
     fs: &FsExecutor,
     pack_name: &str,
     pack_path: &Path,
+    manifest: &crate::pack::PackManifest,
     actions: &[Action],
 ) -> bool {
+    // Apply the pack's `x-gitignore` managed block before running its
+    // actions. The plugin-driven path (`DeclarativePlugin::install`)
+    // also calls `apply_gitignore`; this mirror keeps the M4 per-action
+    // declarative driver consistent so `run` and the future plugin
+    // dispatch produce the same on-disk `.gitignore` state.
+    if !dry_run {
+        let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
+        if let Err(e) = crate::plugin::pack_type::apply_gitignore(&ctx, manifest) {
+            record_action_err(report, event_log, lock_path, pack_name, 0, "gitignore", e);
+            return true;
+        }
+    }
     for (idx, action) in actions.iter().enumerate() {
         let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
         let action_tag = action_kind_tag(action);
