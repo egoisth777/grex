@@ -539,8 +539,14 @@ fn predicate_nested_combiner_depth_2() {
     }
 }
 
+// M4-C: `reg_key` / `psversion` went from conservative-false stubs to real
+// probes on Windows and a typed `PredicateNotSupported` error elsewhere.
+// The pre-M4-C "defaults_false_stage5a" tests are retired; their
+// replacements live below (platform-gated).
+
+#[cfg(not(windows))]
 #[test]
-fn predicate_reg_key_defaults_false_stage5a() {
+fn predicate_reg_key_errors_on_non_windows() {
     let t = tmp();
     let vars = VarEnv::new();
     let ctx = empty_ctx(&vars, t.path());
@@ -548,26 +554,146 @@ fn predicate_reg_key_defaults_false_stage5a() {
         path: "HKCU\\Software\\Grex\\Probe".to_string(),
         name: Some("V".to_string()),
     };
-    let step = PlanExecutor::new()
+    let err = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
-        .unwrap();
-    match step.details {
-        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Unsatisfied),
+        .expect_err("reg_key must not be satisfiable off Windows");
+    match err {
+        ExecError::PredicateNotSupported { predicate, platform } => {
+            assert_eq!(predicate, "reg_key");
+            // Brief's zero-drift audit: platform field tracks
+            // `std::env::consts::OS`.
+            assert_eq!(platform, std::env::consts::OS);
+        }
         other => panic!("unexpected {other:?}"),
     }
 }
 
+// F5: nested `Predicate::AnyOf` on non-Windows — a `reg_key` leg returns
+// `PredicateNotSupported`, which the combiner must tolerate so the
+// sibling `path_exists` leg can rescue the expression.
+#[cfg(not(windows))]
 #[test]
-fn predicate_ps_version_defaults_false_stage5a() {
+fn predicate_any_of_tolerates_unsupported_leg_on_non_windows() {
+    let t = tmp();
+    let rescue = t.path().join("rescue");
+    std::fs::write(&rescue, b"").unwrap();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    let pred = Predicate::AnyOf(vec![
+        Predicate::RegKey {
+            path: "HKCU\\Software\\Grex\\Probe".to_string(),
+            name: Some("V".to_string()),
+        },
+        Predicate::PathExists(rescue.to_str().unwrap().to_string()),
+    ]);
+    let step = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .expect("combiner must rescue unsupported leg");
+    match step.details {
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+// F5: top-level single-leaf `require: [{reg_key: ...}]` on non-Windows
+// must still bubble `PredicateNotSupported` — combiner tolerance does
+// NOT extend to the top-level `Combiner` attached to `RequireSpec`.
+#[cfg(not(windows))]
+#[test]
+fn predicate_top_level_require_bubbles_unsupported() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    let pred = Predicate::RegKey { path: "HKCU\\Software\\Probe".to_string(), name: None };
+    let err = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Error), &ctx)
+        .expect_err("top-level require must not swallow PredicateNotSupported");
+    assert!(
+        matches!(err, ExecError::PredicateNotSupported { predicate: "reg_key", .. }),
+        "got {err:?}"
+    );
+}
+
+// F5 + when-gate: the same tolerance must hold for `when.any_of` legs on
+// non-Windows so cross-platform `when` gates do not halt on a
+// `reg_key` leg that is unanswerable here.
+#[cfg(not(windows))]
+#[test]
+fn when_gate_any_of_tolerates_unsupported_leg_on_non_windows() {
+    let t = tmp();
+    let rescue = t.path().join("rescue");
+    std::fs::write(&rescue, b"").unwrap();
+    let vars = VarEnv::new();
+    let spec = WhenSpec::new(
+        None,
+        None,
+        Some(vec![
+            Predicate::RegKey { path: "HKCU\\Software\\Probe".to_string(), name: None },
+            Predicate::PathExists(rescue.to_str().unwrap().to_string()),
+        ]),
+        None,
+        vec![mk_mkdir(t.path().join("out").to_str().unwrap())],
+    );
+    let action = Action::When(spec);
+    let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
+    match step.details {
+        StepKind::When { branch_taken, nested_steps } => {
+            assert!(branch_taken, "any_of must rescue via path_exists leg");
+            assert_eq!(nested_steps.len(), 1);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn predicate_ps_version_errors_on_non_windows() {
     let t = tmp();
     let vars = VarEnv::new();
     let ctx = empty_ctx(&vars, t.path());
     let pred = Predicate::PsVersion(">=5.1".to_string());
+    let err = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .expect_err("psversion must not be satisfiable off Windows");
+    match err {
+        ExecError::PredicateNotSupported { predicate, .. } => {
+            assert_eq!(predicate, "psversion");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn predicate_reg_key_probes_real_registry_on_windows() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    // HKLM\Software exists on every Windows install.
+    let pred = Predicate::RegKey { path: "HKLM\\Software".to_string(), name: None };
     let step = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step.details {
-        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Unsatisfied),
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn predicate_ps_version_probes_powershell_on_windows() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    // Every supported Windows runner ships PowerShell >= 1.
+    let pred = Predicate::PsVersion(">=1".to_string());
+    let step = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .unwrap();
+    match step.details {
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
         other => panic!("unexpected {other:?}"),
     }
 }

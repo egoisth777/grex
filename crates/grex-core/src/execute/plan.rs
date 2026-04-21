@@ -203,7 +203,7 @@ pub(crate) fn plan_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep
 }
 
 pub(crate) fn plan_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let satisfied = evaluate_combiner(&spec.combiner, ctx);
+    let satisfied = evaluate_combiner(&spec.combiner, ctx)?;
     let outcome =
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
     let result = classify_require(satisfied, spec.on_fail)?;
@@ -233,16 +233,37 @@ fn classify_require(satisfied: bool, on_fail: RequireOnFail) -> Result<ExecResul
     }
 }
 
-fn evaluate_combiner(combiner: &Combiner, ctx: &ExecCtx<'_>) -> bool {
+fn evaluate_combiner(combiner: &Combiner, ctx: &ExecCtx<'_>) -> Result<bool, ExecError> {
     match combiner {
-        Combiner::AllOf(list) => list.iter().all(|p| evaluate(p, ctx)),
-        Combiner::AnyOf(list) => list.iter().any(|p| evaluate(p, ctx)),
-        Combiner::NoneOf(list) => !list.iter().any(|p| evaluate(p, ctx)),
+        Combiner::AllOf(list) => {
+            for p in list {
+                if !evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Combiner::AnyOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Combiner::NoneOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
     }
 }
 
 pub(crate) fn plan_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let branch_taken = evaluate_when_gate(spec, ctx);
+    let branch_taken = evaluate_when_gate(spec, ctx)?;
     let nested_steps = if branch_taken { plan_nested(&spec.actions, ctx)? } else { Vec::new() };
     let result = if branch_taken { ExecResult::WouldPerformChange } else { ExecResult::NoOp };
     Ok(ExecStep {

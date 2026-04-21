@@ -31,10 +31,17 @@ pub fn run(args: SyncArgs, global: &GlobalFlags) -> Result<()> {
         return Ok(());
     };
     let dry_run = args.dry_run || global.dry_run;
-    let opts =
-        SyncOptions { dry_run, validate: !args.no_validate, workspace: args.workspace.clone() };
+    let only_patterns = if args.only.is_empty() { None } else { Some(args.only.clone()) };
+    let opts = SyncOptions::new()
+        .with_dry_run(dry_run)
+        .with_validate(!args.no_validate)
+        .with_workspace(args.workspace.clone())
+        .with_ref_override(args.ref_override.clone())
+        .with_only_patterns(only_patterns)
+        .with_force(args.force);
     match run_impl(&pack_root, &opts, args.quiet) {
         RunOutcome::Ok => Ok(()),
+        RunOutcome::UsageError => std::process::exit(2),
         RunOutcome::Validation => std::process::exit(1),
         RunOutcome::Exec => std::process::exit(2),
         RunOutcome::Tree => std::process::exit(3),
@@ -43,6 +50,9 @@ pub fn run(args: SyncArgs, global: &GlobalFlags) -> Result<()> {
 
 enum RunOutcome {
     Ok,
+    /// CLI usage error (invalid `--only` glob, etc.). Maps to exit 2 — the
+    /// `cli.md` frozen exit code for usage errors.
+    UsageError,
     Validation,
     Exec,
     Tree,
@@ -75,6 +85,10 @@ fn run_impl(pack_root: &std::path::Path, opts: &SyncOptions, quiet: bool) -> Run
         Err(SyncError::Halted(ctx)) => {
             print_halted_context(&ctx);
             RunOutcome::Exec
+        }
+        Err(SyncError::InvalidOnlyGlob { pattern, source }) => {
+            eprintln!("error: invalid --only glob `{pattern}`: {source}");
+            RunOutcome::UsageError
         }
         // SyncError is `#[non_exhaustive]`; future variants route to the
         // generic unrecoverable bucket until they get dedicated mapping.
@@ -176,3 +190,13 @@ fn print_step(s: &SyncStep, dry_run: bool) {
         idx = s.action_idx,
     );
 }
+
+// M4-D post-review fix bundle: `--only` glob compilation moved
+// into `grex-core::sync::compile_only_globset` so the `globset`
+// crate version does not leak through the public `SyncOptions`
+// surface. CLI unit tests for glob parsing were retired alongside
+// the `build_only_globset` helper; semantics are exercised end-to-end
+// via `crates/grex/tests/sync_e2e.rs` (`e2e_only_*` cases) and the
+// `cli_non_empty_string_rejects_whitespace` parse-layer test in
+// `cli::args`. Invalid-glob surfacing is covered by the
+// `SyncError::InvalidOnlyGlob` routing in `run_impl`.

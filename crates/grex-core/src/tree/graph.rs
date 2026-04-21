@@ -67,6 +67,12 @@ pub struct PackNode {
     pub manifest: PackManifest,
     /// Parent id; `None` for the root.
     pub parent: Option<usize>,
+    /// Resolved commit SHA of the pack's working tree, when the walker
+    /// could obtain one. `None` for the root (local path, no clone step)
+    /// or when `head_sha` probing fails. Mixed into
+    /// [`crate::lockfile::compute_actions_hash`] so ref drift invalidates
+    /// the skip-on-hash short-circuit (M4-D spec §M4 req 4a).
+    pub commit_sha: Option<String>,
 }
 
 /// An edge in the walked graph.

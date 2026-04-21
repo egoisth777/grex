@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use thiserror::Error;
 
 use crate::execute::{
@@ -52,11 +53,12 @@ use crate::vars::VarEnv;
 /// Inputs to [`run`].
 ///
 /// Fields are public-writable so call sites can construct with struct
-/// literals. Adding new knobs is still non-breaking: callers who use the
-/// [`SyncOptions::default`] pattern + setters (or `..SyncOptions::default()`
-/// on struct updates) will not need changes. The struct is deliberately
-/// *not* marked `#[non_exhaustive]` — that would force a named-setter API
-/// without adding real decoupling for an in-repo orchestrator type.
+/// literals and `..SyncOptions::default()`. Marked `#[non_exhaustive]`
+/// so future knobs (parallelism, filter expressions, additional ref
+/// strategies) can land without breaking library consumers who
+/// constructed with explicit-literal syntax. Forces callers to use
+/// struct-update syntax (`..Default::default()`).
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct SyncOptions {
     /// When `true`, use [`PlanExecutor`] (no filesystem mutations).
@@ -66,12 +68,55 @@ pub struct SyncOptions {
     pub validate: bool,
     /// Override workspace directory. `None` → `<pack_root>/.grex/workspace`.
     pub workspace: Option<PathBuf>,
+    /// Global ref override (`grex sync --ref <sha|branch|tag>`). When
+    /// `Some`, every child pack clone/checkout uses this ref instead of
+    /// the declared `child.ref`. Empty strings are rejected at the CLI
+    /// layer.
+    pub ref_override: Option<String>,
+    /// Pack-path filter patterns (`grex sync --only <glob>`). Raw glob
+    /// strings — compiled internally via [`compile_only_globset`] so the
+    /// [`globset`] crate version does not leak into the public API.
+    /// `None` / empty means every pack runs (M3 semantics). Matching is
+    /// against the pack's **workspace-relative** path normalized to
+    /// forward-slash form; see [`skip_for_only_filter`].
+    pub only_patterns: Option<Vec<String>>,
+    /// Bypass the lockfile hash-match skip (`grex sync --force`). When
+    /// `true`, every pack re-executes even if its `actions_hash` is
+    /// unchanged from the prior lockfile.
+    pub force: bool,
 }
 
 impl Default for SyncOptions {
     fn default() -> Self {
-        Self { dry_run: false, validate: true, workspace: None }
+        Self {
+            dry_run: false,
+            validate: true,
+            workspace: None,
+            ref_override: None,
+            only_patterns: None,
+            force: false,
+        }
     }
+}
+
+/// Compile raw `--only` pattern strings into a [`globset::GlobSet`].
+/// Empty / absent input yields `Ok(None)` so M3's zero-config path
+/// (every pack runs) stays the default.
+fn compile_only_globset(patterns: Option<&Vec<String>>) -> Result<Option<GlobSet>, SyncError> {
+    let Some(pats) = patterns else { return Ok(None) };
+    if pats.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = GlobSetBuilder::new();
+    for p in pats {
+        let glob = Glob::new(p)
+            .map_err(|source| SyncError::InvalidOnlyGlob { pattern: p.clone(), source })?;
+        builder.add(glob);
+    }
+    let set = builder
+        .build()
+        .map_err(|source| SyncError::InvalidOnlyGlob { pattern: pats.join(","), source })?;
+    Ok(Some(set))
 }
 
 impl SyncOptions {
@@ -79,6 +124,49 @@ impl SyncOptions {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set `dry_run`.
+    #[must_use]
+    pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
+    /// Set `validate`.
+    #[must_use]
+    pub fn with_validate(mut self, validate: bool) -> Self {
+        self.validate = validate;
+        self
+    }
+
+    /// Set `workspace` override.
+    #[must_use]
+    pub fn with_workspace(mut self, workspace: Option<PathBuf>) -> Self {
+        self.workspace = workspace;
+        self
+    }
+
+    /// Set `ref_override` (`--ref`).
+    #[must_use]
+    pub fn with_ref_override(mut self, ref_override: Option<String>) -> Self {
+        self.ref_override = ref_override;
+        self
+    }
+
+    /// Set `only_patterns` (`--only`). Empty vector or `None` disables
+    /// the filter.
+    #[must_use]
+    pub fn with_only_patterns(mut self, patterns: Option<Vec<String>>) -> Self {
+        self.only_patterns = patterns;
+        self
+    }
+
+    /// Set `force` (`--force`).
+    #[must_use]
+    pub fn with_force(mut self, force: bool) -> Self {
+        self.force = force;
+        self
     }
 }
 
@@ -206,6 +294,17 @@ pub enum SyncError {
         #[source]
         source: LockfileError,
     },
+    /// One of the `--only <GLOB>` patterns failed to compile. Surfaced
+    /// as its own variant so the CLI can map it to a dedicated usage
+    /// error exit code instead of the generic sync-failure bucket.
+    #[error("invalid --only glob `{pattern}`: {source}")]
+    InvalidOnlyGlob {
+        /// The raw pattern string that failed to compile.
+        pattern: String,
+        /// Underlying globset error.
+        #[source]
+        source: globset::Error,
+    },
 }
 
 impl Clone for SyncError {
@@ -247,6 +346,12 @@ impl Clone for SyncError {
                     required: format!("{}: {source}", path.display()),
                 }],
             },
+            Self::InvalidOnlyGlob { pattern, source } => Self::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: "<only-glob>".into(),
+                    required: format!("{pattern}: {source}"),
+                }],
+            },
         }
     }
 }
@@ -279,43 +384,93 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
         Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
     };
 
-    let graph = walk_and_validate(pack_root, &workspace, opts.validate)?;
+    // Compile `--only` patterns into a GlobSet here so the
+    // `globset` crate version does not leak into `SyncOptions`.
+    let only_set = compile_only_globset(opts.only_patterns.as_ref())?;
 
-    let event_log = event_log_path(pack_root);
-    let lock_path = event_lock_path(&event_log);
-    let vars = VarEnv::from_os();
-    let order = post_order(&graph);
-
-    let pre_run_recovery =
-        scan_recovery(&pack_root_dir(pack_root), &event_log).ok().filter(|r| !r.is_empty());
-    let lockfile_path = lockfile_path(pack_root);
-    let prior_lock = load_prior_lock(&lockfile_path)?;
-    let registry = Arc::new(Registry::bootstrap());
+    let graph =
+        walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
+    let prep = prepare_run_context(pack_root, &graph)?;
+    log_force_flag(opts.force);
 
     let mut report = SyncReport {
         graph,
         steps: Vec::new(),
         halted: None,
         event_log_warnings: Vec::new(),
-        pre_run_recovery,
+        pre_run_recovery: prep.pre_run_recovery,
     };
 
-    let mut next_lock = prior_lock.clone();
+    let mut next_lock = prep.prior_lock.clone();
     run_actions(
         &mut report,
-        &order,
-        &vars,
+        &prep.order,
+        &prep.vars,
         &workspace,
-        &event_log,
-        &lock_path,
+        &prep.event_log,
+        &prep.lock_path,
         opts.dry_run,
-        &prior_lock,
+        &prep.prior_lock,
         &mut next_lock,
-        &registry,
+        &prep.registry,
+        only_set.as_ref(),
+        opts.force,
     );
 
-    persist_lockfile_if_clean(&mut report, &lockfile_path, &next_lock, opts.dry_run);
+    persist_lockfile_if_clean(&mut report, &prep.lockfile_path, &next_lock, opts.dry_run);
     Ok(report)
+}
+
+/// Bag of context pieces assembled once at the top of [`run`]. Grouping
+/// them keeps [`run`] under the workspace's 50-LOC function lint without
+/// smearing the read of sequential setup across helpers. Fields are
+/// consumed piecemeal by the actions loop; no getters needed.
+struct RunContext {
+    order: Vec<usize>,
+    vars: VarEnv,
+    event_log: PathBuf,
+    lock_path: PathBuf,
+    lockfile_path: PathBuf,
+    prior_lock: std::collections::HashMap<String, LockEntry>,
+    registry: Arc<Registry>,
+    pre_run_recovery: Option<RecoveryReport>,
+}
+
+/// Build the per-run context: traversal order, vars env, event/lockfile
+/// paths, prior lockfile state, bootstrap registry, and (optionally) a
+/// pre-run recovery scan. Kept narrow so [`run`] stays small.
+fn prepare_run_context(pack_root: &Path, graph: &PackGraph) -> Result<RunContext, SyncError> {
+    let event_log = event_log_path(pack_root);
+    let lock_path = event_lock_path(&event_log);
+    let vars = VarEnv::from_os();
+    let order = post_order(graph);
+    let pre_run_recovery =
+        scan_recovery(&pack_root_dir(pack_root), &event_log).ok().filter(|r| !r.is_empty());
+    let lockfile_path = lockfile_path(pack_root);
+    let prior_lock = load_prior_lock(&lockfile_path)?;
+    let registry = Arc::new(Registry::bootstrap());
+    Ok(RunContext {
+        order,
+        vars,
+        event_log,
+        lock_path,
+        lockfile_path,
+        prior_lock,
+        registry,
+        pre_run_recovery,
+    })
+}
+
+/// Emit a single `tracing::info!` line when `--force` is active so
+/// operators can confirm from logs that the skip short-circuit was
+/// bypassed. Extracted so [`run`] stays small.
+fn log_force_flag(force: bool) {
+    if force {
+        tracing::info!(
+            target: "grex::sync",
+            "--force active: bypassing lockfile skip-on-hash short-circuit"
+        );
+    }
 }
 
 /// Walk the pack tree rooted at `pack_root`, optionally running the
@@ -325,10 +480,12 @@ fn walk_and_validate(
     pack_root: &Path,
     workspace: &Path,
     validate: bool,
+    ref_override: Option<&str>,
 ) -> Result<PackGraph, SyncError> {
     let loader = FsPackLoader::new();
     let backend = GixBackend::new();
-    let walker = Walker::new(&loader, &backend, workspace.to_path_buf());
+    let walker = Walker::new(&loader, &backend, workspace.to_path_buf())
+        .with_ref_override(ref_override.map(str::to_string));
     let graph = walker.walk(pack_root)?;
     if validate {
         validate_graph(&graph)?;
@@ -510,6 +667,8 @@ fn run_actions(
     prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     registry: &Arc<Registry>,
+    only: Option<&GlobSet>,
+    force: bool,
 ) {
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
@@ -519,12 +678,34 @@ fn run_actions(
         let pack_name = node.name.clone();
         let pack_path = node.path.clone();
         let actions = node.manifest.actions.clone();
-        // Skip-on-hash (M4-B S1): if the prior lockfile entry's
-        // `actions_hash` matches the freshly-computed hash over the
-        // current action list + commit sha, emit a single
-        // `ExecResult::Skipped` step for the pack and move on. The
-        // force-flag override lives in M4-D; S1 assumes force is absent.
-        if try_skip_pack(report, &pack_name, &pack_path, &actions, prior_lock, next_lock, dry_run) {
+        let commit_sha = node.commit_sha.clone().unwrap_or_default();
+        // M4-D `--only` filter: packs whose workspace-relative path does
+        // not match the globset are skipped entirely — no action
+        // execution. Filtered packs carry their prior lock entry
+        // forward (F3) so a subsequent unfiltered sync's skip-on-hash
+        // path still fires and the pack does not re-execute from scratch.
+        if skip_for_only_filter(only, &pack_name, &pack_path, workspace) {
+            if let Some(prev) = prior_lock.get(&pack_name) {
+                next_lock.insert(pack_name.clone(), prev.clone());
+            }
+            continue;
+        }
+        // Skip-on-hash (M4-B S1 + M4-D --force bypass): if the prior
+        // lockfile entry's `actions_hash` matches the freshly-computed
+        // hash over the current action list + commit sha, emit a single
+        // `ExecResult::Skipped` step for the pack and move on. `--force`
+        // bypasses this short-circuit entirely.
+        if try_skip_pack(
+            report,
+            &pack_name,
+            &pack_path,
+            &actions,
+            &commit_sha,
+            prior_lock,
+            next_lock,
+            dry_run,
+            force,
+        ) {
             continue;
         }
         let pack_halted = run_pack_actions(
@@ -541,13 +722,42 @@ fn run_actions(
             return;
         }
         // Successful pack — record a fresh lockfile entry so the next
-        // run's skip-on-hash test can succeed. Commit SHA plumbing is a
-        // follow-up (the walker does not yet expose a resolved SHA per
-        // node); empty string keeps the hash stable for now. TODO(M4):
-        // thread real SHA through `PackNode`.
-        let actions_hash = compute_actions_hash(&actions, "");
-        upsert_lock_entry(next_lock, &pack_name, &actions_hash);
+        // run's skip-on-hash test can succeed. Commit SHA is now plumbed
+        // from the walker (M4-D): `PackNode::commit_sha` carries the
+        // resolved HEAD SHA when the pack's working tree is a git
+        // repository, otherwise an empty string keeps the hash stable.
+        let actions_hash = compute_actions_hash(&actions, &commit_sha);
+        upsert_lock_entry(next_lock, &pack_name, &commit_sha, &actions_hash);
     }
+}
+
+/// Return `true` when `--only` is active and the pack's
+/// **workspace-relative path** (normalized to forward-slash form) does
+/// not match any of the registered globs. Name-fallback matching was
+/// dropped in the M4-D post-review fix bundle: spec §M4 req 6 says
+/// "pack paths" and cross-platform consistency requires a single
+/// normalized representation rather than `display()`-formatted strings
+/// (which use `\\` on Windows and `/` on POSIX — globset treats `\\`
+/// as a glob-escape, not a path separator). For the root pack whose
+/// `pack_path` is not under `workspace`, the fallback is to match
+/// against the absolute path's forward-slash form.
+fn skip_for_only_filter(
+    only: Option<&GlobSet>,
+    pack_name: &str,
+    pack_path: &Path,
+    workspace: &Path,
+) -> bool {
+    let Some(set) = only else { return false };
+    let rel = pack_path.strip_prefix(workspace).unwrap_or(pack_path);
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    let matches = set.is_match(&rel_str);
+    if !matches {
+        tracing::info!(
+            target: "grex::sync",
+            "skipping pack `{pack_name}` (rel path `{rel_str}`): does not match --only filter"
+        );
+    }
+    !matches
 }
 
 /// Per-pack execution loop. Returns `true` when the sync must halt.
@@ -607,20 +817,22 @@ fn try_skip_pack(
     pack_name: &str,
     pack_path: &Path,
     actions: &[Action],
+    commit_sha: &str,
     prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     dry_run: bool,
+    force: bool,
 ) -> bool {
-    if dry_run {
+    if dry_run || force {
         // Dry runs must always produce the planned-step transcript so
-        // authors can see what `sync` *would* do; skip-on-hash only
-        // applies to wet-run side-effect avoidance.
+        // authors can see what `sync` *would* do. `--force` is the
+        // operator's explicit opt-out from the hash short-circuit.
         return false;
     }
     let Some(prior) = prior_lock.get(pack_name) else {
         return false;
     };
-    let hash = compute_actions_hash(actions, "");
+    let hash = compute_actions_hash(actions, commit_sha);
     if prior.actions_hash != hash {
         return false;
     }
@@ -648,25 +860,37 @@ fn try_skip_pack(
 }
 
 /// Insert or update a lockfile entry for `pack_name` with `actions_hash`.
-/// Preserves the prior entry's commit SHA / branch when present; falls
-/// back to empty strings for a first-ever install. The real commit-SHA
-/// thread-through lands with the walker work in a follow-up.
+///
+/// Stores `commit_sha` verbatim — including the empty string when the
+/// pack is not a git working tree or the HEAD probe failed.
+/// `actions_hash` is computed over the same `commit_sha`, so the two
+/// fields stay internally consistent: if probing starts returning a
+/// non-empty SHA on the next run, the hash differs and the skip is
+/// correctly invalidated. The prior-preserve carve-out that was
+/// introduced in M4-D was unsound (hash-vs-sha drift) and is removed
+/// by the M4-D post-review fix bundle; see spec §M4 req 4a.
 fn upsert_lock_entry(
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     pack_name: &str,
+    commit_sha: &str,
     actions_hash: &str,
 ) {
     let installed_at = Utc::now();
     let entry = next_lock.get(pack_name).map_or_else(
         || LockEntry {
             id: pack_name.to_string(),
-            sha: String::new(),
+            sha: commit_sha.to_string(),
             branch: String::new(),
             installed_at,
             actions_hash: actions_hash.to_string(),
             schema_version: "1".to_string(),
         },
-        |prev| LockEntry { installed_at, actions_hash: actions_hash.to_string(), ..prev.clone() },
+        |prev| LockEntry {
+            installed_at,
+            actions_hash: actions_hash.to_string(),
+            sha: commit_sha.to_string(),
+            ..prev.clone()
+        },
     );
     next_lock.insert(pack_name.to_string(), entry);
 }

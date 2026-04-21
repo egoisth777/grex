@@ -21,9 +21,11 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = "0.10"
+globset = { workspace = true }
 
 # Windows-only: HKCU / HKLM env-variable persistence for `env` action in
-# FsExecutor. Minimal-feature build — we only touch string values.
+# FsExecutor, plus the `reg_key` predicate probe (M4-C) in
+# `execute::predicate`. Minimal-feature build — we only touch string values.
 [target.'cfg(windows)'.dependencies]
 winreg = { version = "0.55", default-features = false }
 

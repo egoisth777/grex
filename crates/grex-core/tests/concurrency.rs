@@ -114,7 +114,7 @@ fn two_syncs_same_workspace_second_errors_busy() {
     .unwrap();
 
     gate.wait(); // t1 is holding the lock
-    let opts = SyncOptions { workspace: Some(workspace.clone()), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
     let err = sync_run(&pack_root, &opts).expect_err("must be busy");
     match err {
         SyncError::WorkspaceBusy { workspace: ws, lock_path } => {
@@ -143,7 +143,7 @@ fn sync_lock_releases_on_completion() {
     )
     .unwrap();
 
-    let opts = SyncOptions { workspace: Some(workspace.clone()), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
     sync_run(&pack_root, &opts).expect("first sync");
     sync_run(&pack_root, &opts).expect("second sync after first drops lock");
 }
@@ -307,7 +307,7 @@ fn halted_pack_prior_entry_is_dropped_so_next_run_executes() {
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
     let workspace = tmp.path().join("ws");
-    let opts = SyncOptions { workspace: Some(workspace.clone()), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
 
     // Run 1: pack P succeeds → lockfile gains an entry for P.
     let target = tmp.path().join("td");
@@ -354,7 +354,7 @@ fn corrupt_lockfile_routes_to_lockfile_variant() {
     fs::create_dir_all(lockfile.parent().unwrap()).unwrap();
     fs::write(&lockfile, b"not-json\n").unwrap();
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     let err = sync_run(&pack_root, &opts).expect_err("corrupt lockfile must fail sync");
     match err {
         SyncError::Lockfile { path, .. } => {
@@ -375,7 +375,7 @@ fn second_run_emits_packskipped_stepkind() {
     let target = tmp.path().join("td");
     write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     sync_run(&pack_root, &opts).expect("first sync ok");
     let report = sync_run(&pack_root, &opts).expect("second sync ok");
 

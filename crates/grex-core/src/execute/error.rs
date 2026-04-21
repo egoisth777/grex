@@ -94,6 +94,34 @@ pub enum ExecError {
         /// Target platform tag.
         platform: &'static str,
     },
+    /// A predicate probed by [`crate::execute::predicate::evaluate`] cannot
+    /// be answered on the current platform (e.g. `reg_key` / `psversion`
+    /// evaluated on non-Windows). Replaces the pre-M4-C conservative-false
+    /// stub: planners and wet-run executors now surface the limitation as
+    /// a typed error instead of silently lying about satisfiability.
+    #[error("predicate `{predicate}` not supported on {platform}")]
+    PredicateNotSupported {
+        /// Predicate kind tag (`reg_key` / `psversion`).
+        predicate: &'static str,
+        /// Target platform tag (from `std::env::consts::OS`).
+        platform: &'static str,
+    },
+    /// A predicate probe ran on the correct platform but the probe itself
+    /// failed in a way that prevents a truthful yes/no answer (e.g. the
+    /// `powershell.exe` child exited non-zero, timed out, or a registry
+    /// read returned a non-`NOT_FOUND` OS error such as ACL denial).
+    /// Distinct from [`ExecError::PredicateNotSupported`]: that variant
+    /// says "grex cannot answer here at all"; this variant says "grex
+    /// tried but the probe itself broke". M4-C post-review introduced it
+    /// so syncs fail loud on a broken probe rather than silently
+    /// reporting `false`.
+    #[error("predicate `{predicate}` probe failed: {detail}")]
+    PredicateProbeFailed {
+        /// Predicate kind tag (`reg_key` / `psversion`).
+        predicate: &'static str,
+        /// Human-readable diagnostic (truncated where appropriate).
+        detail: String,
+    },
     /// OS rejected an env-persistence write (e.g. HKLM without admin).
     #[error("env scope `{scope}` persistence denied: {detail}")]
     EnvPersistenceDenied {

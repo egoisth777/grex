@@ -468,7 +468,7 @@ fn backup_with_timestamp(path: &Path) -> Result<(), ExecError> {
 // ---------------------------------------------------------------- require
 
 pub(crate) fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let satisfied = evaluate_combiner(&spec.combiner, ctx);
+    let satisfied = evaluate_combiner(&spec.combiner, ctx)?;
     let outcome =
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
     let result = classify_require(satisfied, spec.on_fail)?;
@@ -479,12 +479,36 @@ pub(crate) fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecSt
     })
 }
 
-fn evaluate_combiner(combiner: &crate::pack::Combiner, ctx: &ExecCtx<'_>) -> bool {
+fn evaluate_combiner(
+    combiner: &crate::pack::Combiner,
+    ctx: &ExecCtx<'_>,
+) -> Result<bool, ExecError> {
     use crate::pack::Combiner;
     match combiner {
-        Combiner::AllOf(list) => list.iter().all(|p| evaluate(p, ctx)),
-        Combiner::AnyOf(list) => list.iter().any(|p| evaluate(p, ctx)),
-        Combiner::NoneOf(list) => !list.iter().any(|p| evaluate(p, ctx)),
+        Combiner::AllOf(list) => {
+            for p in list {
+                if !evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Combiner::AnyOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Combiner::NoneOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
     }
 }
 
@@ -515,7 +539,7 @@ fn classify_require(satisfied: bool, on_fail: RequireOnFail) -> Result<ExecResul
 /// to a fresh bootstrap registry — the historical Stage-A behaviour —
 /// which preserves the built-in semantics.
 pub(crate) fn fs_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let branch_taken = evaluate_when_gate(spec, ctx);
+    let branch_taken = evaluate_when_gate(spec, ctx)?;
     let (result, nested_steps) = if branch_taken {
         let mut out = Vec::with_capacity(spec.actions.len());
         for a in &spec.actions {
