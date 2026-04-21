@@ -487,6 +487,27 @@ mod tests {
         assert!(s.contains("# <<< grex:foo <<<\r\n"));
     }
 
+    // 15b. mixed line-ending file — documented behaviour: any `\r\n`
+    // triggers CRLF-normalisation for the whole file. `detect_line_ending`
+    // picks CRLF as soon as it sees one `\r\n`, so LF-only runs get
+    // rewritten to `\r\n`. This is the conservative default on Windows
+    // and keeps the managed-block writer deterministic (no majority-vote
+    // heuristic required).
+    #[test]
+    fn upsert_into_mixed_line_ending_file() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join(".gitignore");
+        // One LF line, one CRLF line.
+        fs::write(&p, "lf-only\ncrlf-line\r\n").unwrap();
+        upsert_managed_block(&p, "foo", &["x"]).unwrap();
+        let s = fs::read_to_string(&p).unwrap();
+        // User content preserved (the parser reads lines separated by
+        // either `\n` or `\r\n`), block written with CRLF.
+        assert!(s.contains("# >>> grex:foo >>>\r\n"), "block must use CRLF: {s:?}");
+        assert!(s.contains("\r\nx\r\n"), "pattern must use CRLF: {s:?}");
+        assert!(s.contains("# <<< grex:foo <<<\r\n"), "close must use CRLF: {s:?}");
+    }
+
     // 16. atomic write — file exists throughout operation (no leftover temp)
     #[test]
     fn atomic_write_leaves_no_temp_files() {
