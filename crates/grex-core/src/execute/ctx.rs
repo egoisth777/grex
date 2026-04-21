@@ -149,8 +149,16 @@ pub struct ExecCtx<'a> {
     /// under a lock at every recursion boundary. Absent (`None`) means
     /// no outer driver is tracking recursion — `MetaPlugin` treats that
     /// as "caller promises a single-level dispatch" and skips the check.
-    /// The sync driver always attaches a fresh empty set at the top of
-    /// a run so the first `install` call observes an empty history.
+    /// The sync driver attaches a fresh empty set at the top of every
+    /// install / update / sync run so the first plugin call observes
+    /// an empty history. Teardown runs do NOT attach a set:
+    /// [`crate::sync::teardown`] drives every pack through the
+    /// walker's reverse post-order, so each
+    /// [`crate::plugin::PackTypePlugin::teardown`] invocation
+    /// corresponds to a single pack and has no in-process recursion
+    /// to guard. The cycle-detection set stays defense-in-depth for
+    /// direct plugin callers (e.g. the `meta_recursion` integration
+    /// tests) that recurse through `MetaPlugin::recurse_children`.
     pub visited_meta: Option<&'a MetaVisitedSet>,
 }
 
