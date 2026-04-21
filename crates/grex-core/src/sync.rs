@@ -36,8 +36,8 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use thiserror::Error;
 
 use crate::execute::{
-    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
-    StepKind,
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, MetaVisitedSet,
+    PlanExecutor, Platform, StepKind,
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
@@ -701,6 +701,7 @@ fn run_actions(
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
     let rt = build_pack_type_runtime();
+    let visited_meta = new_visited_meta();
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
         let pack_name = node.name.clone();
@@ -741,6 +742,7 @@ fn run_actions(
             &pack_name,
             &pack_path,
             &manifest,
+            &visited_meta,
         );
         if pack_halted {
             // Route (b) halt-state gating: drop any prior entry for the
@@ -761,35 +763,43 @@ fn run_actions(
     }
 }
 
-/// Build the single-threaded tokio runtime used to drive async pack-type
+/// Build the multi-thread tokio runtime used to drive async pack-type
 /// plugin dispatch. Pack-type plugins expose `async fn` methods via
 /// `async_trait`, but the sync driver is synchronous end-to-end — we
 /// block on each plugin future inside the outer action loop. Extracted
 /// into a standalone helper so the runtime construction does not
 /// inflate `run_actions` beyond the 50-LOC per-function budget.
 ///
-/// # Invariant (CE-B1)
+/// # Multi-thread rationale (M5-2c)
 ///
-/// Plugins invoked through this runtime must NOT call `block_on`
-/// themselves, directly or transitively — a current-thread runtime
-/// cannot re-enter. Today this is safe because:
+/// M5-2c enabled real [`crate::plugin::pack_type::MetaPlugin`] recursion
+/// through [`crate::execute::ExecCtx::pack_type_registry`]. The recursion
+/// itself is purely `async` / `.await` (no nested `block_on`), but future
+/// plugin authors may reasonably compose `block_on` calls inside
+/// lifecycle hooks — and external callers that drive `MetaPlugin` via
+/// `rt.block_on(...)` within their own runtime would deadlock on a
+/// current-thread runtime the moment a hook re-enters. A multi-thread
+/// runtime with a small worker pool lets those re-entries resolve on a
+/// sibling worker instead of blocking the dispatcher thread.
 ///
-/// * [`crate::plugin::pack_type::MetaPlugin`] does not yet recurse through
-///   [`crate::execute::ExecCtx::pack_type_registry`] (M5-2 will add that).
-/// * [`crate::plugin::pack_type::DeclarativePlugin`] awaits
-///   only the synchronous `ActionPlugin::execute`, which never re-enters
-///   the runtime.
-/// * [`crate::plugin::pack_type::ScriptedPlugin`] awaits `tokio::process`,
-///   which uses the runtime's I/O driver without blocking on it.
-///
-/// Before M5-2 lands `MetaPlugin` recursion via the registry, switch this
-/// to a `multi_thread` runtime (or construct one runtime per outer call)
-/// to prevent deadlock.
+/// `worker_threads(2)` keeps the footprint small — sync is I/O-bound
+/// (spawn hooks, git pulls, manifest appends) rather than CPU-bound, so
+/// two workers suffice to unblock any nested `block_on` while avoiding
+/// scheduler churn.
 fn build_pack_type_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .expect("tokio runtime for pack-type dispatch")
+}
+
+/// Construct a fresh [`MetaVisitedSet`] for one sync run. Walker-driven
+/// dispatch does not attach it (see `dispatch_pack_type_plugin`), but
+/// the argument is threaded through so future explicit-install /
+/// teardown verbs can share the same set shape.
+fn new_visited_meta() -> MetaVisitedSet {
+    std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
 /// Combined short-circuit helper: `--only` filter + skip-on-hash. Returns
@@ -889,6 +899,7 @@ fn run_pack_lifecycle(
     pack_name: &str,
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
     let type_tag = manifest.r#type.as_str();
     // Name-oracle check: every pack type must be registered. Unknown
@@ -925,6 +936,7 @@ fn run_pack_lifecycle(
             pack_path,
             manifest,
             type_tag,
+            visited_meta,
         ),
     }
 }
@@ -995,7 +1007,17 @@ fn dispatch_pack_type_plugin(
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
     type_tag: &'static str,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
+    // NB: `visited_meta` is intentionally NOT attached to the ctx here.
+    // The sync driver already walks children in post-order via the tree
+    // walker; attaching the visited set would trigger MetaPlugin's
+    // real-recursion branch and cause double dispatch (walker runs child
+    // packs as their own graph nodes, then MetaPlugin would recurse into
+    // them again). The `visited_meta` parameter is kept on the argument
+    // list so future explicit-install / teardown verbs that invoke
+    // MetaPlugin directly can share the same set shape.
+    let _ = visited_meta;
     let ctx = ExecCtx::new(vars, pack_path, workspace)
         .with_platform(Platform::current())
         .with_registry(registry)

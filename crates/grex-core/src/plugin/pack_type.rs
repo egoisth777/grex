@@ -302,44 +302,58 @@ fn noop_step(action_name: &'static str) -> ExecStep {
     }
 }
 
+/// Which lifecycle method a [`MetaPlugin`] recursion invokes on each child.
+///
+/// Distinguishes the four entry points so `recurse_children` can dispatch
+/// through a single helper regardless of which outer lifecycle is running.
+#[derive(Debug, Clone, Copy)]
+enum MetaLifecycle {
+    Install,
+    Update,
+    Teardown,
+    Sync,
+}
+
 /// Built-in driver for `type: meta` packs.
 ///
 /// Meta packs compose child packs and contain no actions of their own.
-/// Stage B enumerates [`PackManifest::children`] but does **not** load
-/// each child's `pack.yaml` or dispatch through the
-/// [`PackTypeRegistry`] — a child-pack loader helper does not yet exist
-/// in the crate. Stage C will add that helper (or wire an existing one)
-/// and swap this enumeration for real recursion via
-/// [`ExecCtx::pack_type_registry`].
+/// M5-2c wires real recursion: for each [`ChildRef`] in
+/// [`PackManifest::children`], the plugin resolves the child's on-disk
+/// directory (`<ctx.pack_root>/<child.effective_path()>`), loads the
+/// child manifest via [`load_child_manifest_from`], looks up the child
+/// pack-type plugin in [`ExecCtx::pack_type_registry`], and dispatches
+/// the matching lifecycle method.
 ///
-/// For now every lifecycle method walks children in-order (reverse order
-/// for [`teardown`](MetaPlugin::teardown)) and emits one synthetic
-/// [`ExecStep`] per child under a [`StepKind::When`] envelope so downstream
-/// audit tooling sees the composition shape, and returns the envelope as
-/// the aggregated step. An empty `children:` list yields a single
-/// `noop_step` so callers can distinguish "ran over zero children" from
-/// an execution error.
+/// Cycle detection canonicalises each child path before insert into
+/// [`ExecCtx::visited_meta`]; a re-entry yields
+/// [`ExecError::MetaCycle`]. The walker already rejects structural
+/// cycles at tree-walk time — this guards the registry-dispatch path
+/// as defence-in-depth.
+///
+/// Empty `children:` yields a single `noop_step("meta")` so callers can
+/// distinguish "ran over zero children" from an execution error.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MetaPlugin;
 
 impl MetaPlugin {
     const NAME: &'static str = "meta";
 
-    /// Synthesise a [`StepKind::When`] envelope enumerating `children` in
-    /// the provided iteration order. Each child becomes one nested
-    /// `noop_step` tagged with the child's [`ChildRef::effective_path`]
-    /// so audit logs can point at the on-disk directory even before Stage
-    /// C threads real dispatch.
-    fn compose<'c, I>(children: I) -> ExecStep
+    /// Resolve the child pack root on disk relative to `ctx.pack_root`.
+    fn child_root(ctx: &ExecCtx<'_>, child: &ChildRef) -> PathBuf {
+        ctx.pack_root.join(child.effective_path())
+    }
+
+    /// Build the aggregate `StepKind::When` envelope MetaPlugin emits in
+    /// walker-driven mode (the sync driver walks children in post-order
+    /// itself, so MetaPlugin does not recurse — it just surfaces a
+    /// composition-shape step so audit tooling can see the child set).
+    /// Mirrors the M5-1 `compose` behaviour verbatim.
+    fn synthesis_envelope<'c, I>(children: I) -> ExecStep
     where
         I: Iterator<Item = &'c ChildRef>,
     {
         let nested: Vec<ExecStep> = children
             .map(|c| ExecStep {
-                // `effective_path` allocates once per child — acceptable
-                // since pack children are on the order of tens, not
-                // thousands, and the path is the only stable human-
-                // readable label at this layer.
                 action_name: Cow::Owned(c.effective_path()),
                 result: ExecResult::NoOp,
                 details: StepKind::Require {
@@ -357,6 +371,119 @@ impl MetaPlugin {
             details: StepKind::When { branch_taken: true, nested_steps: nested },
         }
     }
+
+    /// Canonicalise `path` if possible; fall back to the raw input when
+    /// canonicalisation fails (missing directory, permission error).
+    /// Using a best-effort canonicalisation keeps cycle detection robust
+    /// against symlinked pack paths while still giving downstream errors
+    /// a usable path string when the child does not yet exist on disk.
+    fn canonical_or_raw(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    /// Recurse into every child in iteration order, dispatching
+    /// `lifecycle` on each. Aborts on the first child error so a
+    /// failing sibling's descendants are not touched (matches
+    /// `run_declarative_actions` halt-on-first behaviour).
+    ///
+    /// Returns a composed [`StepKind::When`] envelope aggregating one
+    /// nested [`ExecStep`] per child. Empty `children:` yields
+    /// `noop_step("meta")`.
+    async fn recurse_children<'c, I>(
+        ctx: &ExecCtx<'_>,
+        children: I,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError>
+    where
+        I: Iterator<Item = &'c ChildRef>,
+    {
+        let mut nested: Vec<ExecStep> = Vec::new();
+        for child in children {
+            let step = Self::recurse_one(ctx, child, lifecycle).await?;
+            nested.push(step);
+        }
+        if nested.is_empty() {
+            return Ok(noop_step(Self::NAME));
+        }
+        Ok(ExecStep {
+            action_name: Cow::Borrowed(Self::NAME),
+            result: ExecResult::NoOp,
+            details: StepKind::When { branch_taken: true, nested_steps: nested },
+        })
+    }
+
+    /// Dispatch a single child: resolve path, cycle-check, load
+    /// manifest, look up plugin, invoke the matching lifecycle, pop
+    /// the cycle entry on the way out.
+    async fn recurse_one(
+        ctx: &ExecCtx<'_>,
+        child: &ChildRef,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError> {
+        let child_root = Self::child_root(ctx, child);
+
+        // Cycle detection — canonicalise for symlink-resolution parity,
+        // then insert under lock. A duplicate key halts immediately.
+        let canonical = Self::canonical_or_raw(&child_root);
+        if let Some(visited) = ctx.visited_meta {
+            let mut guard =
+                visited.lock().map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
+            if !guard.insert(canonical.clone()) {
+                return Err(ExecError::MetaCycle { path: canonical });
+            }
+        }
+
+        // Run the child dispatch, then always remove the canonical
+        // path from the visited set so siblings composed later don't
+        // wrongly observe it as "in-progress".
+        let result = Self::dispatch_child(ctx, &child_root, lifecycle).await;
+
+        if let Some(visited) = ctx.visited_meta {
+            if let Ok(mut guard) = visited.lock() {
+                guard.remove(&canonical);
+            }
+        }
+        result
+    }
+
+    /// Load the child manifest, look up the pack-type plugin, and call
+    /// the matching lifecycle method.
+    async fn dispatch_child(
+        ctx: &ExecCtx<'_>,
+        child_root: &Path,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError> {
+        let child_manifest = load_child_manifest_from(child_root)?;
+        let registry = ctx.pack_type_registry.ok_or_else(|| {
+            ExecError::ExecInvalid(
+                "meta plugin requires ctx.pack_type_registry for child dispatch".to_string(),
+            )
+        })?;
+        let type_tag = child_manifest.r#type.as_str();
+        let plugin = registry
+            .get(type_tag)
+            .ok_or_else(|| ExecError::UnknownPackType { requested: type_tag.to_string() })?;
+
+        // Rebind pack_root to the child directory; everything else
+        // threads through unchanged (vars, workspace, platform,
+        // registries, visited_meta).
+        let child_ctx = ExecCtx {
+            vars: ctx.vars,
+            pack_root: child_root,
+            workspace: ctx.workspace,
+            platform: ctx.platform,
+            registry: ctx.registry,
+            pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
+        };
+
+        match lifecycle {
+            MetaLifecycle::Install => plugin.install(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Update => plugin.update(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Teardown => plugin.teardown(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Sync => plugin.sync(&child_ctx, &child_manifest).await,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -365,31 +492,48 @@ impl PackTypePlugin for MetaPlugin {
         Self::NAME
     }
 
-    async fn install(
-        &self,
-        _ctx: &ExecCtx<'_>,
-        pack: &PackManifest,
-    ) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Install).await
+        } else {
+            // Walker-driven path: the outer sync driver walks children
+            // in post-order itself, so MetaPlugin only emits an
+            // aggregate synthesis envelope (matching M5-1 behaviour).
+            // Direct callers that want real recursion attach
+            // `visited_meta` via [`ExecCtx::with_visited_meta`].
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 
-    async fn update(&self, _ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Update).await
+        } else {
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 
     async fn teardown(
         &self,
-        _ctx: &ExecCtx<'_>,
+        ctx: &ExecCtx<'_>,
         pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
         // Teardown walks children in reverse install order so a child
-        // that was composed last is torn down first — mirrors the
-        // "reverse(actions)" default for declarative teardown.
-        Ok(Self::compose(pack.children.iter().rev()))
+        // composed last is torn down first — mirrors the
+        // `reverse(actions)` default for declarative teardown (R-M5-11).
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter().rev(), MetaLifecycle::Teardown).await
+        } else {
+            Ok(Self::synthesis_envelope(pack.children.iter().rev()))
+        }
     }
 
-    async fn sync(&self, _ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Sync).await
+        } else {
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 }
 
@@ -832,6 +976,49 @@ mod tests {
         let step = plugin.install(&ctx, &pack).await.expect("empty-actions install OK");
         assert_eq!(step.action_name.as_ref(), "declarative");
         assert!(matches!(step.result, ExecResult::NoOp));
+    }
+
+    #[test]
+    fn load_child_manifest_from_reads_pack_yaml() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().expect("tempdir");
+        let dir = tmp.path().join("child");
+        std::fs::create_dir_all(dir.join(".grex")).unwrap();
+        std::fs::write(
+            dir.join(".grex").join("pack.yaml"),
+            "schema_version: \"1\"\nname: kid\ntype: declarative\n",
+        )
+        .unwrap();
+        let manifest = load_child_manifest_from(&dir).expect("child manifest loads");
+        assert_eq!(manifest.name, "kid");
+    }
+
+    #[test]
+    fn load_child_manifest_from_missing_dir_errors() {
+        let missing = std::path::Path::new("/definitely/not/a/pack/path/123456789");
+        let err = load_child_manifest_from(missing).expect_err("missing manifest errors");
+        match err {
+            ExecError::ExecInvalid(msg) => {
+                assert!(msg.contains("child manifest load failed"), "msg: {msg}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_error_meta_cycle_renders_path() {
+        let err = ExecError::MetaCycle { path: std::path::PathBuf::from("/tmp/a") };
+        let rendered = err.to_string();
+        assert!(rendered.contains("meta recursion cycle"), "got: {rendered}");
+        assert!(rendered.contains("/tmp/a") || rendered.contains("\\tmp\\a"), "got: {rendered}");
+    }
+
+    #[test]
+    fn exec_error_unknown_pack_type_renders_name() {
+        let err = ExecError::UnknownPackType { requested: "mystery".into() };
+        let rendered = err.to_string();
+        assert!(rendered.contains("mystery"), "got: {rendered}");
+        assert!(rendered.contains("no pack-type plugin"), "got: {rendered}");
     }
 
     #[tokio::test]
