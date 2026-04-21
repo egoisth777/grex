@@ -206,6 +206,33 @@ fn gitignore_upsert_on_install_writes_managed_block() {
     assert!(gi.contains("*.log"), "pattern missing: {gi}");
 }
 
+/// `apply_gitignore` is called exactly once per install — no duplicate
+/// block (which would indicate both the declarative driver in
+/// `run_declarative_actions` AND the plugin `install` ran apply).
+/// Counting open markers is the cheapest observable proof; the
+/// managed-block upserter is idempotent so multiple apply calls
+/// would still leave one block, but a second apply site on the wrong
+/// ordering could re-open the block elsewhere in the file.
+#[test]
+fn gitignore_applied_once_per_install() {
+    let tmp = TempDir::new().unwrap();
+    let tmp_path = tmp.path();
+    let workspace = tmp_path.join("ws");
+    fs::create_dir_all(&workspace).unwrap();
+    let root = tmp_path.join("root");
+    write_pack(
+        &root,
+        "schema_version: \"1\"\nname: once\ntype: declarative\nx-gitignore:\n  - once/\n",
+    );
+
+    run(&root, &options(workspace.clone())).expect("install ok");
+    let gi = fs::read_to_string(workspace.join(".gitignore")).unwrap();
+    let opens = gi.matches("# >>> grex:once >>>").count();
+    let closes = gi.matches("# <<< grex:once <<<").count();
+    assert_eq!(opens, 1, "expected exactly one open marker, got {opens}: {gi}");
+    assert_eq!(closes, 1, "expected exactly one close marker, got {closes}: {gi}");
+}
+
 // ------------------------------------------------------------ 5. gitignore teardown
 
 /// Teardown removes the managed block and preserves any user-authored

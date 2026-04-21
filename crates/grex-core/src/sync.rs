@@ -960,11 +960,12 @@ fn run_declarative_actions(
     manifest: &crate::pack::PackManifest,
     actions: &[Action],
 ) -> bool {
-    // Apply the pack's `x-gitignore` managed block before running its
-    // actions. The plugin-driven path (`DeclarativePlugin::install`)
-    // also calls `apply_gitignore`; this mirror keeps the M4 per-action
-    // declarative driver consistent so `run` and the future plugin
-    // dispatch produce the same on-disk `.gitignore` state.
+    // `apply_gitignore` is called per-lifecycle by each PackTypePlugin
+    // for meta/scripted, and here for declarative (which bypasses the
+    // plugin in `sync::run`'s per-action driver). Keeping plugins as
+    // the single apply site everywhere else means the declarative
+    // per-action path is the only code outside the PackTypePlugin
+    // surface that needs a direct apply call.
     if !dry_run {
         let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
         if let Err(e) = crate::plugin::pack_type::apply_gitignore(&ctx, manifest) {
