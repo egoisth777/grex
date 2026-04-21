@@ -23,6 +23,7 @@ tracing = { workspace = true }
 sha2 = "0.10"
 globset = { workspace = true }
 inventory = { version = "0.3", optional = true }
+async-trait = "0.1"
 
 [features]
 # Opt-in compile-time auto-registration of Tier-1 built-in action plugins

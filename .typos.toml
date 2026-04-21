@@ -1,5 +1,7 @@
 [default.extend-words]
 ratatui = "ratatui"
+builtins = "builtins"
+builtin = "builtin"
 
 [files]
 extend-exclude = [
