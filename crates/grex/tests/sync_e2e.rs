@@ -196,11 +196,8 @@ fn e2e_dry_run_3_level_tree() {
         .filter(|s| matches!(s.exec_step.result, ExecResult::WouldPerformChange))
         .count();
     assert_eq!(declarative_steps, 3, "3 declarative actions plan: {:?}", report.steps);
-    let meta_steps = report
-        .steps
-        .iter()
-        .filter(|s| matches!(s.exec_step.result, ExecResult::NoOp))
-        .count();
+    let meta_steps =
+        report.steps.iter().filter(|s| matches!(s.exec_step.result, ExecResult::NoOp)).count();
     assert_eq!(meta_steps, 2, "2 meta synthesis NoOp steps: {:?}", report.steps);
 
     // Disk must be untouched.

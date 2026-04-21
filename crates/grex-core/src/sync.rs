@@ -700,46 +700,25 @@ fn run_actions(
 ) {
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
-    // Pack-type plugin dispatch is async (the trait takes `async fn`), but
-    // the sync driver is synchronous end-to-end. Build one multi-thread
-    // tokio runtime at the top of the action loop and drive every async
-    // call through `block_on`. The runtime is dropped when the loop
-    // returns. Choosing a multi-thread runtime keeps the door open for
-    // parallel pack execution in M5-2 without reshaping the driver.
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("tokio runtime for pack-type dispatch");
+    let rt = build_pack_type_runtime();
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
-        // Clone the data we need so report is borrow-free inside the loop.
         let pack_name = node.name.clone();
         let pack_path = node.path.clone();
         let actions = node.manifest.actions.clone();
         let manifest = node.manifest.clone();
         let commit_sha = node.commit_sha.clone().unwrap_or_default();
-        // M4-D `--only` filter: packs whose workspace-relative path does
-        // not match the globset are skipped entirely — no action
-        // execution. Filtered packs carry their prior lock entry
-        // forward (F3) so a subsequent unfiltered sync's skip-on-hash
-        // path still fires and the pack does not re-execute from scratch.
-        if skip_for_only_filter(only, &pack_name, &pack_path, workspace) {
-            if let Some(prev) = prior_lock.get(&pack_name) {
-                next_lock.insert(pack_name.clone(), prev.clone());
-            }
-            continue;
-        }
-        // Skip-on-hash (M4-B S1 + M4-D --force bypass): if the prior
-        // lockfile entry's `actions_hash` matches the freshly-computed
-        // hash over the current action list + commit sha, emit a single
-        // `ExecResult::Skipped` step for the pack and move on. `--force`
-        // bypasses this short-circuit entirely.
-        if try_skip_pack(
+        // `--only` filter + skip-on-hash short-circuits colocated in
+        // `try_skip_or_filter` so this outer loop stays within the
+        // 50-LOC per-function budget.
+        if try_skip_or_filter(
             report,
+            only,
             &pack_name,
             &pack_path,
             &actions,
             &commit_sha,
+            workspace,
             prior_lock,
             next_lock,
             dry_run,
@@ -780,6 +759,50 @@ fn run_actions(
         let actions_hash = compute_actions_hash(&actions, &commit_sha);
         upsert_lock_entry(next_lock, &pack_name, &commit_sha, &actions_hash);
     }
+}
+
+/// Build the single-threaded tokio runtime used to drive async pack-type
+/// plugin dispatch. Pack-type plugins expose `async fn` methods via
+/// `async_trait`, but the sync driver is synchronous end-to-end — we
+/// block on each plugin future inside the outer action loop. Extracted
+/// into a standalone helper so the runtime construction does not
+/// inflate `run_actions` beyond the 50-LOC per-function budget.
+fn build_pack_type_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime for pack-type dispatch")
+}
+
+/// Combined short-circuit helper: `--only` filter + skip-on-hash. Returns
+/// `true` when the outer loop should `continue` for this pack.
+///
+/// Extracted from `run_actions` so that function stays under the
+/// workspace's 50-LOC per-function lint. Semantics are unchanged; this
+/// is a pure structural refactor.
+#[allow(clippy::too_many_arguments)]
+fn try_skip_or_filter(
+    report: &mut SyncReport,
+    only: Option<&GlobSet>,
+    pack_name: &str,
+    pack_path: &Path,
+    actions: &[Action],
+    commit_sha: &str,
+    workspace: &Path,
+    prior_lock: &std::collections::HashMap<String, LockEntry>,
+    next_lock: &mut std::collections::HashMap<String, LockEntry>,
+    dry_run: bool,
+    force: bool,
+) -> bool {
+    if skip_for_only_filter(only, pack_name, pack_path, workspace) {
+        if let Some(prev) = prior_lock.get(pack_name) {
+            next_lock.insert(pack_name.to_string(), prev.clone());
+        }
+        return true;
+    }
+    try_skip_pack(
+        report, pack_name, pack_path, actions, commit_sha, prior_lock, next_lock, dry_run, force,
+    )
 }
 
 /// Return `true` when `--only` is active and the pack's
