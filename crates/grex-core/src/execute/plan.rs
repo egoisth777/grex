@@ -100,6 +100,7 @@ impl ActionExecutor for PlanExecutor {
             platform: ctx.platform,
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
         };
         dispatch_plan(action, &nested_ctx)
     }

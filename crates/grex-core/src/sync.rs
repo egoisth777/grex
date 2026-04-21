@@ -36,8 +36,8 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use thiserror::Error;
 
 use crate::execute::{
-    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
-    StepKind,
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, MetaVisitedSet,
+    PlanExecutor, Platform, StepKind,
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
@@ -701,6 +701,12 @@ fn run_actions(
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
     let rt = build_pack_type_runtime();
+    // Shared visited-set for MetaPlugin recursion — one per sync run.
+    // Emptied at the start of every top-level pack lifecycle dispatch so
+    // sibling packs don't pollute each other's cycle history.
+    let visited_meta: MetaVisitedSet = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashSet::new(),
+    ));
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
         let pack_name = node.name.clone();
@@ -741,6 +747,7 @@ fn run_actions(
             &pack_name,
             &pack_path,
             &manifest,
+            &visited_meta,
         );
         if pack_halted {
             // Route (b) halt-state gating: drop any prior entry for the
@@ -889,6 +896,7 @@ fn run_pack_lifecycle(
     pack_name: &str,
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
     let type_tag = manifest.r#type.as_str();
     // Name-oracle check: every pack type must be registered. Unknown
@@ -925,6 +933,7 @@ fn run_pack_lifecycle(
             pack_path,
             manifest,
             type_tag,
+            visited_meta,
         ),
     }
 }
@@ -995,7 +1004,17 @@ fn dispatch_pack_type_plugin(
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
     type_tag: &'static str,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
+    // NB: `visited_meta` is intentionally NOT attached to the ctx here.
+    // The sync driver already walks children in post-order via the tree
+    // walker; attaching the visited set would trigger MetaPlugin's
+    // real-recursion branch and cause double dispatch (walker runs child
+    // packs as their own graph nodes, then MetaPlugin would recurse into
+    // them again). The `visited_meta` parameter is kept on the argument
+    // list so future explicit-install / teardown verbs that invoke
+    // MetaPlugin directly can share the same set shape.
+    let _ = visited_meta;
     let ctx = ExecCtx::new(vars, pack_path, workspace)
         .with_platform(Platform::current())
         .with_registry(registry)

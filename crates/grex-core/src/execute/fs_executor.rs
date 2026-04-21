@@ -108,6 +108,7 @@ impl ActionExecutor for FsExecutor {
             platform: ctx.platform,
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
         };
         plugin.execute(action, &nested_ctx)
     }
