@@ -170,7 +170,7 @@ pub(crate) fn plan_unlink(args: &UnlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecSt
     let dst = require_path(expand_field(&args.dst, ctx.vars, "unlink.dst")?)?;
     // Only a symlink at `dst` is considered actionable — anything else
     // (absent, regular file, directory) reports AlreadySatisfied so a
-    // mis-targeted teardown never destroys operator-managed content.
+    // misdirected teardown never destroys operator-managed content.
     let result = match std::fs::symlink_metadata(&dst) {
         Ok(meta) if meta.file_type().is_symlink() => ExecResult::WouldPerformChange,
         _ => ExecResult::AlreadySatisfied,

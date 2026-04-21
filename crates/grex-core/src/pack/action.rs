@@ -160,7 +160,7 @@ impl ExecSpec {
 /// Mirrors [`SymlinkArgs`] in shape but carries only `dst` — that is
 /// the only field needed to locate and remove the symlink. Non-symlink
 /// files at `dst` are left untouched by the wet-run plugin, so a
-/// mis-targeted teardown cannot clobber operator-managed content.
+/// misdirected teardown cannot clobber operator-managed content.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnlinkArgs {

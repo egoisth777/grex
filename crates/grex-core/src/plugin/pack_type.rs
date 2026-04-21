@@ -678,7 +678,7 @@ impl DeclarativePlugin {
     ///   directories the author's install created-and-left-empty.
     /// * `symlink` → `unlink` targeting the recorded `dst`. The
     ///   `fs_unlink` wet-run checks that `dst` IS a symlink before
-    ///   removing it so a mis-targeted teardown cannot clobber
+    ///   removing it so a misdirected teardown cannot clobber
     ///   operator-managed files.
     /// * `when` → `when` with the same condition but `actions`
     ///   recursively inverted. Preserving the gate is load-bearing:

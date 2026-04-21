@@ -292,7 +292,7 @@ fn map_windows_symlink_error(dst: &Path, err: std::io::Error) -> ExecError {
 /// Only removes the file at `dst` when [`std::fs::symlink_metadata`]
 /// reports it IS a symlink. Non-symlink targets (regular files,
 /// directories, nonexistent paths) return
-/// [`ExecResult::AlreadySatisfied`] so a mis-targeted teardown cannot
+/// [`ExecResult::AlreadySatisfied`] so a misdirected teardown cannot
 /// clobber operator-managed content.
 pub(crate) fn fs_unlink(args: &UnlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let dst = require_path(expand_field(&args.dst, ctx.vars, "unlink.dst")?)?;
