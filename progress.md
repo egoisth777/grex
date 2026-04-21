@@ -1,7 +1,7 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4-A + M4-B + M4-B post-review fix bundle** on `feat/m4-a-plugin-trait`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4-B shipped on branch (2026-04-20) + **W1–W6 post-review fix bundle (2026-04-20)**. 344 → 361 → **378 tests**, all green. Next: **M4-C** (registry probes: `reg_key` Windows winreg, `psversion` PowerShell).
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4-A + M4-B + M4-B post-review fix bundle** on `feat/m4-a-plugin-trait`. **M3 complete + hardened (2026-04-20)**: parse layer + variable expansion + validator framework + git backend + pack tree walker + dual executors (Plan/Fs) + `grex sync` verb + 5 review-driven fix PRs. Main head `7ce186e`. M4-B shipped on branch (2026-04-20) + **W1–W6 post-review fix bundle (2026-04-20)**. 344 → 361 → **369 tests**, all green. Next: **M4-C** (registry probes: `reg_key` Windows winreg, `psversion` PowerShell).
 
 ## Last endpoint (2026-04-20, feat/m4-a-plugin-trait — M4-B post-review fix bundle shipped)
 - **M4-B post-review fix bundle shipped (2026-04-20)** on `feat/m4-a-plugin-trait`: 6 fix streams close P1/P2 blockers surfaced by 8-persona `ce:review` + `codex:rescue`.
@@ -11,7 +11,7 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4-A + M4-
   - **W4 — step variant hardening (P2)**: `#[non_exhaustive]` on `StepKind::Skipped` variant (in addition to enum-level); `StepKind::PackSkipped { actions_hash }` added to dedicated variant list.
   - **W5 — API surface hygiene (P2)**: `#[doc(hidden)]` on `ActionLogger` / `EnvResolver` / `LogLevel` / `TracingLogger` until M5 wires them into `ExecCtx`; `grex-plugins-builtin` empty stub removed (crate rustdoc notes it as v2-reserved).
   - **W6 — spec normative drift (P2)**: `openspec/feat-grex/spec.md` §1 + `.omne/cfg/architecture.md` L121 trait sketch corrected — async `&Value` changed to sync `&Action` / `ExecStep` to match shipped code. Zero `async fn execute` references remain in normative spec.
-  - Verification: `cargo fmt --check` clean, `cargo clippy --all-targets -D warnings` clean, `cargo check --workspace` clean, `cargo test --workspace` **378 passed / 0 failed** (30 binaries).
+  - Verification: `cargo fmt --check` clean, `cargo clippy --all-targets -D warnings` clean, `cargo check --workspace` clean, `cargo test --workspace` **369 passed / 0 failed** (30 binaries).
   - Zero-drift audit (all 10 checks PASS): W1 `FsExecutor::new()` in plugin: 0; W2 `format!("{:?}"` in hash.rs: 0; W3 `StepKind::Require` in sync.rs: 0; W6 `async fn execute` in spec.md: 0; W5 `pub mod pack_types` in plugins-builtin: 0; W4 `#[non_exhaustive]` in step.rs: 6; W5 `#[doc(hidden)]` in log.rs+env.rs: 4; W3 `SyncError::Lockfile`: 2; W3 `StepKind::PackSkipped`: 1.
   - **DEFERRED to M5** — closed-enum `Action` hardening: plugin API can only *shadow* the 7 builtins (ActionPlugin.name() matches an existing kind), not introduce new kinds. Fixing requires opening the enum with an `Action::Extension { name: String, args: Value }` variant + parser update. Architectural, not M4 scope.
   - **DEFERRED to M4-D** — real commit-SHA plumbing: `sync::run_actions` still passes `""` to `compute_actions_hash` with TODO(M4) marker. Needs `PackNode::commit_sha` wired from `GixBackend`.
@@ -71,7 +71,7 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4-A + M4-
 - **Recovery scan**: pre-run informational scan of stale locks + incomplete event brackets; auto-cleanup deferred to `grex doctor` (M4+).
 
 ## Test status
-**378 tests** all green on `feat/m4-a-plugin-trait` (344 post-review + 17 from M4-A/M4-B streams + 17 from W1–W6 post-review fix bundle: W1 registry propagation TG-03, W2 canonical JSON + golden digest v1, W3 halt gating + SyncError::Lockfile + PackSkipped emission, W4 non_exhaustive variant guards, others).
+**369 tests** all green on `feat/m4-a-plugin-trait` (344 post-review + 17 from M4-A/M4-B streams + 17 from W1–W6 post-review fix bundle: W1 registry propagation TG-03, W2 canonical JSON + golden digest v1, W3 halt gating + SyncError::Lockfile + PackSkipped emission, W4 non_exhaustive variant guards, others).
 
 ## CI gates active
 1. `fmt --check`
