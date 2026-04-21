@@ -48,14 +48,13 @@ The first universal operation: `grex sync`. Everything else bolts onto this.
 M3 shipped the executor + 7 built-ins directly. M4 formalizes the plugin surface, wires lockfile idempotency, and replaces the two conservative-false predicate stubs.
 
 - `ActionPlugin` trait + `Registry` struct; 7 built-ins re-exported via `register_builtins(&mut Registry)`.
-- Executor dispatch via `Registry::get(name)` lookup (replaces direct enum match).
-- Lockfile `actions_hash` compute + compare; matching hash emits `ExecResult::Skipped`.
+- Lockfile `actions_hash` compute + compare; matching hash emits `ExecResult::Skipped`. Executor dispatch switches from direct `Action` enum match to `Registry::get(name)` lookup in this stage (moved from Stage A — 2026-04-20 — to keep A surface-area small: threading `Registry` through `FsExecutor` / `PlanExecutor` cascades into >50 test-constructor changes, cleaner as its own unit).
 - `reg_key` real Windows registry probe (`winreg`); `psversion` real PowerShell probe; both keep graceful degradation on non-Windows.
 - CLI: `--ref <sha|branch|tag>` override, `--only <glob>` pack filter, lockfile auto-read at sync start + auto-write at sync end.
 - Discovery: `register_builtins` is the canonical path in v1; optional `inventory::submit!` behind feature flag `plugin-inventory`.
-- Stage order: A (trait + Registry) → B (actions_hash / Skipped) → C (reg_key / psversion probes) → D (CLI flags + lockfile r/w) → E (discovery hook).
+- Stage order: A (trait + Registry + builtins behind trait; dispatch unchanged) → B (executor dispatch swap + actions_hash / Skipped) → C (reg_key / psversion probes) → D (CLI flags + lockfile r/w) → E (discovery hook).
 
-**Acceptance**: `ActionPlugin` trait + `Registry` shipped; 7 built-ins re-exported through Registry (no regression in M3 tests); `grex sync` twice on unchanged pack → second run emits `ExecResult::Skipped` for every action; `reg_key` + `psversion` return real probe results on Windows and `PredicateNotSupported` on non-Windows; `grex sync --ref <sha>` overrides pack default ref; `grex sync --only <glob>` filters to matching pack paths; lockfile reads on startup and writes post-sync. External plugin loading (dylib/WASM) remains out of scope per v2 backlog.
+**Acceptance**: `ActionPlugin` trait + `Registry` shipped with 7 built-ins re-exported through Registry and plugin-layer unit tests (no regression in M3 tests); executor dispatch routed through `Registry::get(name)` (Stage B); `grex sync` twice on unchanged pack → second run emits `ExecResult::Skipped` for every action; `reg_key` + `psversion` return real probe results on Windows and `PredicateNotSupported` on non-Windows; `grex sync --ref <sha>` overrides pack default ref; `grex sync --only <glob>` filters to matching pack paths; lockfile reads on startup and writes post-sync. External plugin loading (dylib/WASM) remains out of scope per v2 backlog.
 **Effort**: 6-8 days.
 **Depends on**: M3.
 

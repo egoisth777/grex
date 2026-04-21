@@ -110,9 +110,38 @@ pub struct SyncArgs {
     /// Skip plan-phase validators. Debug-only escape hatch.
     #[arg(long)]
     pub no_validate: bool,
-    // TODO(m4): --only <pattern>
+
+    /// Override the default ref for every pack in this sync invocation.
+    /// Accepts a branch, tag, or commit SHA. Empty strings are rejected.
+    #[arg(long = "ref", value_name = "REF", value_parser = non_empty_string)]
+    pub ref_override: Option<String>,
+
+    /// Restrict sync to packs whose workspace-relative path (or name)
+    /// matches the glob. Repeat the flag to OR-combine multiple patterns
+    /// (standard `*`/`**`/`?` semantics). Non-matching packs are skipped
+    /// entirely — no action execution, no lockfile write.
+    #[arg(long = "only", value_name = "GLOB", value_parser = non_empty_string)]
+    pub only: Vec<String>,
+
+    /// Re-execute every pack even when its `actions_hash` is unchanged
+    /// from the prior lockfile. Overrides the M4-B skip-on-hash
+    /// short-circuit; dry-run semantics are unchanged.
+    #[arg(long)]
+    pub force: bool,
     // TODO(m6): --parallel N  (dedicated; separate from global --parallel)
-    // TODO(slice-6b): --ref <ref>
+}
+
+/// Clap `value_parser` that rejects empty or whitespace-only strings.
+/// Keeps `--ref ""`, `--ref " "`, `--only ""`, `--only "\t"` off the
+/// fast path. Whitespace-only values are rejected because they
+/// degrade silently inside the walker / globset layers rather than
+/// producing a useful error.
+fn non_empty_string(s: &str) -> Result<String, String> {
+    if s.trim().is_empty() {
+        Err("value must not be empty or whitespace-only".to_string())
+    } else {
+        Ok(s.to_string())
+    }
 }
 
 #[derive(Args, Debug)]
@@ -323,5 +352,21 @@ mod tests {
     fn unknown_flag_fails() {
         let err = parse(&["init", "--not-a-flag"]).expect_err("unknown flag must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn cli_non_empty_string_rejects_whitespace() {
+        // F8: `--ref " "` / `--only "\t"` must be rejected by the value
+        // parser, not silently threaded into the walker / globset layer
+        // where they degrade into useless errors.
+        for bad in ["", " ", "\t", "  ", "\n"] {
+            let err =
+                parse(&["sync", ".", "--ref", bad]).expect_err("whitespace --ref must be rejected");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "for {bad:?}");
+
+            let err = parse(&["sync", ".", "--only", bad])
+                .expect_err("whitespace --only must be rejected");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "for {bad:?}");
+        }
     }
 }

@@ -46,6 +46,9 @@ fd-lock = "4"
 anyhow = "1"
 thiserror = "1"
 
+# glob matching (M4-D: grex sync --only)
+globset = "0.4"
+
 # tracing/logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

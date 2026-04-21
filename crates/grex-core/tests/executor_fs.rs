@@ -642,3 +642,104 @@ fn fs_env_machine_scope_denied_gracefully() {
         Err(other) => panic!("expected PerformedChange or EnvPersistenceDenied, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------- registry propagation (TG-03)
+//
+// Regression guard for the `when`-block registry-propagation bug: prior to
+// the fix, `WhenPlugin::execute` built a fresh `FsExecutor::new()` for
+// nested dispatch, bypassing the caller's custom registry and always
+// hitting the built-in `SymlinkPlugin` (which performs a real fs op).
+// This test registers a stub `symlink` plugin that bumps a counter and
+// returns a no-op `ExecStep`, wraps a symlink action inside a matching
+// `when` block, and asserts the stub ran and the real filesystem was
+// untouched.
+
+mod tg03 {
+    use super::{matching_os, Path, TempDir, VarEnv};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use grex_core::execute::{
+        ActionExecutor, ExecCtx, ExecError, ExecStep, FsExecutor, PlanExecutor, StepKind,
+    };
+    use grex_core::pack::{Action, SymlinkArgs, SymlinkKind, WhenSpec};
+    use grex_core::plugin::{register_builtins, ActionPlugin, Registry};
+
+    /// Stub `symlink` plugin: increments an atomic hit counter and
+    /// returns a dry-run [`ExecStep`] by delegating to [`PlanExecutor`]
+    /// (which does not touch the filesystem). The counter bump is the
+    /// sentinel: if the outer registry is correctly threaded into
+    /// nested `when` dispatch, the stub runs; otherwise the built-in
+    /// wet-run `SymlinkPlugin` runs instead (and would attempt a real
+    /// symlink). [`ExecStep`] is `#[non_exhaustive]` from this test
+    /// crate, so we cannot literal-construct one — delegation via the
+    /// planner is the minimal legal path.
+    struct StubSymlinkPlugin {
+        hits: Arc<AtomicUsize>,
+    }
+
+    impl ActionPlugin for StubSymlinkPlugin {
+        fn name(&self) -> &str {
+            "symlink"
+        }
+
+        fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+            PlanExecutor::new().execute(action, ctx)
+        }
+    }
+
+    fn ctx<'a>(env: &'a VarEnv, root: &'a Path) -> ExecCtx<'a> {
+        ExecCtx::new(env, root, root)
+    }
+
+    #[test]
+    fn when_block_routes_nested_symlink_through_caller_registry() {
+        let tmp = TempDir::new().expect("tempdir");
+        let env = VarEnv::new();
+        let src = tmp.path().join("src_not_created");
+        let dst = tmp.path().join("dst_must_not_exist");
+
+        // Custom registry: all built-ins + stub symlink layered on top
+        // (last-writer-wins, so the stub shadows the built-in).
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut reg = Registry::new();
+        register_builtins(&mut reg);
+        reg.register(StubSymlinkPlugin { hits: Arc::clone(&hits) });
+        let reg = Arc::new(reg);
+
+        // when: <matching-os> { nested symlink }
+        let nested = Action::Symlink(SymlinkArgs::new(
+            src.to_string_lossy().into_owned(),
+            dst.to_string_lossy().into_owned(),
+            false,
+            false,
+            SymlinkKind::Auto,
+        ));
+        let when = Action::When(WhenSpec::new(Some(matching_os()), None, None, None, vec![nested]));
+
+        let exec = FsExecutor::with_registry(reg);
+        let step = exec.execute(&when, &ctx(&env, tmp.path())).expect("when dispatch");
+
+        // Stub must have been invoked exactly once for the nested symlink.
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "nested `when` dispatch bypassed the caller's registry \
+             — fresh FsExecutor::new() shadowed the stub (P1 regression)"
+        );
+
+        // Stub delegated to the planner (read-only), so the built-in
+        // wet-run `SymlinkPlugin` must NOT have produced a disk artefact.
+        assert!(std::fs::symlink_metadata(&dst).is_err(), "dst symlink artefact present");
+
+        // Step shape: `when` branch was taken, one nested step recorded.
+        match step.details {
+            StepKind::When { branch_taken, nested_steps } => {
+                assert!(branch_taken);
+                assert_eq!(nested_steps.len(), 1);
+            }
+            other => panic!("expected StepKind::When, got {other:?}"),
+        }
+    }
+}

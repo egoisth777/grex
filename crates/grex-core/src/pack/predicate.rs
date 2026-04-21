@@ -77,7 +77,7 @@ pub enum ExecOnFail {
 /// spec-extension) can land without breaking external match sites.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum Predicate {
     /// Filesystem path must exist.
     PathExists(String),
@@ -117,7 +117,8 @@ pub enum Predicate {
 /// Marked `#[non_exhaustive]` so new combiner shapes (e.g. `xor_of`,
 /// `majority_of`) can land without breaking external match sites.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Combiner {
     /// `all_of:` — every predicate must hold (AND).
     AllOf(Vec<Predicate>),

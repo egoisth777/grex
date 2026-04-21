@@ -7,7 +7,9 @@
 //! shape so tests can round-trip either path with the same fixture.
 
 use std::path::Path;
+use std::sync::Arc;
 
+use crate::plugin::Registry;
 use crate::vars::VarEnv;
 
 /// OS discriminator used by the planner and `when`/`os` predicate paths.
@@ -104,19 +106,41 @@ pub struct ExecCtx<'a> {
     /// Platform tag. Defaults to [`Platform::current`] but is overridable in
     /// tests to exercise `when.os` branches deterministically.
     pub platform: Platform,
+    /// Outer [`Registry`] handle for plugins that recurse into nested
+    /// actions (today: `when`). Populated by the concrete executors
+    /// (`FsExecutor`, `PlanExecutor`) right before plugin dispatch so
+    /// nested `execute` calls go through the caller's registry instead of
+    /// a freshly bootstrapped default. `None` outside an executor-driven
+    /// call (e.g. direct plugin invocation in tests) — plugins must treat
+    /// absence as "no nested dispatch available" and fall back to their
+    /// own bootstrap.
+    pub registry: Option<&'a Arc<Registry>>,
 }
 
 impl<'a> ExecCtx<'a> {
-    /// Build a context with `platform` defaulted to the current target.
+    /// Build a context with `platform` defaulted to the current target and
+    /// no outer registry attached. Executors attach the registry via
+    /// [`ExecCtx::with_registry`] before invoking plugin dispatch.
     #[must_use]
     pub fn new(vars: &'a VarEnv, pack_root: &'a Path, workspace: &'a Path) -> Self {
-        Self { vars, pack_root, workspace, platform: Platform::current() }
+        Self { vars, pack_root, workspace, platform: Platform::current(), registry: None }
     }
 
     /// Override the platform tag (useful for tests and dry-run overrides).
     #[must_use]
     pub fn with_platform(mut self, p: Platform) -> Self {
         self.platform = p;
+        self
+    }
+
+    /// Attach the outer [`Registry`] so plugins that recurse (today:
+    /// `when`) dispatch nested actions through the caller's registry
+    /// instead of a fresh [`Registry::bootstrap`]. Used by
+    /// [`crate::execute::FsExecutor`] and [`crate::execute::PlanExecutor`]
+    /// just before they hand control to a plugin.
+    #[must_use]
+    pub fn with_registry(mut self, reg: &'a Arc<Registry>) -> Self {
+        self.registry = Some(reg);
         self
     }
 }

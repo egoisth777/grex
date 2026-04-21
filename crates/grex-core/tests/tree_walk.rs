@@ -291,6 +291,103 @@ fn walker_skips_existing_child_destinations() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// M4-D D1 — `--ref` override surface
+//
+// `Walker::with_ref_override` sets a global ref that wins over each child's
+// declared `ref` in the parent manifest. Cover both hydration paths:
+//
+// 1. Dest missing → backend `clone(…, Some(override))`.
+// 2. Dest present → backend `checkout(…, override)`.
+//
+// `ref_override = None` and `ref_override = Some("")` must both no-op (the
+// builder filters empty strings explicitly).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn walker_ref_override_wins_over_declared_on_clone() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let a = ws.path().join("a");
+
+    // Child declares ref=v1; override asks for v2 → clone must receive v2.
+    let root_yaml = pack_yaml_with_children("root", &[("git://host/a.git", "a", Some("v1"))]);
+    let loader = MockLoader::new()
+        .with(root.clone(), parse_pack(&root_yaml))
+        .with(a.clone(), parse_pack(&pack_yaml("a")));
+    let backend = mock_git();
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf())
+        .with_ref_override(Some("v2-override".to_string()));
+    walker.walk(&root).expect("walk");
+
+    let calls = backend.calls();
+    match calls.iter().find(|c| matches!(c, BackendCall::Clone { .. })) {
+        Some(BackendCall::Clone { r#ref, .. }) => {
+            assert_eq!(
+                r#ref.as_deref(),
+                Some("v2-override"),
+                "override must win over declared `v1`"
+            );
+        }
+        other => panic!("expected Clone with override ref, got {other:?}"),
+    }
+}
+
+#[test]
+fn walker_ref_override_wins_over_declared_on_checkout() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let a = ws.path().join("a");
+    // Pre-hydrate the destination so the walker takes the fetch+checkout path.
+    fs::create_dir_all(a.join(".git")).unwrap();
+
+    let root_yaml = pack_yaml_with_children("root", &[("git://host/a.git", "a", Some("main"))]);
+    let loader = MockLoader::new()
+        .with(root.clone(), parse_pack(&root_yaml))
+        .with(a.clone(), parse_pack(&pack_yaml("a")));
+    let backend = mock_git();
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf())
+        .with_ref_override(Some("release/1.0".to_string()));
+    walker.walk(&root).expect("walk");
+
+    let calls = backend.calls();
+    let checkout_ref = calls.iter().find_map(|c| match c {
+        BackendCall::Checkout { r#ref, .. } => Some(r#ref.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        checkout_ref.as_deref(),
+        Some("release/1.0"),
+        "override must win over declared `main`"
+    );
+}
+
+#[test]
+fn walker_empty_ref_override_is_equivalent_to_none() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let a = ws.path().join("a");
+
+    let root_yaml = pack_yaml_with_children("root", &[("git://host/a.git", "a", Some("v1"))]);
+    let loader = MockLoader::new()
+        .with(root.clone(), parse_pack(&root_yaml))
+        .with(a.clone(), parse_pack(&pack_yaml("a")));
+    let backend = mock_git();
+    // Empty string override must be filtered by `with_ref_override` so the
+    // declared `v1` survives.
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf())
+        .with_ref_override(Some(String::new()));
+    walker.walk(&root).expect("walk");
+
+    let calls = backend.calls();
+    match calls.iter().find(|c| matches!(c, BackendCall::Clone { .. })) {
+        Some(BackendCall::Clone { r#ref, .. }) => {
+            assert_eq!(r#ref.as_deref(), Some("v1"), "empty override must be inert");
+        }
+        other => panic!("expected Clone, got {other:?}"),
+    }
+}
+
 #[test]
 fn walker_applies_ref_when_specified_on_existing_dest() {
     let ws = TempDir::new().unwrap();

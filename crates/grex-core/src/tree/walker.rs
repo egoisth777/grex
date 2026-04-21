@@ -40,6 +40,11 @@ pub struct Walker<'a> {
     loader: &'a dyn PackLoader,
     backend: &'a dyn GitBackend,
     workspace: PathBuf,
+    /// Optional global ref override (M4-D `grex sync --ref <sha|branch|tag>`).
+    /// When `Some`, every child clone/checkout uses this ref instead of the
+    /// declared `child.ref` from the parent manifest. `None` preserves M3
+    /// semantics.
+    ref_override: Option<String>,
 }
 
 impl<'a> Walker<'a> {
@@ -53,7 +58,19 @@ impl<'a> Walker<'a> {
         backend: &'a dyn GitBackend,
         workspace: PathBuf,
     ) -> Self {
-        Self { loader, backend, workspace }
+        Self { loader, backend, workspace, ref_override: None }
+    }
+
+    /// Set a global ref override applied to every child pack.
+    ///
+    /// Surfaced as `grex sync --ref <sha|branch|tag>` (M4-D). The override
+    /// replaces each child's declared `ref` in its parent manifest. An
+    /// empty string is treated as "no override" — callers should reject
+    /// empty values at the CLI layer before reaching this point.
+    #[must_use]
+    pub fn with_ref_override(mut self, r#ref: Option<String>) -> Self {
+        self.ref_override = r#ref.filter(|s| !s.is_empty());
+        self
     }
 
     /// Walk the tree rooted at `root_pack_path`, returning the fully
@@ -67,6 +84,7 @@ impl<'a> Walker<'a> {
     pub fn walk(&self, root_pack_path: &Path) -> Result<PackGraph, TreeError> {
         let mut state = BuildState::default();
         let root_manifest = self.loader.load(root_pack_path)?;
+        let root_commit_sha = probe_head_sha(self.backend, root_pack_path);
         let root_id = state.push_node(PackNode {
             id: 0,
             name: root_manifest.name.clone(),
@@ -74,6 +92,7 @@ impl<'a> Walker<'a> {
             source_url: None,
             manifest: root_manifest.clone(),
             parent: None,
+            commit_sha: root_commit_sha,
         });
         let root_identity = pack_identity_for_root(root_pack_path);
         self.walk_recursive(root_id, &root_manifest, &mut state, &mut vec![root_identity])?;
@@ -136,6 +155,7 @@ impl<'a> Walker<'a> {
         let child_manifest = self.loader.load(&dest)?;
         verify_child_name(&child_manifest.name, child, &dest)?;
 
+        let commit_sha = probe_head_sha(self.backend, &dest);
         let child_id = state.push_node(PackNode {
             id: state.nodes.len(),
             name: child_manifest.name.clone(),
@@ -143,6 +163,7 @@ impl<'a> Walker<'a> {
             source_url: Some(child.url.clone()),
             manifest: child_manifest.clone(),
             parent: Some(parent_id),
+            commit_sha,
         });
         state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 
@@ -161,15 +182,53 @@ impl<'a> Walker<'a> {
         _state: &mut BuildState,
     ) -> Result<PathBuf, TreeError> {
         let dest = self.workspace.join(child.effective_path());
+        // M4-D: `ref_override` wins over the parent-declared `child.ref`.
+        // Falls back to the declared ref when no override is active.
+        let effective_ref = self.ref_override.as_deref().or(child.r#ref.as_deref());
         if dest_has_git_repo(&dest) {
             self.backend.fetch(&dest)?;
-            if let Some(r) = child.r#ref.as_deref() {
+            if let Some(r) = effective_ref {
                 self.backend.checkout(&dest, r)?;
             }
         } else {
-            self.backend.clone(&child.url, &dest, child.r#ref.as_deref())?;
+            self.backend.clone(&child.url, &dest, effective_ref)?;
         }
         Ok(dest)
+    }
+}
+
+/// Best-effort HEAD probe. Returns `None` when the target is not a git
+/// repository or the backend refuses — the root of a declarative pack is
+/// often a plain directory, so this must not fail the walk.
+///
+/// Non-`.git` directories short-circuit silently (truly not a git
+/// repo). Backend errors on an actual `.git` directory are surfaced as
+/// a `tracing::warn!` log line so transient gix failures / ACL-denied
+/// `.git` reads do not silently degrade into an empty `commit_sha`
+/// without any operator signal. The walker continues with `None` — a
+/// best-effort probe is, by construction, allowed to fail.
+fn probe_head_sha(backend: &dyn GitBackend, path: &Path) -> Option<String> {
+    let dir =
+        if path.extension().and_then(|e| e.to_str()).is_some_and(|e| matches!(e, "yaml" | "yml")) {
+            path.parent()
+                .and_then(Path::parent)
+                .map_or_else(|| path.to_path_buf(), Path::to_path_buf)
+        } else {
+            path.to_path_buf()
+        };
+    if !dir.join(".git").exists() {
+        return None;
+    }
+    match backend.head_sha(&dir) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tracing::warn!(
+                target: "grex::walker",
+                "HEAD probe failed for {}: {e}",
+                dir.display()
+            );
+            None
+        }
     }
 }
 

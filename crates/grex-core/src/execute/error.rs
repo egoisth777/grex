@@ -43,6 +43,19 @@ pub enum ExecError {
     /// An `exec` action had an internally inconsistent post-expansion shape.
     #[error("exec validation failed: {0}")]
     ExecInvalid(String),
+    /// The executor's plugin registry has no entry registered under the
+    /// action's name. Emitted by the registry-dispatched
+    /// [`super::FsExecutor`] / [`super::PlanExecutor`] when a caller
+    /// constructs them with a partial registry that does not cover every
+    /// variant present in the pack.
+    ///
+    /// The stock [`crate::plugin::Registry::bootstrap`] path registers all
+    /// seven Tier-1 built-ins, so the default [`super::FsExecutor::new`] /
+    /// [`super::PlanExecutor::new`] constructors never surface this variant — it
+    /// is only reachable through the explicit `with_registry` entry points
+    /// that accept a custom registry.
+    #[error("no plugin registered for action `{0}`")]
+    UnknownAction(String),
     /// A symlink target path is occupied by a non-symlink entry and
     /// `backup: false`; the wet-run executor refuses to clobber blindly.
     #[error("symlink destination `{}` is occupied; enable `backup: true` to rename it out of the way", dst.display())]
@@ -81,6 +94,34 @@ pub enum ExecError {
         scope: String,
         /// Target platform tag.
         platform: &'static str,
+    },
+    /// A predicate probed by the predicate evaluator (internal) cannot
+    /// be answered on the current platform (e.g. `reg_key` / `psversion`
+    /// evaluated on non-Windows). Replaces the pre-M4-C conservative-false
+    /// stub: planners and wet-run executors now surface the limitation as
+    /// a typed error instead of silently lying about satisfiability.
+    #[error("predicate `{predicate}` not supported on {platform}")]
+    PredicateNotSupported {
+        /// Predicate kind tag (`reg_key` / `psversion`).
+        predicate: &'static str,
+        /// Target platform tag (from `std::env::consts::OS`).
+        platform: &'static str,
+    },
+    /// A predicate probe ran on the correct platform but the probe itself
+    /// failed in a way that prevents a truthful yes/no answer (e.g. the
+    /// `powershell.exe` child exited non-zero, timed out, or a registry
+    /// read returned a non-`NOT_FOUND` OS error such as ACL denial).
+    /// Distinct from [`ExecError::PredicateNotSupported`]: that variant
+    /// says "grex cannot answer here at all"; this variant says "grex
+    /// tried but the probe itself broke". M4-C post-review introduced it
+    /// so syncs fail loud on a broken probe rather than silently
+    /// reporting `false`.
+    #[error("predicate `{predicate}` probe failed: {detail}")]
+    PredicateProbeFailed {
+        /// Predicate kind tag (`reg_key` / `psversion`).
+        predicate: &'static str,
+        /// Human-readable diagnostic (truncated where appropriate).
+        detail: String,
     },
     /// OS rejected an env-persistence write (e.g. HKLM without admin).
     #[error("env scope `{scope}` persistence denied: {detail}")]

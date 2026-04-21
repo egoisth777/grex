@@ -16,8 +16,9 @@
 //!
 //! The planner applies variable expansion, evaluates predicates, reads the
 //! filesystem for idempotency (`path.exists()`, symlink target), but never
-//! writes. `RegKey` and `PsVersion` predicates are conservatively stubbed to
-//! `false` until slice 5b grows real backends.
+//! writes. `RegKey` and `PsVersion` predicates probe the Windows registry
+//! and PowerShell on Windows (M4-C) and surface
+//! [`ExecError::PredicateNotSupported`] on other platforms.
 
 pub mod error;
 pub mod fs_executor;
