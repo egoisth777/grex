@@ -249,8 +249,8 @@ inventory::submit!(PluginSubmission::new(|| Box::new(SymlinkPlugin)));
 /// Wet-run `unlink` plugin — synthesized inverse of `symlink` used by
 /// the declarative auto-reverse teardown path (R-M5-09). Not reachable
 /// from a YAML-authored pack: the `Action::Unlink` variant is only
-/// manufactured by
-/// [`crate::plugin::pack_type::DeclarativePlugin::inverse_of`].
+/// manufactured by `DeclarativePlugin::inverse_of` (private helper in
+/// [`crate::plugin::pack_type`]).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnlinkPlugin;
 
