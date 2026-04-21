@@ -767,6 +767,24 @@ fn run_actions(
 /// block on each plugin future inside the outer action loop. Extracted
 /// into a standalone helper so the runtime construction does not
 /// inflate `run_actions` beyond the 50-LOC per-function budget.
+///
+/// # Invariant (CE-B1)
+///
+/// Plugins invoked through this runtime must NOT call `block_on`
+/// themselves, directly or transitively — a current-thread runtime
+/// cannot re-enter. Today this is safe because:
+///
+/// * [`crate::plugin::pack_type::MetaPlugin`] does not yet recurse through
+///   [`crate::execute::ExecCtx::pack_type_registry`] (M5-2 will add that).
+/// * [`crate::plugin::pack_type::DeclarativePlugin::run_actions`] awaits
+///   only the synchronous `ActionPlugin::execute`, which never re-enters
+///   the runtime.
+/// * [`crate::plugin::pack_type::ScriptedPlugin`] awaits `tokio::process`,
+///   which uses the runtime's I/O driver without blocking on it.
+///
+/// Before M5-2 lands `MetaPlugin` recursion via the registry, switch this
+/// to a `multi_thread` runtime (or construct one runtime per outer call)
+/// to prevent deadlock.
 fn build_pack_type_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -845,8 +863,10 @@ fn skip_for_only_filter(
 ///   still consulted via [`PackTypeRegistry::get`] as a name-oracle so
 ///   mis-typed packs fail closed.
 /// * [`PackType::Meta`] / [`PackType::Scripted`] dispatch once through the
-///   pack-type plugin's `install` method, returning a single aggregate
-///   [`ExecStep`]. A single event bracket frames the async call.
+///   pack-type plugin's `sync` method (the sync CLI verb is the only
+///   caller in M5-1; `install` / `update` / `teardown` verbs wire in
+///   M5-2), returning a single aggregate [`ExecStep`]. A single event
+///   bracket frames the async call.
 ///
 /// Declarative is kept on the legacy per-action path because its event log
 /// semantics (one event per action, per-step rollback context) are exactly
@@ -996,16 +1016,8 @@ fn dispatch_pack_type_plugin(
     let plugin = pack_type_registry
         .get(type_tag)
         .expect("pack-type plugin must be registered (guarded above)");
-    let step_result = rt.block_on(plugin.install(&ctx, manifest));
+    let step_result = rt.block_on(plugin.sync(&ctx, manifest));
     !record_action_outcome(report, event_log, lock_path, pack_name, 0, type_tag, step_result)
-}
-
-/// Return a `'static str` tag for a [`crate::pack::PackType`]. Used to
-/// key the pack-type plugin registry and to label the per-pack event
-/// bracket emitted by [`dispatch_pack_type_plugin`].
-#[allow(dead_code)] // reserved for M5-2 when update/teardown lifecycle methods land.
-fn pack_type_tag(ty: crate::pack::PackType) -> &'static str {
-    ty.as_str()
 }
 
 /// Decide whether `pack_name` can be short-circuited via a lockfile
