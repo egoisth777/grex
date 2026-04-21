@@ -18,5 +18,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Verb::Import(a) => verbs::import::run(a, &cli.global),
         Verb::Run(a) => verbs::run::run(a, &cli.global),
         Verb::Exec(a) => verbs::exec::run(a, &cli.global),
+        Verb::Teardown(a) => verbs::teardown::run(a, &cli.global),
     }
 }

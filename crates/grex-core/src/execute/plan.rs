@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::pack::{
     Action, Combiner, EnvArgs, ExecOnFail, ExecSpec, MkdirArgs, RequireOnFail, RequireSpec,
-    RmdirArgs, SymlinkArgs, WhenSpec,
+    RmdirArgs, SymlinkArgs, UnlinkArgs, WhenSpec,
 };
 use crate::plugin::Registry;
 use crate::vars::{expand, VarEnv};
@@ -31,7 +31,7 @@ use super::error::ExecError;
 use super::predicate::{evaluate, evaluate_when_gate};
 use super::step::{
     ExecResult, ExecStep, PredicateOutcome, StepKind, ACTION_ENV, ACTION_EXEC, ACTION_MKDIR,
-    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_WHEN,
+    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_UNLINK, ACTION_WHEN,
 };
 use super::ActionExecutor;
 
@@ -100,6 +100,7 @@ impl ActionExecutor for PlanExecutor {
             platform: ctx.platform,
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
         };
         dispatch_plan(action, &nested_ctx)
     }
@@ -115,6 +116,7 @@ impl ActionExecutor for PlanExecutor {
 fn dispatch_plan(action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     match action {
         Action::Symlink(s) => plan_symlink(s, ctx),
+        Action::Unlink(u) => plan_unlink(u, ctx),
         Action::Env(e) => plan_env(e, ctx),
         Action::Mkdir(m) => plan_mkdir(m, ctx),
         Action::Rmdir(r) => plan_rmdir(r, ctx),
@@ -162,6 +164,22 @@ fn classify_symlink(src: &Path, dst: &Path) -> ExecResult {
         },
         _ => ExecResult::WouldPerformChange,
     }
+}
+
+pub(crate) fn plan_unlink(args: &UnlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let dst = require_path(expand_field(&args.dst, ctx.vars, "unlink.dst")?)?;
+    // Only a symlink at `dst` is considered actionable — anything else
+    // (absent, regular file, directory) reports AlreadySatisfied so a
+    // misdirected teardown never destroys operator-managed content.
+    let result = match std::fs::symlink_metadata(&dst) {
+        Ok(meta) if meta.file_type().is_symlink() => ExecResult::WouldPerformChange,
+        _ => ExecResult::AlreadySatisfied,
+    };
+    Ok(ExecStep {
+        action_name: Cow::Borrowed(ACTION_UNLINK),
+        result,
+        details: StepKind::Unlink { dst },
+    })
 }
 
 pub(crate) fn plan_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {

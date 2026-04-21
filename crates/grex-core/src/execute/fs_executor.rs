@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use crate::pack::{
     Action, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs, RequireOnFail, RequireSpec,
-    RmdirArgs, SymlinkArgs, SymlinkKind, WhenSpec,
+    RmdirArgs, SymlinkArgs, SymlinkKind, UnlinkArgs, WhenSpec,
 };
 use crate::plugin::Registry;
 use crate::vars::{expand, VarEnv};
@@ -39,7 +39,7 @@ use super::error::{io_to_fs, ExecError, EXEC_STDERR_CAPTURE_MAX};
 use super::predicate::{evaluate, evaluate_when_gate};
 use super::step::{
     ExecResult, ExecStep, PredicateOutcome, StepKind, ACTION_ENV, ACTION_EXEC, ACTION_MKDIR,
-    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_WHEN,
+    ACTION_REQUIRE, ACTION_RMDIR, ACTION_SYMLINK, ACTION_UNLINK, ACTION_WHEN,
 };
 use super::ActionExecutor;
 
@@ -108,6 +108,7 @@ impl ActionExecutor for FsExecutor {
             platform: ctx.platform,
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
         };
         plugin.execute(action, &nested_ctx)
     }
@@ -281,6 +282,32 @@ fn map_windows_symlink_error(dst: &Path, err: std::io::Error) -> ExecError {
         return ExecError::SymlinkPrivilegeDenied { detail: err.to_string() };
     }
     io_to_fs("symlink", dst.to_path_buf(), err)
+}
+
+// ---------------------------------------------------------------- unlink
+
+/// Wet-run `unlink` — synthesized inverse of [`fs_symlink`] for
+/// auto-reverse teardown (R-M5-09).
+///
+/// Only removes the file at `dst` when [`std::fs::symlink_metadata`]
+/// reports it IS a symlink. Non-symlink targets (regular files,
+/// directories, nonexistent paths) return
+/// [`ExecResult::AlreadySatisfied`] so a misdirected teardown cannot
+/// clobber operator-managed content.
+pub(crate) fn fs_unlink(args: &UnlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let dst = require_path(expand_field(&args.dst, ctx.vars, "unlink.dst")?)?;
+    let result = match std::fs::symlink_metadata(&dst) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::remove_file(&dst).map_err(|e| io_to_fs("unlink", dst.clone(), e))?;
+            ExecResult::PerformedChange
+        }
+        _ => ExecResult::AlreadySatisfied,
+    };
+    Ok(ExecStep {
+        action_name: Cow::Borrowed(ACTION_UNLINK),
+        result,
+        details: StepKind::Unlink { dst },
+    })
 }
 
 // ---------------------------------------------------------------- env

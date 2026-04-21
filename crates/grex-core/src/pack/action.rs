@@ -150,6 +150,34 @@ impl ExecSpec {
     }
 }
 
+/// `- unlink: { ... }` — synthesized inverse of a `symlink` action for
+/// auto-reverse teardown (R-M5-09). Not a YAML-parseable action: no
+/// pack author writes `unlink` by hand. The declarative teardown
+/// auto-reverse path in [`crate::plugin::pack_type::DeclarativePlugin`]
+/// manufactures these from the recorded `symlink.dst` values when a
+/// pack omits an explicit `teardown:` block.
+///
+/// Mirrors [`SymlinkArgs`] in shape but carries only `dst` — that is
+/// the only field needed to locate and remove the symlink. Non-symlink
+/// files at `dst` are left untouched by the wet-run plugin, so a
+/// misdirected teardown cannot clobber operator-managed content.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlinkArgs {
+    /// Destination path of the symlink to remove.
+    pub dst: String,
+}
+
+impl UnlinkArgs {
+    /// Construct an [`UnlinkArgs`]. Exposed so the auto-reverse
+    /// synthesizer (and tests) can build values even though the struct
+    /// is `#[non_exhaustive]`.
+    #[must_use]
+    pub fn new(dst: String) -> Self {
+        Self { dst }
+    }
+}
+
 /// `- env: { ... }`
 ///
 /// Marked `#[non_exhaustive]` so the spec can grow new knobs (e.g.
@@ -273,6 +301,9 @@ pub struct ExecSpec {
 pub enum Action {
     /// `symlink` primitive.
     Symlink(SymlinkArgs),
+    /// Synthesized inverse of `symlink` for auto-reverse teardown
+    /// (R-M5-09). Not a YAML-parseable action.
+    Unlink(UnlinkArgs),
     /// `env` primitive.
     Env(EnvArgs),
     /// `mkdir` primitive.
@@ -334,6 +365,7 @@ impl Action {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Symlink(_) => "symlink",
+            Self::Unlink(_) => "unlink",
             Self::Env(_) => "env",
             Self::Mkdir(_) => "mkdir",
             Self::Rmdir(_) => "rmdir",

@@ -28,7 +28,8 @@ pub use log::{ActionLogger, LogLevel, TracingLogger};
 pub use pack::{
     run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,
     OsKind, PackManifest, PackParseError, PackType, PackValidationError, Predicate, RequireOnFail,
-    RequireSpec, RmdirArgs, SchemaVersion, SymlinkArgs, SymlinkKind, Validator, WhenSpec,
+    RequireSpec, RmdirArgs, SchemaVersion, SymlinkArgs, SymlinkKind, UnlinkArgs, Validator,
+    WhenSpec,
 };
 pub use tree::{EdgeKind, FsPackLoader, PackGraph, PackLoader, PackNode, TreeError, Walker};
 pub use vars::{expand, VarEnv, VarExpandError};
@@ -40,5 +41,5 @@ pub mod plugin;
 
 pub use plugin::{
     register_builtins, ActionPlugin, EnvPlugin, ExecPlugin, MkdirPlugin, Registry, RequirePlugin,
-    RmdirPlugin, SymlinkPlugin, WhenPlugin,
+    RmdirPlugin, SymlinkPlugin, UnlinkPlugin, WhenPlugin,
 };

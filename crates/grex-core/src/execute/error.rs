@@ -187,6 +187,36 @@ pub enum ExecError {
         /// Human-readable context (typically the OS error from stat).
         detail: String,
     },
+    /// A meta pack's recursion re-visited a pack path already active on the
+    /// dispatch stack.
+    ///
+    /// M5-2c guards [`crate::plugin::pack_type::MetaPlugin`]'s registry
+    /// dispatch against infinite loops by maintaining a canonicalised
+    /// visited-set threaded through [`crate::execute::ExecCtx`]. A cycle
+    /// implies either an author bug (pack A directly or transitively
+    /// includes A) or a registry misconfiguration (a custom pack-type
+    /// plugin re-dispatching into its own root). The tree walker performs
+    /// its own structural cycle detection at walk time — this variant is
+    /// defence-in-depth for the registry-dispatch path, not a replacement.
+    #[error("meta recursion cycle at pack path `{}`", path.display())]
+    MetaCycle {
+        /// Canonicalised pack directory that the cycle re-entered.
+        path: PathBuf,
+    },
+    /// A pack manifest declared a `type:` value that no [`crate::plugin::PackTypeRegistry`]
+    /// entry implements. Surfaced by
+    /// [`crate::plugin::pack_type::MetaPlugin`] when it recurses into a
+    /// child whose type is not registered on the outer context's
+    /// [`crate::execute::ExecCtx::pack_type_registry`] — the top-level
+    /// `run_pack_lifecycle` guard catches the same shape for the root
+    /// pack, but a misconfigured custom registry can still lose an entry
+    /// between root and a deep child.
+    #[error("no pack-type plugin registered for `{requested}`")]
+    UnknownPackType {
+        /// The unknown `type:` discriminator as it appeared in the child
+        /// manifest.
+        requested: String,
+    },
     /// Symlink creation failed *after* an existing `dst` was renamed aside
     /// to the backup slot. The original `dst` no longer exists at the
     /// requested path. Restore attempts also failed, so the backup file is

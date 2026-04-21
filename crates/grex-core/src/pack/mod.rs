@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 
 pub use action::{
     Action, EnvArgs, EnvScope, ExecSpec, MkdirArgs, RequireSpec, RmdirArgs, SymlinkArgs,
-    SymlinkKind, WhenSpec, VALID_ACTION_KEYS,
+    SymlinkKind, UnlinkArgs, WhenSpec, VALID_ACTION_KEYS,
 };
 pub use error::{PackParseError, MAX_REQUIRE_DEPTH};
 pub use predicate::{Combiner, ExecOnFail, OsKind, Predicate, RequireOnFail};

@@ -97,6 +97,12 @@ pub enum StepKind {
         /// Whether both sides would be canonicalised.
         normalize: bool,
     },
+    /// Resolved unlink descriptor — synthesized inverse of
+    /// [`StepKind::Symlink`] for auto-reverse teardown (R-M5-09).
+    Unlink {
+        /// Post-expansion destination path to remove.
+        dst: PathBuf,
+    },
     /// Resolved environment-variable assignment.
     Env {
         /// Variable name (not expanded).
@@ -182,6 +188,8 @@ pub struct ExecStep {
 /// for downstream consumers that need to match step kinds without
 /// hard-coding string literals.
 pub const ACTION_SYMLINK: &str = "symlink";
+/// Built-in `unlink` action identifier (synthesized inverse of symlink).
+pub const ACTION_UNLINK: &str = "unlink";
 /// Built-in `env` action identifier.
 pub const ACTION_ENV: &str = "env";
 /// Built-in `mkdir` action identifier.

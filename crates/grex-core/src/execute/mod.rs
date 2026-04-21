@@ -30,7 +30,7 @@ mod step;
 
 use crate::pack::Action;
 
-pub use ctx::{ExecCtx, Platform};
+pub use ctx::{ExecCtx, MetaVisitedSet, Platform};
 pub use error::{ExecError, EXEC_STDERR_CAPTURE_MAX};
 pub use fs_executor::FsExecutor;
 pub use plan::PlanExecutor;
