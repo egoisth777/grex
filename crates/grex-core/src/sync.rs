@@ -1331,6 +1331,122 @@ pub fn pack_display_name(node: &PackNode) -> &str {
     &node.name
 }
 
+/// Run a full teardown over the pack tree rooted at `pack_root`.
+///
+/// Mirrors [`run`] but invokes
+/// [`crate::plugin::PackTypePlugin::teardown`] on every pack in
+/// **reverse** post-order so a parent tears down before its children
+/// (the inverse of install). Children composed later by an author
+/// consequently teardown earlier, matching the declarative
+/// auto-reverse contract (R-M5-11).
+///
+/// All other concerns are identical to [`run`]: workspace lock, plan-
+/// phase validators, lockfile update skipped (teardown does not
+/// write a `actions_hash` forward), and event-log bracketing.
+/// Teardown does NOT consult the lockfile skip-on-hash shortcut — a
+/// user explicitly asked to remove the pack, so we always dispatch.
+///
+/// # Errors
+///
+/// Returns the first error that halts the pipeline — see [`SyncError`].
+pub fn teardown(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError> {
+    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
+    ensure_workspace_dir(&workspace)?;
+    let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
+    let _ws_guard = match ws_lock.try_acquire() {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return Err(SyncError::WorkspaceBusy {
+                workspace: workspace.clone(),
+                lock_path: ws_lock_path,
+            });
+        }
+        Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
+    };
+
+    let graph =
+        walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
+    let prep = prepare_run_context(pack_root, &graph)?;
+
+    let mut report = SyncReport {
+        graph,
+        steps: Vec::new(),
+        halted: None,
+        event_log_warnings: Vec::new(),
+        pre_run_recovery: prep.pre_run_recovery,
+    };
+
+    run_teardown(
+        &mut report,
+        &prep.order,
+        &prep.vars,
+        &workspace,
+        &prep.event_log,
+        &prep.lock_path,
+        &prep.registry,
+        &prep.pack_type_registry,
+    );
+    Ok(report)
+}
+
+/// Dispatch `teardown` for every pack in **reverse** post-order.
+/// Declarative packs go through [`crate::plugin::PackTypePlugin`]
+/// rather than the per-action M4 path because the trait's
+/// auto-reverse / explicit-block logic must compose with the
+/// registry; going through the per-action path would mean
+/// re-implementing inverse synthesis in the sync loop.
+#[allow(clippy::too_many_arguments)]
+fn run_teardown(
+    report: &mut SyncReport,
+    order: &[usize],
+    vars: &VarEnv,
+    workspace: &Path,
+    event_log: &Path,
+    lock_path: &Path,
+    registry: &Arc<Registry>,
+    pack_type_registry: &Arc<PackTypeRegistry>,
+) {
+    let rt = build_pack_type_runtime();
+    // Reverse post-order: root first, then children. Pack-type plugin
+    // teardown methods reverse their own children/actions, so the
+    // outer loop only flips the inter-pack order.
+    for &id in order.iter().rev() {
+        let Some(node) = report.graph.node(id) else { continue };
+        let pack_name = node.name.clone();
+        let pack_path = node.path.clone();
+        let manifest = node.manifest.clone();
+        let type_tag = manifest.r#type.as_str();
+        if pack_type_registry.get(type_tag).is_none() {
+            let err = ExecError::UnknownAction(format!("pack type `{type_tag}`"));
+            record_action_err(report, event_log, lock_path, &pack_name, 0, "pack-type", err);
+            return;
+        }
+        let ctx = ExecCtx::new(vars, &pack_path, workspace)
+            .with_platform(Platform::current())
+            .with_registry(registry)
+            .with_pack_type_registry(pack_type_registry);
+        append_manifest_event(
+            event_log,
+            lock_path,
+            &Event::ActionStarted {
+                ts: Utc::now(),
+                pack: pack_name.clone(),
+                action_idx: 0,
+                action_name: type_tag.to_string(),
+            },
+            &mut report.event_log_warnings,
+        );
+        let plugin = pack_type_registry
+            .get(type_tag)
+            .expect("pack-type plugin must be registered (guarded above)");
+        let step_result = rt.block_on(plugin.teardown(&ctx, &manifest));
+        if !record_action_outcome(report, event_log, lock_path, &pack_name, 0, type_tag, step_result)
+        {
+            return;
+        }
+    }
+}
+
 /// Test-only hook: append one [`Event::Sync`] through the same
 /// [`ManifestLock`]-serialised path the sync driver uses.
 ///

@@ -9,4 +9,5 @@ pub mod run;
 pub mod serve;
 pub mod status;
 pub mod sync;
+pub mod teardown;
 pub mod update;
