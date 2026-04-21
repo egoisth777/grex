@@ -48,6 +48,159 @@ use std::collections::HashMap;
 use crate::execute::{ExecCtx, ExecError, ExecStep};
 use crate::fs::gitignore;
 use crate::pack::{Action, PackManifest};
+use crate::pack_lock::{PackLock, PackLockError};
+
+/// Default managed-gitignore patterns every pack contributes on top of
+/// its authored `x-gitignore` list. `feat-m6-2` adds `.grex-lock` so the
+/// per-pack lock file does not appear in `git status`.
+pub const DEFAULT_MANAGED_GITIGNORE_PATTERNS: &[&str] = &[crate::pack_lock::PACK_LOCK_FILE_NAME];
+
+/// Accessor used by integration tests to pin the default managed-gitignore
+/// patterns contributed by grex itself (`.grex-lock` as of feat-m6-2).
+#[must_use]
+pub fn default_managed_gitignore_patterns() -> &'static [&'static str] {
+    DEFAULT_MANAGED_GITIGNORE_PATTERNS
+}
+
+/// Translate a [`PackLockError`] into the [`ExecError`] taxonomy used by
+/// the plugin trait surface. Kept here (not in `pack_lock.rs`) so the
+/// error-type dependency stays one-way: `pack_lock` does not know about
+/// `execute::ExecError`.
+///
+/// [`PackLockError::Busy`] from same-process re-entry is mapped to
+/// [`ExecError::MetaCycle`]: the pack-lock layer is a defence-in-depth
+/// backstop for the [`MetaPlugin`] cycle detector, and surfacing the
+/// same variant keeps the caller's error handling uniform regardless of
+/// which guard actually caught the re-entry.
+pub(crate) fn map_pack_lock_err(e: PackLockError) -> ExecError {
+    match e {
+        PackLockError::Io { path, source } => {
+            ExecError::FsIo { op: "pack_lock", path, detail: source.to_string() }
+        }
+        PackLockError::Busy { path } => {
+            // `Busy` from `PackLock::acquire` only fires on same-process
+            // re-entry (cross-process contention blocks on fd-lock and
+            // never surfaces here). A re-entry is by definition a cycle
+            // in the pack-type dispatch graph — map to the existing
+            // MetaCycle variant so callers match a single shape.
+            //
+            // Strip the `.grex-lock` sidecar filename so the error
+            // refers to the pack root the recursion re-entered.
+            let pack_root = path.parent().map(std::path::Path::to_path_buf).unwrap_or(path);
+            ExecError::MetaCycle { path: pack_root }
+        }
+    }
+}
+
+/// Acquire the tier-2 scheduler permit (if a scheduler is attached) and
+/// return the owned permit handle. `None` when no scheduler was plumbed
+/// onto the context — plugins still acquire the per-pack lock either way.
+///
+/// Held inside the plugin body for the full lifecycle call so the
+/// semaphore cap bounds in-flight pack ops. Released on the caller's
+/// `Drop` once the returned permit goes out of scope.
+pub(crate) async fn acquire_scheduler_permit(
+    ctx: &ExecCtx<'_>,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, ExecError> {
+    let Some(scheduler) = ctx.scheduler else { return Ok(None) };
+    Ok(Some(scheduler.acquire().await))
+}
+
+/// Insert `canonical(ctx.pack_root)` into the shared `visited_meta`
+/// cycle-detection set on entry to a plugin lifecycle method. Returns
+/// a scoped guard that removes the entry on `Drop`.
+///
+/// The pre-feat-m6-2 behaviour only inserted *children* in
+/// [`MetaPlugin::recurse_one`]; that missed the case where a grandchild
+/// recurses back to the outer pack root (e.g. a `..` child edge).
+/// Registering self here makes the non-reentrant per-pack lock safe —
+/// any recursion resolving to the same canonical path halts with
+/// [`ExecError::MetaCycle`] in `recurse_one` before the lock acquire.
+///
+/// `None` when `ctx.visited_meta` is unattached (direct-callers in
+/// tests that don't drive the outer cycle-detection set): the lock
+/// layer falls back to the blocking mutex path, which is safe for
+/// non-recursive entry.
+pub(crate) fn register_self_in_visited(ctx: &ExecCtx<'_>) -> Result<OwnCycleGuard, ExecError> {
+    let Some(visited) = ctx.visited_meta else {
+        return Ok(OwnCycleGuard {
+            visited: None,
+            canonical: std::path::PathBuf::new(),
+            owns: false,
+        });
+    };
+    let canonical =
+        std::fs::canonicalize(ctx.pack_root).unwrap_or_else(|_| ctx.pack_root.to_path_buf());
+    let mut guard = visited.lock().map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
+    // Three distinct call-paths reach this function:
+    //
+    //  1. **Fresh entry via `recurse_one`**: the parent
+    //     `MetaPlugin`'s `recurse_one` inserted `canonical` just
+    //     before `dispatch_child`, so `insert` returns `false` and
+    //     the parent owns the pop. We take a no-op guard
+    //     (`owns = false`).
+    //
+    //  2. **Outermost entry** (top-level `MetaPlugin.install(root)`
+    //     invocation): the set does not yet contain `canonical`.
+    //     `insert` returns `true`; we claim ownership and will
+    //     remove the entry on drop.
+    //
+    //  3. **Re-entry from a foreign caller** (concurrent
+    //     `MetaPlugin.install` on the same root from a different
+    //     task that already inserted via its own register_self,
+    //     or an actual recursion that `recurse_one` did not
+    //     guard): `insert` returns `false` and no recurse_one on
+    //     our stack will pop us. Treat as a cycle and halt
+    //     before touching the per-pack lock.
+    //
+    // The `recurse_one` callers guarantee their insert happens
+    // IN THE SAME lock scope as the subsequent `dispatch_child`,
+    // so any `insert == false` observed here that is NOT
+    // immediately preceded by a `recurse_one::insert` is case
+    // (3). We distinguish (1) from (3) by tagging the visited
+    // entries: callers that own the pop use the raw path; callers
+    // coming from a concurrent re-entry observe an EXISTING entry
+    // AND no local `recurse_one` frame.
+    //
+    // The current implementation makes a simpler, correct
+    // decision: we ALWAYS fail when `insert` returns `false`.
+    // The `recurse_one` path no longer inserts pre-dispatch;
+    // instead the dispatched plugin's own `register_self` does
+    // the insert, and `recurse_one` just checks whether the
+    // child's canonical was *already* visited (genuine cycle
+    // case). That bridge lives in [`MetaPlugin::recurse_one`].
+    if !guard.insert(canonical.clone()) {
+        return Err(ExecError::MetaCycle { path: canonical });
+    }
+    drop(guard);
+    Ok(OwnCycleGuard { visited: Some(visited.clone()), canonical, owns: true })
+}
+
+/// RAII guard that pops the pack root from the visited set on drop.
+/// Field names use leading `_` to allow unused-variable patterns at
+/// call sites (`let _own_cycle_guard = …`) without triggering lints.
+///
+/// `owns = false` means some caller (typically `recurse_one`) owns
+/// the entry and will remove it; we skip the pop to avoid racing a
+/// sibling's insert.
+pub(crate) struct OwnCycleGuard {
+    visited: Option<crate::execute::MetaVisitedSet>,
+    canonical: std::path::PathBuf,
+    owns: bool,
+}
+
+impl Drop for OwnCycleGuard {
+    fn drop(&mut self) {
+        if !self.owns {
+            return;
+        }
+        if let Some(v) = &self.visited {
+            if let Ok(mut set) = v.lock() {
+                set.remove(&self.canonical);
+            }
+        }
+    }
+}
 
 /// Key used under [`PackManifest::extensions`] to carry a pack's
 /// `.gitignore` patterns (R-M5-08 integration). The YAML shape is a
@@ -83,17 +236,28 @@ fn gitignore_target(ctx: &ExecCtx<'_>) -> std::path::PathBuf {
     ctx.workspace.join(".gitignore")
 }
 
-/// Write the `x-gitignore` managed block for `pack` if the extension
-/// is present. No-op when the extension is absent. Errors map to
-/// [`ExecError::ExecInvalid`] so the lifecycle surfaces a single halt
-/// variant rather than leaking the gitignore error taxonomy.
+/// Write the `x-gitignore` managed block for `pack`. Every pack gets a
+/// managed block that always includes the default grex-managed patterns
+/// (`.grex-lock` as of feat-m6-2); the author's `x-gitignore` list is
+/// appended after the defaults. If no extension is present and the pack
+/// would contribute nothing beyond defaults the block is still written
+/// so the `.grex-lock` file never leaks into `git status`.
+///
+/// Errors map to [`ExecError::ExecInvalid`] so the lifecycle surfaces a
+/// single halt variant rather than leaking the gitignore error taxonomy.
 pub(crate) fn apply_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
-    let Some(patterns) = read_gitignore_patterns(pack) else {
-        return Ok(());
-    };
+    let authored = read_gitignore_patterns(pack).unwrap_or_default();
     let target = gitignore_target(ctx);
-    let refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
-    gitignore::upsert_managed_block(&target, &pack.name, &refs)
+    // Defaults first so the generated block is stable regardless of
+    // authored content; de-dup if an author explicitly lists one of the
+    // defaults (e.g. `.grex-lock`) so we never double-emit.
+    let mut merged: Vec<&str> = DEFAULT_MANAGED_GITIGNORE_PATTERNS.to_vec();
+    for p in &authored {
+        if !merged.contains(&p.as_str()) {
+            merged.push(p.as_str());
+        }
+    }
+    gitignore::upsert_managed_block(&target, &pack.name, &merged)
         .map_err(|e| ExecError::ExecInvalid(format!("gitignore upsert failed: {e}")))
 }
 
@@ -472,38 +636,31 @@ impl MetaPlugin {
         })
     }
 
-    /// Dispatch a single child: resolve path, cycle-check, load
-    /// manifest, look up plugin, invoke the matching lifecycle, pop
-    /// the cycle entry on the way out.
+    /// Dispatch a single child: resolve path, pre-flight cycle-check
+    /// against the visited set (without mutating it), load manifest,
+    /// look up plugin, invoke the matching lifecycle.
+    ///
+    /// Post feat-m6-2: the actual `insert` into `visited_meta` moved
+    /// into the dispatched plugin's own `register_self_in_visited` so
+    /// the cycle-detection guard and the per-pack lock guard live at
+    /// the same scope. Here we only *probe* — if the canonical path
+    /// is already in the set, we halt before even touching the
+    /// child's per-pack lock.
     async fn recurse_one(
         ctx: &ExecCtx<'_>,
         child: &ChildRef,
         lifecycle: MetaLifecycle,
     ) -> Result<ExecStep, ExecError> {
         let child_root = Self::child_root(ctx, child);
-
-        // Cycle detection — canonicalise for symlink-resolution parity,
-        // then insert under lock. A duplicate key halts immediately.
         let canonical = Self::canonical_or_raw(&child_root);
         if let Some(visited) = ctx.visited_meta {
-            let mut guard =
+            let guard =
                 visited.lock().map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
-            if !guard.insert(canonical.clone()) {
+            if guard.contains(&canonical) {
                 return Err(ExecError::MetaCycle { path: canonical });
             }
         }
-
-        // Run the child dispatch, then always remove the canonical
-        // path from the visited set so siblings composed later don't
-        // wrongly observe it as "in-progress".
-        let result = Self::dispatch_child(ctx, &child_root, lifecycle).await;
-
-        if let Some(visited) = ctx.visited_meta {
-            if let Ok(mut guard) = visited.lock() {
-                guard.remove(&canonical);
-            }
-        }
-        result
+        Self::dispatch_child(ctx, &child_root, lifecycle).await
     }
 
     /// Load the child manifest, look up the pack-type plugin, and call
@@ -535,6 +692,9 @@ impl MetaPlugin {
             registry: ctx.registry,
             pack_type_registry: ctx.pack_type_registry,
             visited_meta: ctx.visited_meta,
+            // feat-m6-1: thread the scheduler handle through meta
+            // recursion so child packs share the parent's permit pool.
+            scheduler: ctx.scheduler,
         };
 
         match lifecycle {
@@ -553,8 +713,36 @@ impl PackTypePlugin for MetaPlugin {
     }
 
     async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        // feat-m6-2 lock prologue — tier 2 permit THEN tier 3 pack lock.
+        // `_permit` holds the semaphore slot; `_plock_guard` holds the
+        // kernel flock. Both release on Drop at end-of-scope.
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         if ctx.visited_meta.is_some() {
+            // feat-m6 H9: release tier/lock guards before child recursion so
+            // children can acquire their own Semaphore→PerPack sequence
+            // (H5 tier enforcement forbids pushing Semaphore while a
+            // PerPack guard is already on the stack). `_own_cycle_guard`
+            // stays live across recursion — that is the point of cycle
+            // detection. Drop order: pack-lock hold, PerPack tier guard,
+            // Semaphore tier guard, then the scheduler permit.
+            drop(_plock_hold);
+            drop(_tier_pack);
+            drop(_tier_sema);
+            drop(_permit);
             Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Install).await
         } else {
             // Walker-driven path: the outer sync driver walks children
@@ -567,8 +755,28 @@ impl PackTypePlugin for MetaPlugin {
     }
 
     async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         if ctx.visited_meta.is_some() {
+            // feat-m6 H9: release tier/lock guards before child recursion
+            // (see install() for rationale).
+            drop(_plock_hold);
+            drop(_tier_pack);
+            drop(_tier_sema);
+            drop(_permit);
             Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Update).await
         } else {
             Ok(Self::synthesis_envelope(pack.children.iter()))
@@ -580,10 +788,33 @@ impl PackTypePlugin for MetaPlugin {
         ctx: &ExecCtx<'_>,
         pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         // Teardown walks children in reverse install order so a child
         // composed last is torn down first — mirrors the
         // `reverse(actions)` default for declarative teardown (R-M5-11).
         let step = if ctx.visited_meta.is_some() {
+            // feat-m6 H9: release tier/lock guards before child recursion
+            // (see install() for rationale). Guards are dropped even on
+            // the teardown path; `retire_gitignore` below runs unguarded
+            // because the method is returning and no further pack-scope
+            // work happens after the children complete.
+            drop(_plock_hold);
+            drop(_tier_pack);
+            drop(_tier_sema);
+            drop(_permit);
             // `?` propagates: if any child teardown fails the `?`
             // short-circuits BEFORE `retire_gitignore` runs. On
             // partial teardown the block stays to advertise the
@@ -603,8 +834,28 @@ impl PackTypePlugin for MetaPlugin {
     }
 
     async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         if ctx.visited_meta.is_some() {
+            // feat-m6 H9: release tier/lock guards before child recursion
+            // (see install() for rationale).
+            drop(_plock_hold);
+            drop(_tier_pack);
+            drop(_tier_sema);
+            drop(_permit);
             Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Sync).await
         } else {
             Ok(Self::synthesis_envelope(pack.children.iter()))
@@ -763,11 +1014,39 @@ impl PackTypePlugin for DeclarativePlugin {
     }
 
     async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         Self::run_actions(ctx, pack)
     }
 
     async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         // Declarative actions are idempotent by contract, so update ==
         // re-install. The M4 FsExecutor guarantees "already satisfied"
         // short-circuits for symlink/env/mkdir.
@@ -780,6 +1059,20 @@ impl PackTypePlugin for DeclarativePlugin {
         ctx: &ExecCtx<'_>,
         pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         // R-M5-09: honour explicit `pack.teardown` when `Some`; fall
         // back to auto-reverse over `pack.actions` when `None`.
         // `Some(vec![])` is an explicit no-op (distinct from absent).
@@ -792,6 +1085,20 @@ impl PackTypePlugin for DeclarativePlugin {
     }
 
     async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         // Sync mirrors install at the declarative layer; upstream fetch
         // is a meta-pack concern (child-pack git pulls in M5-2+).
         apply_gitignore(ctx, pack)?;
@@ -913,11 +1220,39 @@ impl PackTypePlugin for ScriptedPlugin {
     }
 
     async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "setup").await
     }
 
     async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "update").await
     }
@@ -927,6 +1262,20 @@ impl PackTypePlugin for ScriptedPlugin {
         ctx: &ExecCtx<'_>,
         pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         // R-M5-10: run `teardown.{sh,ps1}`, then retire the managed
         // gitignore block. Hook errors propagate before the block is
         // removed so a failing script does not "lose" the block (the
@@ -937,6 +1286,20 @@ impl PackTypePlugin for ScriptedPlugin {
     }
 
     async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
+        let _permit = acquire_scheduler_permit(ctx).await?;
+        // Register this pack root in the cycle-detection set BEFORE
+        // acquiring the per-pack lock so a recursive dispatch that
+        // resolves back to the same canonical path halts via
+        // MetaCycle (checked in `recurse_one`) instead of hanging at
+        // the non-reentrant `acquire_async` mutex.
+        let _own_cycle_guard = register_self_in_visited(ctx)?;
+        let _tier_pack = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::PerPack);
+        let _plock_hold = PackLock::open(ctx.pack_root)
+            .map_err(map_pack_lock_err)?
+            .acquire_async()
+            .await
+            .map_err(map_pack_lock_err)?;
         apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "sync").await
     }
@@ -1496,7 +1859,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gitignore_extension_absent_writes_nothing() {
+    async fn gitignore_extension_absent_still_emits_default_block() {
+        // feat-m6-2: every pack contributes `.grex-lock` to its managed
+        // block regardless of whether it declares `x-gitignore`. Prior
+        // behaviour (absent extension → no file) changed with the
+        // per-pack lock contract — `.grex-lock` must never appear in
+        // `git status` even when the author provided no extension.
         use crate::vars::VarEnv;
         use std::sync::Arc;
         use tempfile::TempDir;
@@ -1510,7 +1878,10 @@ mod tests {
         let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
         let plugin = DeclarativePlugin;
         plugin.install(&ctx, &pack).await.expect("install ok");
-        assert!(!tmp_path.join(".gitignore").exists(), "no extension → no file");
+        let gitig = std::fs::read_to_string(tmp_path.join(".gitignore"))
+            .expect("default managed block file is written");
+        assert!(gitig.contains("# >>> grex:ng >>>"), "managed block header present");
+        assert!(gitig.contains(".grex-lock"), "default managed pattern present");
     }
 
     #[tokio::test]

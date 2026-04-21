@@ -47,6 +47,7 @@ use crate::lockfile::{
 use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 use crate::pack::{Action, PackValidationError};
 use crate::plugin::{PackTypeRegistry, Registry};
+use crate::scheduler::Scheduler;
 use crate::tree::{FsPackLoader, PackGraph, PackNode, TreeError, Walker};
 use crate::vars::VarEnv;
 
@@ -84,6 +85,17 @@ pub struct SyncOptions {
     /// `true`, every pack re-executes even if its `actions_hash` is
     /// unchanged from the prior lockfile.
     pub force: bool,
+    /// Max parallel pack ops for this sync run (feat-m6-1).
+    ///
+    /// * `None` → callers default to `num_cpus::get()` at CLI layer.
+    ///   Library callers who construct `SyncOptions` directly and leave
+    ///   this `None` get `num_cpus::get()` semantics too — the sync
+    ///   driver resolves the default in one place so the scheduler slot
+    ///   on every `ExecCtx` is always populated.
+    /// * `Some(0)` → unbounded (`Semaphore::MAX_PERMITS`).
+    /// * `Some(1)` → serial fast-path.
+    /// * `Some(n >= 2)` → bounded parallel.
+    pub parallel: Option<usize>,
 }
 
 impl Default for SyncOptions {
@@ -95,6 +107,7 @@ impl Default for SyncOptions {
             ref_override: None,
             only_patterns: None,
             force: false,
+            parallel: None,
         }
     }
 }
@@ -166,6 +179,14 @@ impl SyncOptions {
     #[must_use]
     pub fn with_force(mut self, force: bool) -> Self {
         self.force = force;
+        self
+    }
+
+    /// Set `parallel` (`--parallel`). See [`SyncOptions::parallel`] for
+    /// the `None` / `Some(0)` / `Some(1)` / `Some(n)` semantics.
+    #[must_use]
+    pub fn with_parallel(mut self, parallel: Option<usize>) -> Self {
+        self.parallel = parallel;
         self
     }
 }
@@ -402,6 +423,14 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
     };
 
     let mut next_lock = prep.prior_lock.clone();
+    // feat-m6 B1: resolve `--parallel` once and build the scheduler
+    // shared across every `ExecCtx` in this run. Library callers who
+    // leave `opts.parallel == None` default to `num_cpus::get()` here
+    // (clamped `>= 1`) so the scheduler slot is always populated —
+    // `ctx.scheduler` being `None` would strand acquire-sites into
+    // unbounded concurrency. See `.omne/cfg/concurrency.md` §Scheduler.
+    let resolved_parallel: usize = opts.parallel.unwrap_or_else(|| num_cpus::get().max(1));
+    let scheduler = Arc::new(Scheduler::new(resolved_parallel));
     run_actions(
         &mut report,
         &prep.order,
@@ -416,6 +445,8 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
         &prep.pack_type_registry,
         only_set.as_ref(),
         opts.force,
+        resolved_parallel,
+        &scheduler,
     );
 
     persist_lockfile_if_clean(&mut report, &prep.lockfile_path, &next_lock, opts.dry_run);
@@ -682,7 +713,10 @@ fn visit_post(graph: &PackGraph, id: usize, out: &mut Vec<usize>) {
 /// warnings so the executor's outcome always dominates. The third append
 /// (`ActionHalted`) lets a future `grex doctor` correlate crash recovery
 /// with the exact action that halted.
-#[allow(clippy::too_many_arguments)]
+// feat-m6 B1 wiring added `parallel` + `scheduler` args; the signature
+// now pushes past the 50-LOC per-function lint by one line. Silence
+// that one — the body itself is unchanged in scope.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_actions(
     report: &mut SyncReport,
     order: &[usize],
@@ -697,10 +731,12 @@ fn run_actions(
     pack_type_registry: &Arc<PackTypeRegistry>,
     only: Option<&GlobSet>,
     force: bool,
+    parallel: usize,
+    scheduler: &Arc<Scheduler>,
 ) {
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
-    let rt = build_pack_type_runtime();
+    let rt = build_pack_type_runtime(parallel);
     let visited_meta = new_visited_meta();
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
@@ -743,6 +779,7 @@ fn run_actions(
             &pack_path,
             &manifest,
             &visited_meta,
+            scheduler,
         );
         if pack_halted {
             // Route (b) halt-state gating: drop any prior entry for the
@@ -782,13 +819,19 @@ fn run_actions(
 /// runtime with a small worker pool lets those re-entries resolve on a
 /// sibling worker instead of blocking the dispatcher thread.
 ///
-/// `worker_threads(2)` keeps the footprint small — sync is I/O-bound
-/// (spawn hooks, git pulls, manifest appends) rather than CPU-bound, so
-/// two workers suffice to unblock any nested `block_on` while avoiding
-/// scheduler churn.
-fn build_pack_type_runtime() -> tokio::runtime::Runtime {
+/// # Worker-thread sizing (feat-m6 H6)
+///
+/// The worker pool is sized from the resolved `--parallel` knob so the
+/// runtime always has enough workers to service every in-flight pack op
+/// plus at least one sibling for nested `block_on`. Clamped to
+/// `[2, num_cpus::get()]`: `2` preserves the pre-M6 floor (one driver +
+/// one sibling so re-entrant hooks never deadlock), and the upper bound
+/// caps the pool at the host's CPU count so `--parallel 0`
+/// (unbounded-semantics) does not explode the worker count.
+fn build_pack_type_runtime(parallel: usize) -> tokio::runtime::Runtime {
+    let workers = parallel.clamp(2, num_cpus::get().max(2));
     tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(workers)
         .enable_all()
         .build()
         .expect("tokio runtime for pack-type dispatch")
@@ -900,6 +943,7 @@ fn run_pack_lifecycle(
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
     visited_meta: &MetaVisitedSet,
+    scheduler: &Arc<Scheduler>,
 ) -> bool {
     let type_tag = manifest.r#type.as_str();
     // Name-oracle check: every pack type must be registered. Unknown
@@ -923,6 +967,7 @@ fn run_pack_lifecycle(
             pack_path,
             manifest,
             &manifest.actions,
+            scheduler,
         ),
         crate::pack::PackType::Meta | crate::pack::PackType::Scripted => dispatch_pack_type_plugin(
             report,
@@ -938,6 +983,7 @@ fn run_pack_lifecycle(
             manifest,
             type_tag,
             visited_meta,
+            scheduler,
         ),
     }
 }
@@ -959,6 +1005,7 @@ fn run_declarative_actions(
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
     actions: &[Action],
+    scheduler: &Arc<Scheduler>,
 ) -> bool {
     // `apply_gitignore` is called per-lifecycle by each PackTypePlugin
     // for meta/scripted, and here for declarative (which bypasses the
@@ -967,14 +1014,18 @@ fn run_declarative_actions(
     // per-action path is the only code outside the PackTypePlugin
     // surface that needs a direct apply call.
     if !dry_run {
-        let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
+        let ctx = ExecCtx::new(vars, pack_path, workspace)
+            .with_platform(Platform::current())
+            .with_scheduler(scheduler);
         if let Err(e) = crate::plugin::pack_type::apply_gitignore(&ctx, manifest) {
             record_action_err(report, event_log, lock_path, pack_name, 0, "gitignore", e);
             return true;
         }
     }
     for (idx, action) in actions.iter().enumerate() {
-        let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
+        let ctx = ExecCtx::new(vars, pack_path, workspace)
+            .with_platform(Platform::current())
+            .with_scheduler(scheduler);
         let action_tag = action_kind_tag(action);
         append_manifest_event(
             event_log,
@@ -1023,6 +1074,7 @@ fn dispatch_pack_type_plugin(
     manifest: &crate::pack::PackManifest,
     type_tag: &'static str,
     visited_meta: &MetaVisitedSet,
+    scheduler: &Arc<Scheduler>,
 ) -> bool {
     // NB: `visited_meta` is intentionally NOT attached to the ctx here.
     // The sync driver already walks children in post-order via the tree
@@ -1036,7 +1088,8 @@ fn dispatch_pack_type_plugin(
     let ctx = ExecCtx::new(vars, pack_path, workspace)
         .with_platform(Platform::current())
         .with_registry(registry)
-        .with_pack_type_registry(pack_type_registry);
+        .with_pack_type_registry(pack_type_registry)
+        .with_scheduler(scheduler);
     append_manifest_event(
         event_log,
         lock_path,
@@ -1392,6 +1445,12 @@ pub fn teardown(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, Sync
         pre_run_recovery: prep.pre_run_recovery,
     };
 
+    // feat-m6 B1: mirror `run()` — resolve `--parallel`, build a
+    // Scheduler, thread it through every `ExecCtx` the teardown path
+    // constructs. Teardown is the other user-facing verb that owns a
+    // runtime, so it gets the same wiring.
+    let resolved_parallel: usize = opts.parallel.unwrap_or_else(|| num_cpus::get().max(1));
+    let scheduler = Arc::new(Scheduler::new(resolved_parallel));
     run_teardown(
         &mut report,
         &prep.order,
@@ -1401,6 +1460,8 @@ pub fn teardown(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, Sync
         &prep.lock_path,
         &prep.registry,
         &prep.pack_type_registry,
+        resolved_parallel,
+        &scheduler,
     );
     Ok(report)
 }
@@ -1421,8 +1482,10 @@ fn run_teardown(
     lock_path: &Path,
     registry: &Arc<Registry>,
     pack_type_registry: &Arc<PackTypeRegistry>,
+    parallel: usize,
+    scheduler: &Arc<Scheduler>,
 ) {
-    let rt = build_pack_type_runtime();
+    let rt = build_pack_type_runtime(parallel);
     // Reverse post-order: root first, then children. Pack-type plugin
     // teardown methods reverse their own children/actions, so the
     // outer loop only flips the inter-pack order.
@@ -1440,7 +1503,8 @@ fn run_teardown(
         let ctx = ExecCtx::new(vars, &pack_path, workspace)
             .with_platform(Platform::current())
             .with_registry(registry)
-            .with_pack_type_registry(pack_type_registry);
+            .with_pack_type_registry(pack_type_registry)
+            .with_scheduler(scheduler);
         append_manifest_event(
             event_log,
             lock_path,

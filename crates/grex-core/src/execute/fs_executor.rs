@@ -109,6 +109,8 @@ impl ActionExecutor for FsExecutor {
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
             visited_meta: ctx.visited_meta,
+            // feat-m6-1: propagate the scheduler handle unchanged.
+            scheduler: ctx.scheduler,
         };
         plugin.execute(action, &nested_ctx)
     }
