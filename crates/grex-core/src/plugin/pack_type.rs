@@ -834,6 +834,49 @@ mod tests {
         assert!(matches!(step.result, ExecResult::NoOp));
     }
 
+    #[test]
+    fn load_child_manifest_from_reads_pack_yaml() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().expect("tempdir");
+        let dir = tmp.path().join("child");
+        std::fs::create_dir_all(dir.join(".grex")).unwrap();
+        std::fs::write(
+            dir.join(".grex").join("pack.yaml"),
+            "schema_version: \"1\"\nname: kid\ntype: declarative\n",
+        )
+        .unwrap();
+        let manifest = load_child_manifest_from(&dir).expect("child manifest loads");
+        assert_eq!(manifest.name, "kid");
+    }
+
+    #[test]
+    fn load_child_manifest_from_missing_dir_errors() {
+        let missing = std::path::Path::new("/definitely/not/a/pack/path/123456789");
+        let err = load_child_manifest_from(missing).expect_err("missing manifest errors");
+        match err {
+            ExecError::ExecInvalid(msg) => {
+                assert!(msg.contains("child manifest load failed"), "msg: {msg}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_error_meta_cycle_renders_path() {
+        let err = ExecError::MetaCycle { path: std::path::PathBuf::from("/tmp/a") };
+        let rendered = err.to_string();
+        assert!(rendered.contains("meta recursion cycle"), "got: {rendered}");
+        assert!(rendered.contains("/tmp/a") || rendered.contains("\\tmp\\a"), "got: {rendered}");
+    }
+
+    #[test]
+    fn exec_error_unknown_pack_type_renders_name() {
+        let err = ExecError::UnknownPackType { requested: "mystery".into() };
+        let rendered = err.to_string();
+        assert!(rendered.contains("mystery"), "got: {rendered}");
+        assert!(rendered.contains("no pack-type plugin"), "got: {rendered}");
+    }
+
     #[tokio::test]
     async fn scripted_plugin_name_and_missing_hook_install_noop() {
         use crate::vars::VarEnv;
