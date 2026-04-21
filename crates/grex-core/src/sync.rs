@@ -861,7 +861,7 @@ fn skip_for_only_filter(
 ///   M4 shipped — each action lands its own `ActionStarted` /
 ///   `ActionCompleted` / `ActionHalted` event bracket. The registry is
 ///   still consulted via [`PackTypeRegistry::get`] as a name-oracle so
-///   mis-typed packs fail closed.
+///   mistyped packs fail closed.
 /// * [`PackType::Meta`] / [`PackType::Scripted`] dispatch once through the
 ///   pack-type plugin's `sync` method (the sync CLI verb is the only
 ///   caller in M5-1; `install` / `update` / `teardown` verbs wire in
