@@ -619,6 +619,81 @@ fn meta_teardown_child_failure_preserves_parent_gitignore_block() {
     );
 }
 
+/// Cycle detection must survive under a multi_thread tokio runtime —
+/// defense-in-depth probe for direct plugin callers that dispatch the
+/// same meta pack concurrently through a shared `visited_meta` set.
+///
+/// Production invocations are sequential (walker-owned), so this test
+/// is belt-and-suspenders: the same canonical root path is pushed
+/// through two concurrent `MetaPlugin.install` calls sharing one
+/// `MetaVisitedSet`. At least one of the two must yield
+/// `ExecError::MetaCycle` because the second entry observes the first
+/// entry's canonical insert.
+#[test]
+fn cycle_detection_under_multi_thread_runtime() {
+    let tmp = TempDir::new().unwrap();
+    // Two identical self-cycling meta packs: `self → me → .. → self`.
+    // canonical_or_raw picks the same canonical path for both
+    // dispatches so the shared visited set intersects.
+    let root = tmp.path().join("self");
+    write_pack(&root, &meta_pack_with_children("self", &["me"]));
+    write_pack(&root.join("me"), &meta_pack_with_children("me", &[".."]));
+
+    let pack = parse(&meta_pack_with_children("self", &["me"]));
+    let vars = VarEnv::default();
+    let action_reg = Arc::new(Registry::bootstrap());
+    let pack_type_reg = Arc::new(PackTypeRegistry::bootstrap());
+    let visited = new_visited();
+
+    // Use a 2-worker multi_thread runtime (matches M5-2c production).
+    // Spawn two concurrent dispatches and assert at least one halts
+    // with MetaCycle. On a single dispatch the self-cycle is already
+    // enough to trigger MetaCycle (see `meta_self_cycle_errors`); the
+    // multi-thread case only needs to prove the lock keeps the set
+    // consistent (no panic, no lost update).
+    let runtime = rt();
+    let (r1, r2) = runtime.block_on(async {
+        let pack1 = pack.clone();
+        let pack2 = pack.clone();
+        let root1 = root.clone();
+        let root2 = root.clone();
+        let ws = tmp.path().to_path_buf();
+        let ws2 = ws.clone();
+        let vars1 = vars.clone();
+        let vars2 = vars.clone();
+        let ar = action_reg.clone();
+        let pr = pack_type_reg.clone();
+        let ar2 = action_reg.clone();
+        let pr2 = pack_type_reg.clone();
+        let v1 = visited.clone();
+        let v2 = visited.clone();
+        let t1 = tokio::spawn(async move {
+            let ctx = ExecCtx::new(&vars1, &root1, &ws)
+                .with_registry(&ar)
+                .with_pack_type_registry(&pr)
+                .with_visited_meta(&v1);
+            MetaPlugin.install(&ctx, &pack1).await
+        });
+        let t2 = tokio::spawn(async move {
+            // yield_now forces an interleave so both tasks race for
+            // the visited-set insert.
+            tokio::task::yield_now().await;
+            let ctx = ExecCtx::new(&vars2, &root2, &ws2)
+                .with_registry(&ar2)
+                .with_pack_type_registry(&pr2)
+                .with_visited_meta(&v2);
+            MetaPlugin.install(&ctx, &pack2).await
+        });
+        (t1.await.unwrap(), t2.await.unwrap())
+    });
+
+    let is_cycle = |r: &Result<grex_core::ExecStep, ExecError>| matches!(r, Err(ExecError::MetaCycle { .. }));
+    assert!(
+        is_cycle(&r1) || is_cycle(&r2),
+        "at least one dispatch must halt with MetaCycle — r1={r1:?} r2={r2:?}"
+    );
+}
+
 // Tiny sanity guard: ensure the Path and PathBuf imports aren't flagged
 // as dead if no test exercises them directly.
 #[test]
