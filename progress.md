@@ -1,9 +1,30 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + **M5-1 + M5-2 complete** (M5 closed 2026-04-21 on `main` at `20ee5fa`). **M5 COMPLETE (2026-04-21)**: `PackTypePlugin` trait + `PackTypeRegistry` + 3 builtins (meta/declarative/scripted) + executor dispatch swap + `plugin-inventory` auto-registration (M5-1) + gitignore managed-block writer + teardown semantics (declarative/scripted/meta) + MetaPlugin real recursion with cycle detection + multi_thread tokio runtime + `grex teardown` CLI verb + `Action::Unlink` auto-reverse variant (M5-2). Test count: **470 workspace / 382 with `--features grex-core/plugin-inventory`**, all green, fmt + clippy clean. Next: **M6** (scope TBD — see `milestone.md`; non-blocking carry-forward is the declarative install-path convergence to plugin dispatch).
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + **M6 complete** (M6 closed 2026-04-21 on `main` via PR #24 squash-merge). **M6 COMPLETE (2026-04-21)**: parallel scheduler (tokio `Semaphore`, `--parallel` flag, `ExecCtx` wiring) + per-pack `.grex-lock` with 5-tier lock ordering + `TierGuard` runtime enforcement + Lean4 mechanized proof of `no_double_lock` + `no_deadlock` in CI (`lake build`). Test count: **495 workspace / 501 with `--features grex-core/plugin-inventory`**, all green, `lake build` green. Next: **M7** (MCP server + `grex import` from REPOS.json + `grex doctor` — see `milestone.md`).
 
-## Last endpoint (2026-04-21, main — M5 closed via PRs #22 + #23)
+## Last endpoint (2026-04-21, main — M6 closed via PR #24)
+- Main head: PR #24 squash-merged 2026-04-21T22:27Z. CI all green including `lake build`.
+- **M6 — Concurrency + Lean4 proof** — fully shipped to main 2026-04-21 via 1 squash PR (#24) chaining 3 OpenSpec changes.
+  - **feat-m6-1 — Parallel scheduler**: `tokio::sync::Semaphore` gated by `--parallel N` flag (default `num_cpus`); dynamic `worker_threads` on the tokio runtime; `ExecCtx` wired with scheduler permit + cancellation handle; pack execution acquires a semaphore slot before action dispatch. Covers M6 req "bounded Semaphore gated by --parallel N".
+  - **feat-m6-2 — Per-pack `.grex-lock` + 5-tier ordering**: per-pack fd-lock file at `<path>/.grex-lock` prevents same-pack double-exec; 5-tier global ordering (workspace → manifest → registry → per-pack → per-action) enforced at runtime via `TierGuard` + `tokio::task_local!` tier stack (migrated from `thread_local!` during CI fix pass to survive work-stealing); `PackLock` acquire is async-safe via `spawn_blocking` for fd-lock syscalls. Covers M6 req "per-pack .grex-lock + global ordering prevents deadlock".
+  - **feat-m6-3 — Lean4 mechanized proof**: `lean/` project with `Grex.Scheduler.no_double_lock` + `Grex.Scheduler.no_deadlock` theorems formally verifying that (a) no two tasks hold the per-pack lock for the same path simultaneously and (b) the 5-tier total order on lock acquisition admits no cycle. `lake build` added to CI matrix — green on close. Covers M6 req "Lean4 `.olean` builds green".
+  - **Review findings addressed pre-merge (Codex + CE parallel reviews)**:
+    - **B1 scheduler wiring**: `--parallel N` flag was parsed but not threaded to the semaphore; fixed by flowing through `SyncOptions::parallel` → `Scheduler::new(n)` → `ExecCtx`.
+    - **B2 duplicate `--parallel` flag**: two clap definitions collided in `sync.rs` + `cli/args.rs`; deduped to single source in `cli/args.rs`.
+    - **B3 field-order assert**: `PackLock` field drop order affected teardown correctness; added `const _: () = { ... }` static assert pinning the layout.
+    - **H1 spawn_blocking fd-lock**: fd-lock acquire was sync-blocking the runtime; wrapped in `tokio::task::spawn_blocking`.
+    - **H3 registry GC**: global `PackLockRegistry` leaked entries after pack completion; added refcount-based GC on `PackLockHold::drop`.
+    - **H5 live tier enforcement**: tier ordering was documented but not enforced at runtime; added `TierGuard` that panics on out-of-order acquire.
+    - **H6 dynamic worker_threads**: tokio runtime hardcoded to `num_cpus()`; now honors `--parallel N` via `Builder::new_multi_thread().worker_threads(n)`.
+    - **H9 meta permit release**: `MetaPlugin` recursion held parent permit across child recursion, starving the pool; now releases parent permit before recursing and re-acquires after.
+  - **CI regression fixes (post-review, pre-merge)**:
+    - **tier stack migrated `thread_local!` → `tokio::task_local!`**: initial `thread_local!` tier stack lost state under tokio work-stealing (runner moves across threads); migrated to `tokio::task::LocalKey` via `task_local!` macro so the stack travels with the task.
+    - **`num_cpus` dep cleanup**: added `num_cpus` as direct dep for the `Scheduler::default_parallelism` path (was transitively available via tokio but cargo-machete flagged implicit use).
+  - **Carry-forward (M7+ or follow-up PRs)**: see m6_scope.md for full list — key items: MED maintainability (delete unused `PackLock::acquire` sync variant, `Scheduler::permits()`, inline single-element `DEFAULT_MANAGED_GITIGNORE_PATTERNS`, rename `OwnCycleGuard` → `VisitedInsertGuard`); MED perf (top-level `sync::run` still sequential — `FuturesUnordered` dispatch needed for true `--parallel N>1` gain outside meta recursion); H2 `register_self_in_visited` ordering verification; H8 panic-safety test for `PackLockHold`.
+  - **Test counts at close**: 495 workspace tests / 501 with `--features grex-core/plugin-inventory` / `lake build` green.
+
+## Prior endpoint (2026-04-21, main — M5 closed via PRs #22 + #23)
 - Main head: `20ee5fa feat(m5-2): teardown semantics + gitignore managed blocks + meta recursion (#23)`.
 - **M5 — Pack-Type Plugin System** — fully shipped to main 2026-04-21 via 2 PRs.
   - **PR #22 (M5-1)** squash `a2e313d feat(m5-1): pack-type plugin system (trait, 3 builtins, dispatch, inventory) (#22)` — `PackTypePlugin` trait + `PackTypeRegistry` + 3 builtins (meta/declarative/scripted) + executor dispatch swap + `plugin-inventory` auto-registration. Covers R-M5-01..07 + R-M5-12. **410 tests** at close.
@@ -295,7 +316,7 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-**M5 closed 2026-04-21 (main `20ee5fa`). M6 scope TBD** — see `milestone.md`. Non-blocking carry-forward: converge declarative install path in `sync::run` onto the plugin path (currently still uses M4 action-loop; `DeclarativePlugin::install` is dead code in production — teardown already routes through the plugin).
+**M6 closed 2026-04-21 (main via PR #24 squash-merge). Next: M7** — MCP stdio JSON-RPC server + `grex import --from-repos-json` + `grex doctor` + license decision (MIT vs Apache-2.0 vs dual). See `milestone.md` §M7. Non-blocking M6 carry-forwards tracked in `memory/m6_scope.md` and `memory/m7_scope.md`.
 
 M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓ complete.
 - A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait; re-exports; plugin-layer unit tests. Dispatch unchanged. [PR #20, `2175a09`]
