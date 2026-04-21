@@ -184,12 +184,24 @@ fn e2e_dry_run_3_level_tree() {
     assert_eq!(child_edges, 3, "3 Child edges: root→a, root→b, b→c");
     assert!(report.halted.is_none());
 
-    // One step for each of: a.mkdir, a.symlink, c.mkdir. b and root have no
-    // actions. All three should be WouldPerformChange.
-    assert_eq!(report.steps.len(), 3);
-    for s in &report.steps {
-        assert_eq!(s.exec_step.result, ExecResult::WouldPerformChange, "{s:?}");
-    }
+    // M5-1c: meta packs now dispatch through `MetaPlugin` and emit one
+    // synthesis step per pack. So steps = a.mkdir + a.symlink + c.mkdir
+    // (3 declarative actions) + b.meta + root.meta (2 synthesis
+    // envelopes) = 5. Declarative actions are WouldPerformChange;
+    // meta synthesis steps are NoOp.
+    assert_eq!(report.steps.len(), 5);
+    let declarative_steps = report
+        .steps
+        .iter()
+        .filter(|s| matches!(s.exec_step.result, ExecResult::WouldPerformChange))
+        .count();
+    assert_eq!(declarative_steps, 3, "3 declarative actions plan: {:?}", report.steps);
+    let meta_steps = report
+        .steps
+        .iter()
+        .filter(|s| matches!(s.exec_step.result, ExecResult::NoOp))
+        .count();
+    assert_eq!(meta_steps, 2, "2 meta synthesis NoOp steps: {:?}", report.steps);
 
     // Disk must be untouched.
     assert!(!f.a_target_dir.exists(), "dry-run mkdir must not create dir");
@@ -202,7 +214,9 @@ fn e2e_wet_run_3_level_tree() {
     let f = build_fixture();
     let report = run(&f.root, &options(false, f.workspace.clone())).expect("wet run succeeds");
     assert!(report.halted.is_none(), "halted: {:?}", report.halted);
-    assert_eq!(report.steps.len(), 3);
+    // M5-1c: 3 declarative actions (a.mkdir + a.symlink + c.mkdir) plus
+    // 2 meta synthesis steps (b + root) = 5 total.
+    assert_eq!(report.steps.len(), 5);
 
     // Disk assertions — post-order means c.mkdir + a.mkdir + a.symlink all ran.
     assert!(f.a_target_dir.is_dir(), "a mkdir should have produced dir");
@@ -316,8 +330,10 @@ fn e2e_validation_skip_bypasses_checks() {
         SyncOptions::new().with_dry_run(true).with_validate(false).with_workspace(Some(workspace));
     let report = run(&root_dir, &opts).expect("--no-validate must bypass");
     assert!(report.halted.is_none());
-    // No actions on root, no children: zero steps.
-    assert_eq!(report.steps.len(), 0);
+    // M5-1c: root is a meta pack with no children, so `MetaPlugin::install`
+    // emits a single `noop_step("meta")`. Pre-M5 this test expected 0
+    // steps because the M4 executor did not dispatch for meta packs.
+    assert_eq!(report.steps.len(), 1);
     assert_eq!(report.graph.nodes().len(), 1);
     // Silence unused-field warnings on the StepKind import on empty runs.
     let _ = std::mem::size_of::<StepKind>();

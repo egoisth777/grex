@@ -248,10 +248,48 @@ inventory::collect!(PackTypePluginSubmission);
 // crate) for the same reason the action built-ins do — avoiding a circular
 // dependency and keeping the registry bootstrap path inside `grex-core`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::execute::{ExecResult, Platform, PredicateOutcome, StepKind};
 use crate::pack::{ChildRef, ExecOnFail, RequireOnFail};
+use crate::tree::{FsPackLoader, PackLoader};
+
+/// Load a child pack's manifest from disk.
+///
+/// Stage C helper used by [`MetaPlugin`] when it needs to peek at a
+/// child's `pack.yaml` without going through the full [`crate::tree::Walker`]
+/// pipeline (the walker already walked every child during sync setup — this
+/// helper is for drivers that need to inspect a child manifest outside the
+/// graph, e.g. future per-child selective lifecycle dispatch). Resolves
+/// the on-disk directory as `<ctx.workspace>/<child.effective_path()>`
+/// and delegates to [`FsPackLoader`] for the actual parse.
+///
+/// # Errors
+///
+/// Returns [`ExecError::ExecInvalid`] when the manifest cannot be read
+/// or parsed. The error carries the resolved path so callers can render
+/// actionable diagnostics.
+pub fn load_child_manifest(
+    ctx: &ExecCtx<'_>,
+    child: &ChildRef,
+) -> Result<PackManifest, ExecError> {
+    let dir = ctx.workspace.join(child.effective_path());
+    load_child_manifest_from(&dir)
+}
+
+/// Lower-level variant of [`load_child_manifest`] that takes an explicit
+/// directory. Exposed so tests and alternative drivers can exercise the
+/// loader without constructing a full [`ExecCtx`].
+///
+/// # Errors
+///
+/// Same taxonomy as [`load_child_manifest`].
+pub fn load_child_manifest_from(dir: &Path) -> Result<PackManifest, ExecError> {
+    let loader = FsPackLoader::new();
+    loader.load(dir).map_err(|e| {
+        ExecError::ExecInvalid(format!("child manifest load failed at {}: {e}", dir.display()))
+    })
+}
 
 /// Build a [`ExecStep`] with [`ExecResult::NoOp`] and a `Require` envelope
 /// under `action_name`. Used by pack-type drivers when a lifecycle hook has
