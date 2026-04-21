@@ -16,12 +16,14 @@ pub mod sync;
 pub mod tree;
 pub mod vars;
 
+#[doc(hidden)]
 pub use env::EnvResolver;
 pub use execute::{
     ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
     PredicateOutcome, StepKind,
 };
 pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
+#[doc(hidden)]
 pub use log::{ActionLogger, LogLevel, TracingLogger};
 pub use pack::{
     run_all, Action, ChildRef, Combiner, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs,

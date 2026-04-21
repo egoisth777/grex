@@ -1,5 +1,9 @@
 //! grex-plugins-builtin — built-in action primitives and pack-type handlers.
 //!
+//! Stub crate reserved for v2 third-party plugin loading. In v1, all
+//! builtins live in `grex-core::plugin` and are re-exported here for
+//! forward-compat import paths.
+//!
 //! M4-A: the Tier-1 action plugins (`symlink`, `env`, `mkdir`, `rmdir`,
 //! `require`, `when`, `exec`) live inside `grex-core::plugin` because the
 //! wet-run logic is already there; hoisting the structs alone into this
@@ -16,6 +20,3 @@ pub use grex_core::plugin::{
     register_builtins, ActionPlugin, EnvPlugin, ExecPlugin, MkdirPlugin, Registry, RequirePlugin,
     RmdirPlugin, SymlinkPlugin, WhenPlugin,
 };
-
-/// Reserved for future pack-type plugins (M5). Intentionally empty in M4-A.
-pub mod pack_types {}

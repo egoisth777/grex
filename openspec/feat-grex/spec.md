@@ -120,8 +120,8 @@ M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-cor
 
 1. **`ActionPlugin` trait** at `crates/grex-core/src/plugin/mod.rs`. Method signatures (exact):
    - `fn name(&self) -> &str`
-   - `async fn execute(&self, ctx: &ExecCtx<'_>, args: &Value) -> Result<ExecOutcome, ExecError>`
-   Rollback is NOT on the trait surface; it stays in the `ActionOutcome` contract as it does in the M3 executor shape. Rationale: matches the current executor's outcome-carrying model; promoting to a trait method is an M5+ decision if pack-type drivers require it.
+   - `fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError>`
+   (2026-04-20 — aligned with shipped trait in M4-B review fix.) Sync `fn` (not `async`); takes the typed `&Action` (not raw `&Value`); returns the richer `ExecStep` envelope (not the retired `ActionOutcome`). The async + `&Value` shape is reserved for v2 external plugin loading (dylib/WASM) where the trait crosses an ABI boundary. Rollback is NOT on the trait surface; per-action inverse logic stays in the executor. Promoting rollback to a trait method is an M5+ decision if pack-type drivers require it.
 2. **`Registry` struct** with methods:
    - `fn register<P: ActionPlugin + 'static>(&mut self, plugin: P)`
    - `fn get(&self, name: &str) -> Option<&dyn ActionPlugin>`
@@ -143,5 +143,5 @@ M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-cor
 
 - External plugin loading: dylib (`libloading`), WASM (`wasmtime` / `extism`), `abi_stable` wiring.
 - Third-party crate plugin distribution (out-of-repo plugins).
-- Rollback as a trait method — stays in the `ActionOutcome` contract; promote to trait in M5+ if pack-type drivers require it.
+- Rollback as a trait method — per-action inverse logic stays in the executor (the retired `ActionOutcome` shape is not the home; `ExecStep` is the v1 per-action envelope). Promote to trait in M5+ if pack-type drivers require it.
 - `PackTypePlugin` trait work — that is M5 scope per `milestone.md`.

@@ -150,7 +150,7 @@ fn print_step(s: &SyncStep, dry_run: bool) {
     // at the end is required because `ExecResult` is `#[non_exhaustive]`;
     // future variants route to a generic `other` tag until they earn
     // dedicated rendering.
-    if let ExecResult::Skipped { pack_path, actions_hash } = &s.exec_step.result {
+    if let ExecResult::Skipped { pack_path, actions_hash, .. } = &s.exec_step.result {
         println!(
             "[skipped] pack={pack} path={path} hash={hash}",
             pack = s.pack,

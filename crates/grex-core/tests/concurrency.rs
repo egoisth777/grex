@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier, OnceLock};
 use std::thread;
 
+use grex_core::execute::StepKind;
 use grex_core::git::gix_backend::file_url_from_path;
 use grex_core::sync::{run as sync_run, SyncError, SyncOptions};
 use grex_core::{GitBackend, GixBackend};
@@ -248,4 +249,151 @@ fn git_backend_checkout_rejects_dirty_after_lock() {
     // guard is the cleanliness check under lock, not gix.
     let contents = fs::read_to_string(dest.join("README.md")).unwrap();
     assert_eq!(contents, "dirty edit\n", "dirty file preserved on rejected checkout");
+}
+
+// ---------------------------------------------------------------------------
+// M4-B Stream W3 — halt-state gating, lockfile error taxonomy, PackSkipped emit
+// ---------------------------------------------------------------------------
+
+/// YAML body: pack with a single successful mkdir action. Lockfile entry
+/// for this shape is expected to be preserved across successful runs.
+fn passing_mkdir_pack(target: &Path) -> String {
+    let escaped = target.display().to_string().replace('\\', "\\\\");
+    format!(
+        "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\nactions:\n  - mkdir:\n      path: \"{escaped}\"\n"
+    )
+}
+
+/// YAML body: pack whose single action is an exec that always fails.
+/// Used to force a mid-run halt. Shell form mirrors sync_recovery.rs so
+/// the fixture works on both Windows and POSIX CI shells.
+#[cfg(windows)]
+fn halting_exec_pack() -> String {
+    concat!(
+        "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\n",
+        "actions:\n",
+        "  - exec:\n",
+        "      shell: true\n",
+        "      cmd_shell: \"exit 3\"\n",
+        "      on_fail: error\n",
+    )
+    .to_string()
+}
+
+#[cfg(not(windows))]
+fn halting_exec_pack() -> String {
+    concat!(
+        "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\n",
+        "actions:\n",
+        "  - exec:\n",
+        "      shell: true\n",
+        "      cmd_shell: \"exit 3\"\n",
+        "      on_fail: error\n",
+    )
+    .to_string()
+}
+
+fn write_pack_yaml(pack_root: &Path, body: &str) {
+    fs::create_dir_all(pack_root.join(".grex")).unwrap();
+    fs::write(pack_root.join(".grex").join("pack.yaml"), body).unwrap();
+}
+
+/// T-HALT-SKIP: a pack that previously ran successfully, then halts on a
+/// subsequent run, must not be silently skipped on the next rerun. Route
+/// (b) halt-state gating drops the prior lockfile entry for the halted
+/// pack so the next sync re-executes it from scratch.
+#[test]
+fn halted_pack_prior_entry_is_dropped_so_next_run_executes() {
+    let tmp = TempDir::new().unwrap();
+    let pack_root = tmp.path().join("pack");
+    let workspace = tmp.path().join("ws");
+    let opts = SyncOptions { workspace: Some(workspace.clone()), ..Default::default() };
+
+    // Run 1: pack P succeeds → lockfile gains an entry for P.
+    let target = tmp.path().join("td");
+    write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
+    sync_run(&pack_root, &opts).expect("first sync ok");
+    let lockfile = pack_root.join(".grex").join("grex.lock.jsonl");
+    let initial = fs::read_to_string(&lockfile).expect("lockfile written");
+    assert!(initial.contains("\"id\":\"root\""), "run 1 must record entry for root");
+
+    // Run 2: swap in a halting pack; sync must halt AND remove the prior
+    // entry for `root` so the next sync won't short-circuit.
+    write_pack_yaml(&pack_root, &halting_exec_pack());
+    let report = sync_run(&pack_root, &opts).expect("sync returns report even on halt");
+    assert!(report.halted.is_some(), "run 2 must halt");
+    let after_halt = fs::read_to_string(&lockfile).expect("lockfile still readable");
+    assert!(
+        !after_halt.contains("\"id\":\"root\""),
+        "halted pack's prior entry must be dropped (got {after_halt:?})"
+    );
+
+    // Run 3: restore the passing pack. Because the prior entry is gone,
+    // the sync MUST execute actions (not emit a PackSkipped short-circuit).
+    write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
+    let report = sync_run(&pack_root, &opts).expect("sync ok");
+    assert!(report.halted.is_none(), "run 3 completes cleanly");
+    assert!(
+        !report.steps.iter().any(|s| matches!(s.exec_step.details, StepKind::PackSkipped { .. })),
+        "run 3 must execute — no PackSkipped short-circuit"
+    );
+}
+
+/// T-LOCKFILE-ERROR-TAXONOMY: corrupt lockfile JSON must surface as
+/// `SyncError::Lockfile`, not as `SyncError::Validation { ... }`.
+#[test]
+fn corrupt_lockfile_routes_to_lockfile_variant() {
+    let tmp = TempDir::new().unwrap();
+    let pack_root = tmp.path().join("pack");
+    let workspace = tmp.path().join("ws");
+    let target = tmp.path().join("td");
+    write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
+
+    // Plant a torn lockfile before the first sync.
+    let lockfile = pack_root.join(".grex").join("grex.lock.jsonl");
+    fs::create_dir_all(lockfile.parent().unwrap()).unwrap();
+    fs::write(&lockfile, b"not-json\n").unwrap();
+
+    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let err = sync_run(&pack_root, &opts).expect_err("corrupt lockfile must fail sync");
+    match err {
+        SyncError::Lockfile { path, .. } => {
+            assert_eq!(path, lockfile, "error carries the lockfile path");
+        }
+        other => panic!("expected SyncError::Lockfile, got {other:?}"),
+    }
+}
+
+/// T-PACKSKIPPED-EMIT: on the second run of an unchanged pack the sync
+/// driver must emit `StepKind::PackSkipped`, not the old `StepKind::Require`
+/// proxy.
+#[test]
+fn second_run_emits_packskipped_stepkind() {
+    let tmp = TempDir::new().unwrap();
+    let pack_root = tmp.path().join("pack");
+    let workspace = tmp.path().join("ws");
+    let target = tmp.path().join("td");
+    write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
+
+    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    sync_run(&pack_root, &opts).expect("first sync ok");
+    let report = sync_run(&pack_root, &opts).expect("second sync ok");
+
+    let skipped = report
+        .steps
+        .iter()
+        .find(|s| matches!(s.exec_step.details, StepKind::PackSkipped { .. }))
+        .expect("second run must emit PackSkipped");
+    match &skipped.exec_step.details {
+        StepKind::PackSkipped { actions_hash } => {
+            assert!(!actions_hash.is_empty(), "PackSkipped carries a non-empty hash");
+        }
+        _ => unreachable!(),
+    }
+    // Regression guard: no Require-proxy step with action_name "pack".
+    assert!(
+        !report.steps.iter().any(|s| s.exec_step.action_name == "pack"
+            && matches!(s.exec_step.details, StepKind::Require { .. })),
+        "no Require-proxy pack-skip step should remain"
+    );
 }

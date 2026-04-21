@@ -16,6 +16,7 @@ use crate::vars::VarEnv;
 ///
 /// Must be `Send + Sync` so executors can share a single resolver across
 /// tasks (the scheduler runs actions concurrently in M5).
+#[doc(hidden)]
 pub trait EnvResolver: Send + Sync {
     /// Look up `name`. Returns `None` when unset.
     fn resolve(&self, name: &str) -> Option<String>;

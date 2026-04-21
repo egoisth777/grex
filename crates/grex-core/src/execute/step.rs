@@ -45,6 +45,11 @@ pub enum ExecResult {
     /// carries the pack path and the matched hash so downstream audit
     /// tooling can render "pack X at hash Y was skipped" without having to
     /// thread extra context.
+    ///
+    /// Marked `#[non_exhaustive]` at the variant level so future audit
+    /// fields (e.g. `skipped_at`, `policy_source`) can be added without
+    /// breaking downstream struct-pattern match sites.
+    #[non_exhaustive]
     Skipped {
         /// Path to the pack whose actions were skipped.
         pack_path: std::path::PathBuf,
@@ -142,6 +147,14 @@ pub enum StepKind {
         /// Whether this is a shell form.
         shell: bool,
     },
+    /// Dedicated pack-level skip detail. Emitted when a pack's
+    /// `actions_hash` matches a prior lockfile entry and the sync layer
+    /// short-circuits the entire pack. Replaces the M4-B proxy of
+    /// `Require { Satisfied, Skip }` with `action_name == "pack"`.
+    PackSkipped {
+        /// Actions-hash that matched the lockfile entry for this pack.
+        actions_hash: String,
+    },
 }
 
 /// Observable record of a single action's execution (or planned execution).
@@ -188,6 +201,9 @@ mod tests {
 
     #[test]
     fn skipped_carries_pack_path_and_hash() {
+        // Within-crate construction of a `#[non_exhaustive]` variant is
+        // allowed without `..`; this guards against accidental promotion
+        // of the variant to `#[non_exhaustive(pub)]`-equivalent semantics.
         let r = ExecResult::Skipped {
             pack_path: PathBuf::from("/tmp/packs/foo"),
             actions_hash: "a".repeat(64),
@@ -198,6 +214,17 @@ mod tests {
                 assert_eq!(actions_hash.len(), 64);
             }
             _ => panic!("expected Skipped"),
+        }
+    }
+
+    #[test]
+    fn pack_skipped_round_trips() {
+        let k = StepKind::PackSkipped { actions_hash: "abc".into() };
+        match k {
+            StepKind::PackSkipped { actions_hash } => {
+                assert_eq!(actions_hash, "abc");
+            }
+            _ => panic!("expected PackSkipped"),
         }
     }
 }

@@ -203,7 +203,7 @@ pub struct RmdirArgs {
 /// additional audit fields (hash-pinning, cache tokens) without breaking
 /// downstream destructuring.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RequireSpec {
     /// Combiner populated by `all_of` / `any_of` / `none_of`.
     pub combiner: Combiner,

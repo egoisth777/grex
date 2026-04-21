@@ -40,7 +40,9 @@ use crate::execute::{
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
-use crate::lockfile::{compute_actions_hash, read_lockfile, write_lockfile, LockEntry};
+use crate::lockfile::{
+    compute_actions_hash, read_lockfile, write_lockfile, LockEntry, LockfileError,
+};
 use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 use crate::pack::{Action, PackValidationError};
 use crate::plugin::Registry;
@@ -191,6 +193,19 @@ pub enum SyncError {
         /// Sidecar lock file that is currently held.
         lock_path: PathBuf,
     },
+    /// Reading or parsing the resolved-state lockfile failed. Surfaced as
+    /// its own variant (rather than folded into `Validation`) because a
+    /// corrupt / unreadable lockfile is an I/O or schema fault, not a
+    /// dependency-satisfaction fault. Resolution is operator-level
+    /// (restore a backup, delete the file, re-sync), not author-level.
+    #[error("lockfile `{path}` failed to load: {source}")]
+    Lockfile {
+        /// Lockfile path that failed to load.
+        path: PathBuf,
+        /// Underlying lockfile error.
+        #[source]
+        source: LockfileError,
+    },
 }
 
 impl Clone for SyncError {
@@ -226,6 +241,12 @@ impl Clone for SyncError {
             Self::WorkspaceBusy { workspace, lock_path } => {
                 Self::WorkspaceBusy { workspace: workspace.clone(), lock_path: lock_path.clone() }
             }
+            Self::Lockfile { path, source } => Self::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: "<lockfile>".into(),
+                    required: format!("{}: {source}", path.display()),
+                }],
+            },
         }
     }
 }
@@ -318,30 +339,30 @@ fn walk_and_validate(
 /// Load the prior lockfile (`grex.lock.jsonl`). Missing file yields an
 /// empty map; parse errors are fatal since writes are atomic and a torn
 /// lockfile therefore indicates real corruption that must be resolved
-/// before a fresh sync is safe.
+/// before a fresh sync is safe. Parse/IO failures surface as
+/// [`SyncError::Lockfile`] — this is an I/O / schema fault, not a
+/// dependency-satisfaction fault, so it gets its own taxonomy slot.
 fn load_prior_lock(
     lockfile_path: &Path,
 ) -> Result<std::collections::HashMap<String, LockEntry>, SyncError> {
-    read_lockfile(lockfile_path).map_err(|e| SyncError::Validation {
-        errors: vec![PackValidationError::DependsOnUnsatisfied {
-            pack: "<lockfile>".into(),
-            required: format!("{}: {e}", lockfile_path.display()),
-        }],
-    })
+    read_lockfile(lockfile_path)
+        .map_err(|source| SyncError::Lockfile { path: lockfile_path.to_path_buf(), source })
 }
 
-/// Persist `next_lock` atomically to `lockfile_path`, but only when the
-/// run completed without halting and was not a dry-run. A halt leaves
-/// `next_lock` at whatever state the last successful pack produced;
-/// partial-progress persistence is force-flag territory (M4-D). Write
-/// errors surface as non-fatal warnings on the report.
+/// Persist `next_lock` atomically to `lockfile_path` whenever this was
+/// not a dry-run. On a halt the map has already had the halted pack's
+/// entry removed (see `run_actions`), so persisting now preserves every
+/// *successful* pack's fresh entry while guaranteeing absence of an
+/// entry for the halted pack — next sync sees no prior hash there and
+/// re-executes from scratch (route (b) halt-state gating). Write errors
+/// surface as non-fatal warnings on the report.
 fn persist_lockfile_if_clean(
     report: &mut SyncReport,
     lockfile_path: &Path,
     next_lock: &std::collections::HashMap<String, LockEntry>,
     dry_run: bool,
 ) {
-    if report.halted.is_some() || dry_run {
+    if dry_run {
         return;
     }
     if let Err(e) = write_lockfile(lockfile_path, next_lock) {
@@ -511,6 +532,12 @@ fn run_actions(
             &pack_path, &actions,
         );
         if pack_halted {
+            // Route (b) halt-state gating: drop any prior entry for the
+            // halted pack so the next sync sees no prior hash and
+            // re-executes from scratch. Successful packs in this same
+            // run keep their freshly-upserted entries, and packs we did
+            // not reach keep their prior entries untouched.
+            next_lock.remove(&pack_name);
             return;
         }
         // Successful pack — record a fresh lockfile entry so the next
@@ -599,15 +626,15 @@ fn try_skip_pack(
     }
     let skipped_step = ExecStep {
         action_name: Cow::Borrowed("pack"),
-        result: ExecResult::Skipped { pack_path: pack_path.to_path_buf(), actions_hash: hash },
-        details: StepKind::Require {
-            // Reusing the `Require` detail shape for a pack-level skip is
-            // a pragmatic choice: `StepKind` is `#[non_exhaustive]` and a
-            // dedicated variant belongs to the audit-schema work in M4-D.
-            // The outer `action_name: "pack"` disambiguates for renderers.
-            outcome: crate::execute::PredicateOutcome::Satisfied,
-            on_fail: crate::pack::RequireOnFail::Skip,
+        result: ExecResult::Skipped {
+            pack_path: pack_path.to_path_buf(),
+            actions_hash: hash.clone(),
         },
+        // W4 landed `StepKind::PackSkipped` as the dedicated pack-level
+        // short-circuit detail; we use it here instead of the prior
+        // `Require { Satisfied, Skip }` proxy so renderers and consumers
+        // can match on a single, purpose-built variant.
+        details: StepKind::PackSkipped { actions_hash: hash },
     };
     report.steps.push(SyncStep {
         pack: pack_name.to_string(),

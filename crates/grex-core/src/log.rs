@@ -15,6 +15,7 @@ use crate::execute::ExecStep;
 ///
 /// Matches the standard `tracing` levels so [`TracingLogger`] can
 /// forward without translation.
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Trace,
@@ -28,6 +29,7 @@ pub enum LogLevel {
 ///
 /// Implementations must be `Send + Sync` so they can be shared across
 /// task boundaries (the scheduler runs actions concurrently in M5).
+#[doc(hidden)]
 pub trait ActionLogger: Send + Sync {
     /// Record a completed [`ExecStep`]. Called once per action.
     fn log_step(&self, step: &ExecStep);
@@ -41,6 +43,7 @@ pub trait ActionLogger: Send + Sync {
 /// Step records land at `info` level on the `grex::exec` target; messages
 /// honour their [`LogLevel`]. Consumers wire up `tracing-subscriber` (or
 /// any alternative) in the host binary.
+#[doc(hidden)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TracingLogger;
 

@@ -97,7 +97,18 @@ impl ActionExecutor for FsExecutor {
         let name = action.name();
         let plugin =
             self.registry.get(name).ok_or_else(|| ExecError::UnknownAction(name.to_string()))?;
-        plugin.execute(action, ctx)
+        // Attach our registry to the ctx so plugins that recurse (today:
+        // `when`) can dispatch nested actions through the same registry
+        // the caller handed us — preventing a fresh bootstrap that would
+        // shadow caller-registered custom plugins.
+        let nested_ctx = ExecCtx {
+            vars: ctx.vars,
+            pack_root: ctx.pack_root,
+            workspace: ctx.workspace,
+            platform: ctx.platform,
+            registry: Some(&self.registry),
+        };
+        plugin.execute(action, &nested_ctx)
     }
 }
 
@@ -495,16 +506,20 @@ fn classify_require(satisfied: bool, on_fail: RequireOnFail) -> Result<ExecResul
 
 // ---------------------------------------------------------------- when
 
-pub(crate) fn fs_when(
-    exec: &FsExecutor,
-    spec: &WhenSpec,
-    ctx: &ExecCtx<'_>,
-) -> Result<ExecStep, ExecError> {
+/// Wet-run `when` dispatch.
+///
+/// Nested actions are routed through the registry attached to `ctx` by the
+/// outer [`FsExecutor::execute`] so custom plugins registered by the caller
+/// are honoured inside `when` bodies. If no registry is attached (direct
+/// plugin invocation in a test that bypassed the executor), we fall back
+/// to a fresh bootstrap registry — the historical Stage-A behaviour —
+/// which preserves the built-in semantics.
+pub(crate) fn fs_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let branch_taken = evaluate_when_gate(spec, ctx);
     let (result, nested_steps) = if branch_taken {
         let mut out = Vec::with_capacity(spec.actions.len());
         for a in &spec.actions {
-            out.push(exec.execute(a, ctx)?);
+            out.push(dispatch_nested(a, ctx)?);
         }
         (ExecResult::PerformedChange, out)
     } else {
@@ -515,6 +530,23 @@ pub(crate) fn fs_when(
         result,
         details: StepKind::When { branch_taken, nested_steps },
     })
+}
+
+/// Dispatch one nested wet-run action via the registry attached to `ctx`.
+/// Falls back to a bootstrap registry when none is attached so direct
+/// plugin invocations in tests still resolve the Tier-1 built-ins.
+fn dispatch_nested(action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let name = action.name();
+    match ctx.registry {
+        Some(reg) => {
+            let plugin = reg.get(name).ok_or_else(|| ExecError::UnknownAction(name.to_string()))?;
+            plugin.execute(action, ctx)
+        }
+        None => {
+            let fallback = FsExecutor::new();
+            fallback.execute(action, ctx)
+        }
+    }
 }
 
 // ---------------------------------------------------------------- exec

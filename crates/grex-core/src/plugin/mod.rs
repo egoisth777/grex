@@ -270,13 +270,13 @@ impl ActionPlugin for WhenPlugin {
     fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
         match action {
             Action::When(w) => {
-                // `fs_when` recurses into nested actions via `FsExecutor`;
-                // threading the plugin path here is M4-B work (needs a
-                // `&Registry` in `ExecCtx`). Delegating back to the legacy
-                // executor keeps nested `when` behaviour consistent for
-                // Stage A.
-                let exec = crate::execute::FsExecutor::new();
-                crate::execute::fs_executor::fs_when(&exec, w, ctx)
+                // Nested dispatch is registry-driven via the `registry`
+                // slot on `ExecCtx`. The outer `FsExecutor` attaches its
+                // own `Arc<Registry>` to the ctx before calling us, so
+                // nested actions resolve through the caller's registry
+                // (honouring shadowed or custom plugins) instead of a
+                // freshly bootstrapped set.
+                crate::execute::fs_executor::fs_when(w, ctx)
             }
             _ => Err(ExecError::ExecInvalid(format!(
                 "when plugin dispatched with non-when action `{}`",
