@@ -114,6 +114,8 @@ Action-argument strings in `pack.yaml` carry variable placeholders as literals (
 
 ## M4 — Plugin system (Stage A slicing)
 
+**Status (2026-04-20)**: All 5 stages shipped. Stages A–D on `main` via PR #20 (commit `2175a09`); Stage E on `feat/m4-e-plugin-inventory` (commits `aa6dc10` + `3867d80`). See `progress.md` for commit SHAs + per-stage detail.
+
 M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-core::execute`. M4 formalizes plugin extensibility (trait + registry) and wires the lockfile idempotency path (`ExecResult::Skipped`) that PR #14 reserved. External plugin loading (dylib / WASM) stays deferred to v2; in-process registration is the only loading path in v1.
 
 ### Requirements
