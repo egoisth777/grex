@@ -946,7 +946,6 @@ fn run_pack_lifecycle(
 /// per-action event-log bracket (`ActionStarted` → `ActionCompleted` |
 /// `ActionHalted`). Returns `true` when the sync must halt.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn run_declarative_actions(
     report: &mut SyncReport,
     vars: &VarEnv,

@@ -87,10 +87,7 @@ fn gitignore_target(ctx: &ExecCtx<'_>) -> std::path::PathBuf {
 /// is present. No-op when the extension is absent. Errors map to
 /// [`ExecError::ExecInvalid`] so the lifecycle surfaces a single halt
 /// variant rather than leaking the gitignore error taxonomy.
-pub(crate) fn apply_gitignore(
-    ctx: &ExecCtx<'_>,
-    pack: &PackManifest,
-) -> Result<(), ExecError> {
+pub(crate) fn apply_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
     let Some(patterns) = read_gitignore_patterns(pack) else {
         return Ok(());
     };
