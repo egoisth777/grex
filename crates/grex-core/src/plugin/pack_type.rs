@@ -878,11 +878,7 @@ impl PackTypePlugin for ScriptedPlugin {
         Self::NAME
     }
 
-    async fn install(
-        &self,
-        ctx: &ExecCtx<'_>,
-        pack: &PackManifest,
-    ) -> Result<ExecStep, ExecError> {
+    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
         apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "setup").await
     }

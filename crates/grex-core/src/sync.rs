@@ -1440,8 +1440,15 @@ fn run_teardown(
             .get(type_tag)
             .expect("pack-type plugin must be registered (guarded above)");
         let step_result = rt.block_on(plugin.teardown(&ctx, &manifest));
-        if !record_action_outcome(report, event_log, lock_path, &pack_name, 0, type_tag, step_result)
-        {
+        if !record_action_outcome(
+            report,
+            event_log,
+            lock_path,
+            &pack_name,
+            0,
+            type_tag,
+            step_result,
+        ) {
             return;
         }
     }
