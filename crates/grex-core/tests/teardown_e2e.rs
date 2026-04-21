@@ -339,7 +339,84 @@ fn auto_reverse_deletes_in_reverse_order() {
     assert!(!outer.exists(), "outer must be gone — reverse order required");
 }
 
-// ------------------------------------------------------------ 9. explicit teardown
+// ------------------------------------------------------------ 9a. auto-reverse symlink
+
+/// mkdir + symlink auto-reverse (R-M5-09): teardown must invert
+/// symlink via `unlink` (remove the link), not leave it behind.
+/// Unix-only — Windows symlink creation requires elevation / Developer
+/// Mode, and the auto-reverse is fs-layer symmetric to
+/// [`grex_core::SymlinkPlugin`] which is already platform-gated in its
+/// own tests.
+#[cfg(unix)]
+#[test]
+fn declarative_autoreverse_inverts_symlink() {
+    let tmp = TempDir::new().unwrap();
+    let tmp_path = tmp.path();
+    let src_dir = tmp_path.join("real");
+    let link = tmp_path.join("link");
+    let workspace = tmp_path.join("ws");
+    fs::create_dir_all(&workspace).unwrap();
+
+    let root = tmp_path.join("root");
+    write_pack(
+        &root,
+        &format!(
+            "schema_version: \"1\"\nname: ars\ntype: declarative\nactions:\n  - mkdir:\n      path: {}\n  - symlink:\n      src: {}\n      dst: {}\n",
+            fwd(&src_dir),
+            fwd(&src_dir),
+            fwd(&link)
+        ),
+    );
+
+    run(&root, &options(workspace.clone())).expect("install ok");
+    assert!(
+        link.symlink_metadata().unwrap().file_type().is_symlink(),
+        "install must create link"
+    );
+
+    teardown(&root, &options(workspace)).expect("teardown ok");
+    assert!(link.symlink_metadata().is_err(), "auto-reverse must unlink");
+}
+
+// ------------------------------------------------------------ 9b. auto-reverse when
+
+/// when-gated mkdir auto-reverse: teardown must recurse into
+/// `when.actions` and invert each, preserving the gate. The `when`
+/// gates on the current OS (always-true branch) so the inner mkdir
+/// runs at install AND the inner rmdir runs at teardown.
+#[test]
+fn declarative_autoreverse_recurses_into_when() {
+    let tmp = TempDir::new().unwrap();
+    let tmp_path = tmp.path();
+    let inner = tmp_path.join("gated-dir");
+    let workspace = tmp_path.join("ws");
+    fs::create_dir_all(&workspace).unwrap();
+    let os_tok = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+
+    let root = tmp_path.join("root");
+    write_pack(
+        &root,
+        &format!(
+            "schema_version: \"1\"\nname: arw\ntype: declarative\nactions:\n  - when:\n      os: {}\n      actions:\n        - mkdir:\n            path: {}\n",
+            os_tok,
+            fwd(&inner)
+        ),
+    );
+
+    run(&root, &options(workspace.clone())).expect("install ok");
+    assert!(inner.is_dir(), "when-gated install must materialise");
+
+    teardown(&root, &options(workspace)).expect("teardown ok");
+    assert!(!inner.exists(), "auto-reverse must recurse into when.actions");
+}
+
+// ------------------------------------------------------------ 10. explicit teardown
 
 /// A pack with both `actions:` and an explicit `teardown:` block must
 /// run the explicit block and NOT auto-reverse. Authoring the teardown

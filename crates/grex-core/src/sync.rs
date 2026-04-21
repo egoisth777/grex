@@ -1234,6 +1234,7 @@ fn action_kind_tag(action: &crate::pack::Action) -> &'static str {
     use crate::pack::Action;
     match action {
         Action::Symlink(_) => "symlink",
+        Action::Unlink(_) => "unlink",
         Action::Env(_) => "env",
         Action::Mkdir(_) => "mkdir",
         Action::Rmdir(_) => "rmdir",

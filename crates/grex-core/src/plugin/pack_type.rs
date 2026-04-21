@@ -661,22 +661,51 @@ impl DeclarativePlugin {
 
     /// Synthesize the inverse of `action` for auto-reverse teardown.
     ///
-    /// Returns `Some(inverse)` when a natural inverse exists (e.g.
-    /// `mkdir` → `rmdir`). Returns `None` when no inverse is defined —
-    /// the caller emits a `NoOp` warning step and continues. R-M5-09.
+    /// Returns `Some(inverse)` when a natural inverse exists. Returns
+    /// `None` when no inverse is defined — the caller emits a `NoOp`
+    /// warning step and continues. R-M5-09.
     ///
-    /// The current Tier-1 action set only admits a mechanical inverse
-    /// for `mkdir` (→ `rmdir` with `force: false` so we only remove
-    /// directories the author's install created-and-left-empty).
-    /// `symlink`, `env`, `require`, `when`, and `exec` have no safe
-    /// auto-reverse: we cannot distinguish operator-managed targets
-    /// from pack-managed ones without richer metadata. Authors who
-    /// need precise cleanup should supply an explicit `teardown:`
-    /// block.
+    /// Supported inverses:
+    ///
+    /// * `mkdir` → `rmdir` with `force: false` so we only remove
+    ///   directories the author's install created-and-left-empty.
+    /// * `symlink` → `unlink` targeting the recorded `dst`. The
+    ///   `fs_unlink` wet-run checks that `dst` IS a symlink before
+    ///   removing it so a mis-targeted teardown cannot clobber
+    ///   operator-managed files.
+    /// * `when` → `when` with the same condition but `actions`
+    ///   recursively inverted. Preserving the gate is load-bearing:
+    ///   a platform-gated install must tear down only on the same
+    ///   platform.
+    ///
+    /// `env`, `require`, and `exec` have no safe auto-reverse: we
+    /// cannot distinguish operator-managed state from pack-managed
+    /// state without richer metadata. Authors who need precise
+    /// cleanup should supply an explicit `teardown:` block.
     fn inverse_of(action: &Action) -> Option<Action> {
         match action {
             Action::Mkdir(m) => {
                 Some(Action::Rmdir(crate::pack::RmdirArgs::new(m.path.clone(), false, false)))
+            }
+            Action::Symlink(s) => {
+                Some(Action::Unlink(crate::pack::UnlinkArgs::new(s.dst.clone())))
+            }
+            Action::When(w) => {
+                // Recursively invert `actions`; nested entries with no
+                // inverse (e.g. an `env` inside the gate) drop out of
+                // the reversed list rather than emitting a warning step
+                // here — the caller's auto-reverse loop handles the
+                // outermost no-inverse emission, and the inner gate's
+                // purpose is just to mirror install ordering.
+                let inner: Vec<Action> =
+                    w.actions.iter().rev().filter_map(Self::inverse_of).collect();
+                Some(Action::When(crate::pack::WhenSpec::new(
+                    w.os,
+                    w.all_of.clone(),
+                    w.any_of.clone(),
+                    w.none_of.clone(),
+                    inner,
+                )))
             }
             _ => None,
         }
@@ -1237,34 +1266,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn declarative_auto_reverse_skips_symlink_with_noop() {
+    async fn declarative_auto_reverse_skips_env_with_noop() {
         use crate::vars::VarEnv;
         use std::sync::Arc;
         use tempfile::TempDir;
 
-        // symlink has no safe auto-reverse. Auto-reverse should emit a
-        // NoOp step with an annotated action_name and continue.
+        // `env` has no safe auto-reverse (we can't know the prior
+        // value to restore). Auto-reverse emits a NoOp step with an
+        // annotated action_name and continues.
         let tmp = TempDir::new().unwrap();
         let tmp_path = tmp.path().to_path_buf();
-        let fwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
-        let src_dir = tmp_path.join("src");
-        std::fs::create_dir_all(&src_dir).unwrap();
-        let src = format!(
-            "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - symlink:\n      src: {}\n      dst: {}\n",
-            fwd(&src_dir), fwd(&tmp_path.join("dst"))
-        );
-        let pack = parse_pack(&src);
+        let src = "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - env:\n      name: GREX_TEST_NO_INVERSE\n      value: x\n";
+        let pack = parse_pack(src);
         let vars = VarEnv::default();
         let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
         let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
 
         let plugin = DeclarativePlugin;
-        // We don't care whether install succeeds on a platform that
-        // blocks symlinks; we just want teardown to surface the
-        // no-inverse NoOp without erroring.
         let _ = plugin.install(&ctx, &pack).await;
         let step = plugin.teardown(&ctx, &pack).await.expect("teardown ok");
-        assert!(step.action_name.as_ref().starts_with("teardown:no-inverse:"));
+        assert!(
+            step.action_name.as_ref().starts_with("teardown:no-inverse:"),
+            "got: {:?}",
+            step.action_name
+        );
         assert!(matches!(step.result, ExecResult::NoOp));
     }
 

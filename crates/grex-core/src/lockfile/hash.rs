@@ -65,6 +65,7 @@ fn append_canonical_action(out: &mut Vec<u8>, a: &Action) {
 fn action_args_bytes(a: &Action) -> Vec<u8> {
     match a {
         Action::Symlink(s) => to_json_bytes(s, "SymlinkArgs"),
+        Action::Unlink(u) => to_json_bytes(u, "UnlinkArgs"),
         Action::Env(e) => to_json_bytes(e, "EnvArgs"),
         Action::Mkdir(m) => to_json_bytes(m, "MkdirArgs"),
         Action::Rmdir(r) => to_json_bytes(r, "RmdirArgs"),
@@ -101,6 +102,7 @@ fn when_spec_json_bytes(w: &WhenSpec) -> Vec<u8> {
 fn action_to_json(a: &Action) -> Value {
     let args = match a {
         Action::Symlink(s) => serde_json::to_value(s).expect("SymlinkArgs to_value"),
+        Action::Unlink(u) => serde_json::to_value(u).expect("UnlinkArgs to_value"),
         Action::Env(e) => serde_json::to_value(e).expect("EnvArgs to_value"),
         Action::Mkdir(m) => serde_json::to_value(m).expect("MkdirArgs to_value"),
         Action::Rmdir(r) => serde_json::to_value(r).expect("RmdirArgs to_value"),
