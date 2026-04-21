@@ -1,9 +1,17 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + **M4 A–E complete** (Stages A–D on `main` via PR #20 commit `2175a09`; Stage E on `main` via PR #21 squash-merge commit `5206f02`). **M4 COMPLETE (2026-04-20)**: ActionPlugin trait + Registry + register_builtins (A) + executor dispatch + `actions_hash` + `ExecResult::Skipped` (B) + real `reg_key` / `psversion` probes (C) + `--ref` / `--only` / `--force` CLI flags + lockfile r/w + commit-SHA plumbing (D) + optional `inventory::submit!` discovery hook behind `plugin-inventory` feature flag (E). Test count: 399 default / **402 with `--features grex-core/plugin-inventory`**, all green, fmt + clippy clean on both feature configurations. Next: **M5** (3 pack-types + gitignore auto).
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + **M5-1 + M5-2 complete** (M5 closed 2026-04-21 on `main` at `20ee5fa`). **M5 COMPLETE (2026-04-21)**: `PackTypePlugin` trait + `PackTypeRegistry` + 3 builtins (meta/declarative/scripted) + executor dispatch swap + `plugin-inventory` auto-registration (M5-1) + gitignore managed-block writer + teardown semantics (declarative/scripted/meta) + MetaPlugin real recursion with cycle detection + multi_thread tokio runtime + `grex teardown` CLI verb + `Action::Unlink` auto-reverse variant (M5-2). Test count: **470 workspace / 382 with `--features grex-core/plugin-inventory`**, all green, fmt + clippy clean. Next: **M6** (scope TBD — see `milestone.md`; non-blocking carry-forward is the declarative install-path convergence to plugin dispatch).
 
-## Last endpoint (2026-04-20, main — M4-E merged via PR #21, M4 closed)
+## Last endpoint (2026-04-21, main — M5 closed via PRs #22 + #23)
+- Main head: `20ee5fa feat(m5-2): teardown semantics + gitignore managed blocks + meta recursion (#23)`.
+- **M5 — Pack-Type Plugin System** — fully shipped to main 2026-04-21 via 2 PRs.
+  - **PR #22 (M5-1)** squash `a2e313d feat(m5-1): pack-type plugin system (trait, 3 builtins, dispatch, inventory) (#22)` — `PackTypePlugin` trait + `PackTypeRegistry` + 3 builtins (meta/declarative/scripted) + executor dispatch swap + `plugin-inventory` auto-registration. Covers R-M5-01..07 + R-M5-12. **410 tests** at close.
+  - **PR #23 (M5-2)** squash `20ee5fa feat(m5-2): teardown semantics + gitignore managed blocks + meta recursion (#23)` — gitignore managed-block writer (R-M5-08) + declarative/scripted/meta teardown semantics (R-M5-09/10/11) + MetaPlugin real recursion with cycle detection + multi_thread tokio runtime + `grex teardown` CLI verb + `Action::Unlink` variant for auto-reverse. **470 workspace tests / 382 with `plugin-inventory` feature** at close.
+  - **Review process**: parallel Codex + CE reviews surfaced 4 MAJORs (0 blockers), all resolved pre-merge (meta teardown ordering, Symlink+When auto-reverse, cycle-detection under multi_thread, gitignore apply dedupe, plus mixed line-ending + visited_meta doc drift).
+  - **Known deferred (M6+)**: declarative install path in `sync::run` still uses M4 action-loop instead of plugin path (`DeclarativePlugin::install` is dead code in production — only teardown routes through plugin). Non-blocking; convergence fix scheduled for next milestone.
+
+## Prior endpoint (2026-04-20, main — M4-E merged via PR #21, M4 closed)
 - PR #21 squash-merged to main 2026-04-20. CI: 260 runs, 0 failed.
 - **M4-E shipped (2026-04-20)** on `main` via PR #21 squash-merge commit `5206f02 feat(m4-e): plugin-inventory auto-registration — M4 close (#21)` (collapses pre-merge branch work into a single commit). Stage E is additive and optional — default feature set is unchanged; no breaking surface changes.
   - **E1 — `PluginSubmission` wrapper type**: `#[non_exhaustive]` struct with a single private field holding the `&'static dyn ActionPlugin` + public `PluginSubmission::new(plugin: &'static dyn ActionPlugin) -> Self` constructor. Wrapping `inventory`'s submission in a `#[non_exhaustive]` newtype means future metadata fields (plugin version, source crate, etc.) can be added without a semver break — plugin crates `submit!(PluginSubmission::new(&MyPlugin))` today and pick up additions tomorrow.
@@ -287,7 +295,7 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-**M5 — 3 pack-types + gitignore auto** (per `milestone.md`). Scope: `PackTypePlugin` trait with `install`/`update`/`teardown`/`sync` methods; built-ins `meta` (children-only), `declarative` (runs actions list), `scripted` (runs `.grex/hooks/{setup,sync,teardown}.{sh,ps1}`); gitignore managed-block writer (markers `# >>> grex managed >>>` / `# <<< grex managed <<<`); teardown semantics (explicit `teardown:` block or reverse-order action rollback). Depends on M4 (complete).
+**M5 closed 2026-04-21 (main `20ee5fa`). M6 scope TBD** — see `milestone.md`. Non-blocking carry-forward: converge declarative install path in `sync::run` onto the plugin path (currently still uses M4 action-loop; `DeclarativePlugin::install` is dead code in production — teardown already routes through the plugin).
 
 M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓ complete.
 - A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait; re-exports; plugin-layer unit tests. Dispatch unchanged. [PR #20, `2175a09`]
