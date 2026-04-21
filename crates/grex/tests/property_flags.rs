@@ -29,35 +29,8 @@ proptest! {
         .. ProptestConfig::default()
     })]
 
-    /// Any `--parallel N` with N in 1..=1024 parses successfully on `init`.
-    #[test]
-    fn parallel_accepts_reasonable_values(n in 1u32..=1024) {
-        grex()
-            .args(["init", "--parallel"])
-            .arg(n.to_string())
-            .assert()
-            .success();
-    }
-
-    /// Any `--parallel N` outside 1..=1024 must be rejected. Covers both
-    /// the low side (0) and the high side (1025..=u32::MAX). Asserts that
-    /// stderr is non-empty.
-    #[test]
-    fn parallel_rejects_out_of_range(
-        n in prop_oneof![
-            Just(0u32),
-            1025u32..=u32::MAX,
-        ]
-    ) {
-        let output = grex()
-            .args(["init", "--parallel"])
-            .arg(n.to_string())
-            .assert()
-            .failure();
-        let stderr = String::from_utf8(output.get_output().stderr.clone())
-            .expect("stderr is UTF-8");
-        prop_assert!(!stderr.is_empty(), "stderr should be non-empty on validation failure");
-    }
+    // feat-m6 B2: `--parallel` is sync-scoped — per-verb coverage moved
+    // to `crates/grex/src/cli/args.rs` unit tests.
 
     /// Any `--filter` value using the alphanumeric + `=,` alphabet parses.
     #[test]
@@ -101,15 +74,14 @@ proptest! {
     }
 }
 
-/// A non-property sanity test: every verb accepts its required args plus
-/// `--parallel 1` — catches bitrot in `required_args` when verbs shift.
+/// A non-property sanity test: every verb accepts its required args —
+/// catches bitrot in `required_args` when verbs shift.
 #[test]
-fn each_verb_accepts_parallel_one() {
+fn each_verb_accepts_required_args() {
     for verb in VERBS {
         let mut cmd = grex();
         cmd.arg(verb);
         cmd.args(required_args(verb));
-        cmd.args(["--parallel", "1"]);
         cmd.assert().success();
     }
 }

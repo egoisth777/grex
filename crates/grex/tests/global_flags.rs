@@ -27,41 +27,9 @@ fn dry_run_flag_accepted_on_every_verb() {
     }
 }
 
-#[test]
-fn parallel_flag_accepted_on_every_verb() {
-    for verb in VERBS {
-        run_with_flags(verb, &["--parallel", "4"]);
-    }
-}
-
-/// `--parallel 0` is rejected by the `1..=1024` range validator.
-#[test]
-fn parallel_zero_rejected() {
-    grex()
-        .args(["init", "--parallel", "0"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid value").or(predicate::str::contains("range")));
-}
-
-#[test]
-fn parallel_one_accepted() {
-    run_with_flags("init", &["--parallel", "1"]);
-}
-
-#[test]
-fn parallel_max_accepted() {
-    run_with_flags("init", &["--parallel", "1024"]);
-}
-
-#[test]
-fn parallel_over_max_rejected() {
-    grex()
-        .args(["init", "--parallel", "1025"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid value").or(predicate::str::contains("range")));
-}
+// feat-m6 B2: `--parallel` was promoted from a universal flag to a
+// sync-scoped flag. Per-verb parallel coverage lives in
+// `crates/grex/src/cli/args.rs` unit tests.
 
 #[test]
 fn filter_flag_accepted_on_every_verb() {
@@ -83,24 +51,24 @@ fn filter_edge_cases_accepted() {
 #[test]
 fn combined_flags_accepted_on_every_verb() {
     for verb in VERBS {
-        run_with_flags(verb, &["--json", "--dry-run", "--parallel", "8"]);
+        run_with_flags(verb, &["--json", "--dry-run"]);
     }
 }
 
-/// `--json` combo: json + dry-run + parallel on every verb.
+/// `--json` combo: json + dry-run on every verb.
 #[test]
 fn all_json_flags_together_accepted_on_every_verb() {
     for verb in VERBS {
-        run_with_flags(verb, &["--json", "--dry-run", "--parallel", "2", "--filter", "name=foo"]);
+        run_with_flags(verb, &["--json", "--dry-run", "--filter", "name=foo"]);
     }
 }
 
-/// `--plain` combo: plain + dry-run + parallel on every verb (split from the
+/// `--plain` combo: plain + dry-run on every verb (split from the
 /// json combo because `--json` and `--plain` are mutually exclusive).
 #[test]
 fn all_plain_flags_together_accepted_on_every_verb() {
     for verb in VERBS {
-        run_with_flags(verb, &["--plain", "--dry-run", "--parallel", "2", "--filter", "name=foo"]);
+        run_with_flags(verb, &["--plain", "--dry-run", "--filter", "name=foo"]);
     }
 }
 

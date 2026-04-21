@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::plugin::{PackTypeRegistry, Registry};
+use crate::scheduler::Scheduler;
 use crate::vars::VarEnv;
 
 /// Shared cycle-detection set threaded through
@@ -160,6 +161,18 @@ pub struct ExecCtx<'a> {
     /// direct plugin callers (e.g. the `meta_recursion` integration
     /// tests) that recurse through `MetaPlugin::recurse_children`.
     pub visited_meta: Option<&'a MetaVisitedSet>,
+    /// Bounded parallel [`Scheduler`] handle — feat-m6-1.
+    ///
+    /// Populated by [`crate::sync::run`] at the top of every sync run so
+    /// plugins that fan out can bound in-flight children via the same
+    /// permit pool used by the outer walker. `None` outside a sync-driven
+    /// call (e.g. direct plugin invocation in tests) — plugins that need
+    /// to respect the cap must treat absence as "no bound configured"
+    /// and fall back to unbounded/serial per their own policy.
+    ///
+    /// feat-m6-1 lands the slot and CLI flag; plugin acquisition sites
+    /// land in feat-m6-2 alongside per-pack `.grex-lock` coordination.
+    pub scheduler: Option<&'a Arc<Scheduler>>,
 }
 
 impl<'a> ExecCtx<'a> {
@@ -176,6 +189,7 @@ impl<'a> ExecCtx<'a> {
             registry: None,
             pack_type_registry: None,
             visited_meta: None,
+            scheduler: None,
         }
     }
 
@@ -217,6 +231,20 @@ impl<'a> ExecCtx<'a> {
     #[must_use]
     pub fn with_visited_meta(mut self, visited: &'a MetaVisitedSet) -> Self {
         self.visited_meta = Some(visited);
+        self
+    }
+
+    /// Attach a bounded parallel [`Scheduler`] handle. The sync driver
+    /// builds one [`Scheduler`] per `run()` invocation (permits ==
+    /// `--parallel N`) and threads the same `Arc` through every
+    /// `ExecCtx` so sibling plugin dispatch shares the permit pool.
+    ///
+    /// feat-m6-1 only plumbs the slot; acquisition sites land in
+    /// feat-m6-2. Callers may still attach a scheduler today — it is
+    /// observably inert until the per-pack lock wiring lands.
+    #[must_use]
+    pub fn with_scheduler(mut self, scheduler: &'a Arc<Scheduler>) -> Self {
+        self.scheduler = Some(scheduler);
         self
     }
 }

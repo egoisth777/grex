@@ -140,6 +140,20 @@ jobs:
         with:
           release-type: patch
 
+  # Lean4 proof verification — mechanises invariant I1 (no double lock) per
+  # `.omne/cfg/concurrency.md` §Lean4 invariant. Linux-only is acceptable
+  # per `.omne/cfg/test-plan.md` §Lean4 proof verification — `.olean` is
+  # platform-agnostic, so one successful build proves the invariant
+  # everywhere. Fails CI if `lake build` emits any error or any `sorry`.
+  lean-proof:
+    name: Lean4 proof (lake build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lean
+
   # Housekeeping: cargo-audit (redundant with cargo-deny advisories, kept for standalone signal).
   cargo-audit:
     name: cargo-audit

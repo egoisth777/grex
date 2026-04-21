@@ -13,3 +13,8 @@ Cargo.lock.bak
 # OS
 .DS_Store
 Thumbs.db
+
+# Lean4 build artifacts (lean/ — see .omne/cfg/concurrency.md §Lean4 invariant)
+lean/build/
+lean/.lake/
+lean/lake-packages/

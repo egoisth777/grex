@@ -24,10 +24,6 @@ pub struct GlobalFlags {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
-    /// Max parallel worker count (1..=1024).
-    #[arg(long, global = true, value_parser = clap::value_parser!(u32).range(1..=1024))]
-    pub parallel: Option<u32>,
-
     /// Filter packs by expression.
     #[arg(long, global = true)]
     pub filter: Option<String>,
@@ -130,7 +126,28 @@ pub struct SyncArgs {
     /// short-circuit; dry-run semantics are unchanged.
     #[arg(long)]
     pub force: bool,
-    // TODO(m6): --parallel N  (dedicated; separate from global --parallel)
+
+    /// Max parallel pack ops during this sync run (feat-m6-1).
+    ///
+    /// Semantics:
+    /// * Absent → default `num_cpus::get()` resolved in `verbs::sync`.
+    /// * `0` → unbounded (`Semaphore::MAX_PERMITS`).
+    /// * `1` → serial fast-path (preserves pre-M6 wall-order).
+    /// * `2..=1024` → bounded parallel.
+    ///
+    /// Env fallback: `GREX_PARALLEL` is honoured only when the flag is
+    /// absent. Clap reads the env var automatically via `env`.
+    ///
+    /// Distinct from the global `--parallel` on [`GlobalFlags`]; that
+    /// knob is documented as the harness-level worker cap and rejects
+    /// `0`. Sync parallelism uses `0` as the "unbounded" sentinel per
+    /// `.omne/cfg/concurrency.md`.
+    #[arg(
+        long = "parallel",
+        env = "GREX_PARALLEL",
+        value_parser = clap::value_parser!(u32).range(0..=1024),
+    )]
+    pub parallel: Option<u32>,
 }
 
 /// Clap `value_parser` that rejects empty or whitespace-only strings.
@@ -298,12 +315,11 @@ mod tests {
     fn universal_flags_populate_on_any_verb() {
         // `--json` and `--plain` are mutually exclusive, so split into two
         // parses to exercise the remaining flags on both modes.
-        let cli = parse(&["ls", "--json", "--dry-run", "--parallel", "8", "--filter", "kind=git"])
-            .expect("ls w/ json+dry-run+parallel+filter parses");
+        let cli = parse(&["ls", "--json", "--dry-run", "--filter", "kind=git"])
+            .expect("ls w/ json+dry-run+filter parses");
         assert!(cli.global.json);
         assert!(!cli.global.plain);
         assert!(cli.global.dry_run);
-        assert_eq!(cli.global.parallel, Some(8));
         assert_eq!(cli.global.filter.as_deref(), Some("kind=git"));
 
         let cli = parse(&["ls", "--plain", "--dry-run"]).expect("ls w/ plain+dry-run parses");
@@ -319,26 +335,36 @@ mod tests {
     }
 
     #[test]
-    fn parallel_zero_rejected() {
-        let err = parse(&["init", "--parallel", "0"]).expect_err("--parallel 0 must fail");
-        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    fn parallel_not_global_rejected_on_non_sync_verb() {
+        // feat-m6 B2 — `--parallel` is sync-scoped only; it must NOT
+        // be accepted as a global flag on verbs like `init`/`ls`.
+        let err =
+            parse(&["init", "--parallel", "1"]).expect_err("--parallel on non-sync verb must fail");
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]
-    fn parallel_one_accepted() {
-        let cli = parse(&["init", "--parallel", "1"]).expect("--parallel 1 parses");
-        assert_eq!(cli.global.parallel, Some(1));
+    fn sync_parallel_one_accepted() {
+        let cli = parse(&["sync", "--parallel", "1"]).expect("sync --parallel 1 parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.parallel, Some(1)),
+            _ => panic!("expected Sync variant"),
+        }
     }
 
     #[test]
-    fn parallel_max_accepted() {
-        let cli = parse(&["init", "--parallel", "1024"]).expect("--parallel 1024 parses");
-        assert_eq!(cli.global.parallel, Some(1024));
+    fn sync_parallel_max_accepted() {
+        let cli = parse(&["sync", "--parallel", "1024"]).expect("sync --parallel 1024 parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.parallel, Some(1024)),
+            _ => panic!("expected Sync variant"),
+        }
     }
 
     #[test]
-    fn parallel_over_max_rejected() {
-        let err = parse(&["init", "--parallel", "1025"]).expect_err("--parallel 1025 must fail");
+    fn sync_parallel_over_max_rejected() {
+        let err =
+            parse(&["sync", "--parallel", "1025"]).expect_err("sync --parallel 1025 must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 

@@ -101,6 +101,8 @@ impl ActionExecutor for PlanExecutor {
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,
             visited_meta: ctx.visited_meta,
+            // feat-m6-1: propagate the scheduler handle unchanged.
+            scheduler: ctx.scheduler,
         };
         dispatch_plan(action, &nested_ctx)
     }

@@ -397,3 +397,29 @@ fn second_run_emits_packskipped_stepkind() {
         "no Require-proxy pack-skip step should remain"
     );
 }
+
+// ---------------------------------------------------------------------------
+// feat-m6-1 — Scheduler plumbed onto ExecCtx
+// ---------------------------------------------------------------------------
+
+/// `ExecCtx::with_scheduler` attaches an `Arc<Scheduler>` and plugin dispatch
+/// (here exercised directly via the ctx field) observes the **same** Arc —
+/// `Arc::ptr_eq` holds, proving no clone-in-transit happened that would
+/// break the shared-permit-pool invariant feat-m6-2 relies on.
+#[test]
+fn exec_ctx_carries_scheduler() {
+    use std::path::PathBuf;
+    use std::sync::Arc as StdArc;
+
+    use grex_core::scheduler::Scheduler;
+    use grex_core::{ExecCtx, VarEnv};
+
+    let vars = VarEnv::new();
+    let root = PathBuf::from(".");
+    let sched = StdArc::new(Scheduler::new(4));
+    let ctx = ExecCtx::new(&vars, &root, &root).with_scheduler(&sched);
+
+    let seen = ctx.scheduler.expect("scheduler must be attached");
+    assert!(StdArc::ptr_eq(seen, &sched), "ExecCtx carries the caller's Arc unchanged");
+    assert_eq!(seen.max_parallelism(), 4);
+}
