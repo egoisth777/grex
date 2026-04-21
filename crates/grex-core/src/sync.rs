@@ -776,7 +776,7 @@ fn run_actions(
 ///
 /// * [`crate::plugin::pack_type::MetaPlugin`] does not yet recurse through
 ///   [`crate::execute::ExecCtx::pack_type_registry`] (M5-2 will add that).
-/// * [`crate::plugin::pack_type::DeclarativePlugin::run_actions`] awaits
+/// * [`crate::plugin::pack_type::DeclarativePlugin`] awaits
 ///   only the synchronous `ActionPlugin::execute`, which never re-enters
 ///   the runtime.
 /// * [`crate::plugin::pack_type::ScriptedPlugin`] awaits `tokio::process`,

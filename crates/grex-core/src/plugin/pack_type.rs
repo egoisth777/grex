@@ -170,7 +170,7 @@ impl PackTypeRegistry {
     ///
     /// Stage B wires the three built-ins here. Consumers that want a
     /// hand-picked subset (typical for tests) should use
-    /// [`PackTypeRegistry::new`] plus explicit [`register`] calls instead.
+    /// [`PackTypeRegistry::new`] plus explicit [`Self::register`] calls instead.
     #[must_use]
     pub fn bootstrap() -> Self {
         let mut reg = Self::new();
@@ -317,7 +317,7 @@ fn noop_step(action_name: &'static str) -> ExecStep {
 /// [`ExecStep`] per child under a [`StepKind::When`] envelope so downstream
 /// audit tooling sees the composition shape, and returns the envelope as
 /// the aggregated step. An empty `children:` list yields a single
-/// [`noop_step`] so callers can distinguish "ran over zero children" from
+/// `noop_step` so callers can distinguish "ran over zero children" from
 /// an execution error.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MetaPlugin;
@@ -327,7 +327,7 @@ impl MetaPlugin {
 
     /// Synthesise a [`StepKind::When`] envelope enumerating `children` in
     /// the provided iteration order. Each child becomes one nested
-    /// [`noop_step`] tagged with the child's [`ChildRef::effective_path`]
+    /// `noop_step` tagged with the child's [`ChildRef::effective_path`]
     /// so audit logs can point at the on-disk directory even before Stage
     /// C threads real dispatch.
     fn compose<'c, I>(children: I) -> ExecStep
@@ -420,7 +420,7 @@ impl DeclarativePlugin {
     const NAME: &'static str = "declarative";
 
     /// Dispatch every action in `pack.actions` through `ctx.registry`.
-    /// Returns the last produced [`ExecStep`], or a [`noop_step`] if the
+    /// Returns the last produced [`ExecStep`], or a `noop_step` if the
     /// pack contained no actions.
     fn run_actions(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
         let Some(registry) = ctx.registry else {
