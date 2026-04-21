@@ -147,11 +147,15 @@ fn install_then_teardown_meta_pack_with_two_declarative_children() {
 
 // ------------------------------------------------------------ 3. scripted
 
-/// Scripted pack with real `setup.sh` + `teardown.sh` hooks. Install
-/// runs `setup.sh` which writes a sentinel file; teardown runs
-/// `teardown.sh` which removes it. Unix-only: Windows CI may lack
-/// `pwsh`; the missing-hook Windows branch is already covered in
-/// `pack_type_dispatch.rs`.
+/// Scripted pack with real `sync.sh` + `teardown.sh` hooks. The public
+/// [`run`] entrypoint dispatches scripted packs through
+/// [`crate::plugin::pack_type::ScriptedPlugin::sync`], which invokes
+/// `sync.sh` (the `setup.sh` hook is only reached via
+/// [`crate::plugin::pack_type::ScriptedPlugin::install`], which no M5-2
+/// public verb calls yet — the CLI's `install` verb wires in M5-3).
+/// Teardown runs `teardown.sh` which removes the sentinel. Unix-only:
+/// Windows CI may lack `pwsh`; the missing-hook Windows branch is
+/// already covered in `pack_type_dispatch.rs`.
 #[cfg(unix)]
 #[test]
 fn scripted_pack_install_then_teardown_runs_both_hooks() {
@@ -165,9 +169,9 @@ fn scripted_pack_install_then_teardown_runs_both_hooks() {
     fs::create_dir_all(&hooks).unwrap();
     let sentinel = workspace.join("scripted.sentinel");
 
-    let setup = hooks.join("setup.sh");
-    fs::write(&setup, format!("#!/bin/sh\ntouch '{}'\n", sentinel.display())).unwrap();
-    fs::set_permissions(&setup, fs::Permissions::from_mode(0o755)).unwrap();
+    let sync_hook = hooks.join("sync.sh");
+    fs::write(&sync_hook, format!("#!/bin/sh\ntouch '{}'\n", sentinel.display())).unwrap();
+    fs::set_permissions(&sync_hook, fs::Permissions::from_mode(0o755)).unwrap();
     let td = hooks.join("teardown.sh");
     fs::write(&td, format!("#!/bin/sh\nrm -f '{}'\n", sentinel.display())).unwrap();
     fs::set_permissions(&td, fs::Permissions::from_mode(0o755)).unwrap();
@@ -175,7 +179,7 @@ fn scripted_pack_install_then_teardown_runs_both_hooks() {
     write_pack(&root, "schema_version: \"1\"\nname: s1\ntype: scripted\n");
 
     run(&root, &options(workspace.clone())).expect("install ok");
-    assert!(sentinel.exists(), "setup.sh must have materialised sentinel");
+    assert!(sentinel.exists(), "sync.sh must have materialised sentinel");
 
     teardown(&root, &options(workspace)).expect("teardown ok");
     assert!(!sentinel.exists(), "teardown.sh must have removed sentinel");
