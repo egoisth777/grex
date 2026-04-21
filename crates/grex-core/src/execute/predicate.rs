@@ -59,40 +59,38 @@ use super::error::ExecError;
 /// treated as `false` so other legs can rescue the expression. See module
 /// docs for the rationale and the top-level strictness boundary.
 pub(super) fn evaluate_when_gate(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<bool, ExecError> {
+    // The `os:` shorthand is strict — it is never `PredicateNotSupported`
+    // (every platform answers the OS predicate).
     if let Some(os) = spec.os {
-        // The `os:` shorthand is strict — it is never `PredicateNotSupported`
-        // (every platform answers the OS predicate).
         if !evaluate(&Predicate::Os(os), ctx)? {
             return Ok(false);
         }
     }
-    if let Some(list) = &spec.all_of {
-        for p in list {
-            if !evaluate_tolerant(p, ctx)? {
-                return Ok(false);
-            }
-        }
+    if !when_all_of(spec.all_of.as_deref(), ctx)? {
+        return Ok(false);
     }
-    if let Some(list) = &spec.any_of {
-        let mut any = false;
-        for p in list {
-            if evaluate_tolerant(p, ctx)? {
-                any = true;
-                break;
-            }
-        }
-        if !any {
-            return Ok(false);
-        }
+    if !when_any_of(spec.any_of.as_deref(), ctx)? {
+        return Ok(false);
     }
-    if let Some(list) = &spec.none_of {
-        for p in list {
-            if evaluate_tolerant(p, ctx)? {
-                return Ok(false);
-            }
-        }
+    if !when_none_of(spec.none_of.as_deref(), ctx)? {
+        return Ok(false);
     }
     Ok(true)
+}
+
+fn when_all_of(list: Option<&[Predicate]>, ctx: &ExecCtx<'_>) -> Result<bool, ExecError> {
+    let Some(list) = list else { return Ok(true) };
+    eval_all_of(list, ctx)
+}
+
+fn when_any_of(list: Option<&[Predicate]>, ctx: &ExecCtx<'_>) -> Result<bool, ExecError> {
+    let Some(list) = list else { return Ok(true) };
+    eval_any_of(list, ctx)
+}
+
+fn when_none_of(list: Option<&[Predicate]>, ctx: &ExecCtx<'_>) -> Result<bool, ExecError> {
+    let Some(list) = list else { return Ok(true) };
+    eval_none_of(list, ctx)
 }
 
 /// Evaluate a predicate tree against `ctx`.
@@ -211,6 +209,7 @@ fn eval_cmd_available(raw: &str, env: &VarEnv) -> bool {
 /// mapped to the concrete `HKEY_*` constant inside [`eval_reg_key`] on
 /// Windows only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 enum HiveTag {
     Hklm,
     Hkcu,
@@ -223,6 +222,7 @@ enum HiveTag {
 /// packs and both `\` and `/` separators (normalized to `\` before the
 /// split so downstream `winreg` calls see the canonical form). Returns
 /// `None` if the prefix is unrecognised or the subpath is empty.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn split_hive(path: &str) -> Option<(HiveTag, String)> {
     let normalized = path.replace('/', "\\");
     let (prefix, rest) = normalized.split_once('\\')?;
@@ -247,7 +247,7 @@ fn eval_reg_key(path: &str, value: Option<&str>) -> Result<bool, ExecError> {
     let Some((hive, subpath)) = split_hive(path) else {
         // Unknown/missing hive — treat as absent (conservative, no key
         // exists under an unsupported hive prefix). Same shape as other
-        // leaf predicates when input is unparseable.
+        // leaf predicates when input is unparsable.
         return Ok(false);
     };
     let hkey = match hive {
@@ -292,7 +292,7 @@ fn eval_reg_key(_path: &str, _value: Option<&str>) -> Result<bool, ExecError> {
 #[cfg(windows)]
 fn eval_ps_version(spec: &str) -> Result<bool, ExecError> {
     let Some(target) = parse_ps_version_spec(spec) else {
-        // Unparseable spec — same conservative-false shape we inherited
+        // Unparsable spec — same conservative-false shape we inherited
         // from the M3 stub so a typo in the pack does not halt sync.
         return Ok(false);
     };
@@ -315,6 +315,7 @@ fn eval_ps_version(_spec: &str) -> Result<bool, ExecError> {
 /// Returns `None` on any unrecognised shape; callers treat that as
 /// unsatisfied rather than failing loudly (the spec vocabulary is informal
 /// and a hard parse error would be a regression vs. the M3 stub).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn parse_ps_version_spec(spec: &str) -> Option<(u32, u32)> {
     let trimmed = spec.trim();
     let rest = trimmed.strip_prefix(">=").unwrap_or(trimmed).trim();
@@ -462,6 +463,7 @@ fn truncate_stderr(s: &str) -> String {
 /// Parse `"7.4\r\n"` / `"\u{feff}7.4"` / banner-prefixed output into a
 /// `(major, minor)` tuple. Scans line-by-line, strips a leading UTF-8
 /// BOM if present, returns the first line that parses as `N` or `N.M`.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn parse_ps_stdout(stdout: &str) -> Option<(u32, u32)> {
     let stripped = stdout.strip_prefix('\u{feff}').unwrap_or(stdout);
     stripped.lines().filter_map(parse_ps_version_spec).next()
