@@ -24,6 +24,10 @@ sha2 = "0.10"
 globset = { workspace = true }
 inventory = { version = "0.3", optional = true }
 async-trait = "0.1"
+# feat-m6-1: size the pack-type runtime and default `--parallel` from
+# the host's logical CPU count when the library is driven without a
+# CLI override.
+num_cpus = "1.16"
 
 [features]
 # Opt-in compile-time auto-registration of Tier-1 built-in action plugins

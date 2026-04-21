@@ -2,7 +2,7 @@
 //!
 //! M2 lands: manifest event log + lockfile + atomic file primitives.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod env;
 pub mod execute;
@@ -34,8 +34,13 @@ pub use pack::{
 pub use tree::{EdgeKind, FsPackLoader, PackGraph, PackLoader, PackNode, TreeError, Walker};
 pub use vars::{expand, VarEnv, VarExpandError};
 
-#[doc(hidden)]
-pub mod scheduler {}
+pub mod scheduler;
+
+pub use scheduler::Scheduler;
+
+pub mod pack_lock;
+
+pub use pack_lock::{PackLock, PackLockError, Tier, PACK_LOCK_FILE_NAME};
 
 pub mod plugin;
 
