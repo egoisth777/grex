@@ -119,6 +119,20 @@ pub enum PackType {
     Scripted,
 }
 
+impl PackType {
+    /// Stable snake_case tag matching the `type:` discriminator in
+    /// `pack.yaml`. Used by the pack-type plugin registry to look up the
+    /// driver for a given pack.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Meta => "meta",
+            Self::Declarative => "declarative",
+            Self::Scripted => "scripted",
+        }
+    }
+}
+
 /// Reference to a child pack from a `children:` entry.
 ///
 /// `path` is intentionally left `None` at parse time — callers that need

@@ -46,7 +46,7 @@ use crate::lockfile::{
 };
 use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 use crate::pack::{Action, PackValidationError};
-use crate::plugin::Registry;
+use crate::plugin::{PackTypeRegistry, Registry};
 use crate::tree::{FsPackLoader, PackGraph, PackNode, TreeError, Walker};
 use crate::vars::VarEnv;
 
@@ -413,6 +413,7 @@ pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError
         &prep.prior_lock,
         &mut next_lock,
         &prep.registry,
+        &prep.pack_type_registry,
         only_set.as_ref(),
         opts.force,
     );
@@ -433,6 +434,7 @@ struct RunContext {
     lockfile_path: PathBuf,
     prior_lock: std::collections::HashMap<String, LockEntry>,
     registry: Arc<Registry>,
+    pack_type_registry: Arc<PackTypeRegistry>,
     pre_run_recovery: Option<RecoveryReport>,
 }
 
@@ -449,6 +451,7 @@ fn prepare_run_context(pack_root: &Path, graph: &PackGraph) -> Result<RunContext
     let lockfile_path = lockfile_path(pack_root);
     let prior_lock = load_prior_lock(&lockfile_path)?;
     let registry = Arc::new(Registry::bootstrap());
+    let pack_type_registry = Arc::new(bootstrap_pack_type_registry());
     Ok(RunContext {
         order,
         vars,
@@ -457,8 +460,32 @@ fn prepare_run_context(pack_root: &Path, graph: &PackGraph) -> Result<RunContext
         lockfile_path,
         prior_lock,
         registry,
+        pack_type_registry,
         pre_run_recovery,
     })
+}
+
+/// Build the [`PackTypeRegistry`] the sync driver threads into every
+/// [`ExecCtx`] it constructs.
+///
+/// Default path (no `plugin-inventory` feature) hard-codes the three
+/// built-ins via [`PackTypeRegistry::bootstrap`]. With the feature on,
+/// [`PackTypeRegistry::bootstrap_from_inventory`] is preferred so any
+/// externally-submitted plugin types (mirroring the M4-E pattern for
+/// action plugins) shadow the built-ins last-writer-wins. Kept as a free
+/// helper so the `#[cfg]` split lives in one place instead of being
+/// smeared across every sync call-site.
+fn bootstrap_pack_type_registry() -> PackTypeRegistry {
+    #[cfg(feature = "plugin-inventory")]
+    {
+        let mut reg = PackTypeRegistry::bootstrap();
+        reg.register_from_inventory();
+        reg
+    }
+    #[cfg(not(feature = "plugin-inventory"))]
+    {
+        PackTypeRegistry::bootstrap()
+    }
 }
 
 /// Emit a single `tracing::info!` line when `--force` is active so
@@ -667,40 +694,31 @@ fn run_actions(
     prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     registry: &Arc<Registry>,
+    pack_type_registry: &Arc<PackTypeRegistry>,
     only: Option<&GlobSet>,
     force: bool,
 ) {
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
+    let rt = build_pack_type_runtime();
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
-        // Clone the data we need so report is borrow-free inside the loop.
         let pack_name = node.name.clone();
         let pack_path = node.path.clone();
         let actions = node.manifest.actions.clone();
+        let manifest = node.manifest.clone();
         let commit_sha = node.commit_sha.clone().unwrap_or_default();
-        // M4-D `--only` filter: packs whose workspace-relative path does
-        // not match the globset are skipped entirely — no action
-        // execution. Filtered packs carry their prior lock entry
-        // forward (F3) so a subsequent unfiltered sync's skip-on-hash
-        // path still fires and the pack does not re-execute from scratch.
-        if skip_for_only_filter(only, &pack_name, &pack_path, workspace) {
-            if let Some(prev) = prior_lock.get(&pack_name) {
-                next_lock.insert(pack_name.clone(), prev.clone());
-            }
-            continue;
-        }
-        // Skip-on-hash (M4-B S1 + M4-D --force bypass): if the prior
-        // lockfile entry's `actions_hash` matches the freshly-computed
-        // hash over the current action list + commit sha, emit a single
-        // `ExecResult::Skipped` step for the pack and move on. `--force`
-        // bypasses this short-circuit entirely.
-        if try_skip_pack(
+        // `--only` filter + skip-on-hash short-circuits colocated in
+        // `try_skip_or_filter` so this outer loop stays within the
+        // 50-LOC per-function budget.
+        if try_skip_or_filter(
             report,
+            only,
             &pack_name,
             &pack_path,
             &actions,
             &commit_sha,
+            workspace,
             prior_lock,
             next_lock,
             dry_run,
@@ -708,9 +726,21 @@ fn run_actions(
         ) {
             continue;
         }
-        let pack_halted = run_pack_actions(
-            report, vars, workspace, event_log, lock_path, dry_run, &plan, &fs, &pack_name,
-            &pack_path, &actions,
+        let pack_halted = run_pack_lifecycle(
+            report,
+            vars,
+            workspace,
+            event_log,
+            lock_path,
+            dry_run,
+            &plan,
+            &fs,
+            registry,
+            pack_type_registry,
+            &rt,
+            &pack_name,
+            &pack_path,
+            &manifest,
         );
         if pack_halted {
             // Route (b) halt-state gating: drop any prior entry for the
@@ -729,6 +759,68 @@ fn run_actions(
         let actions_hash = compute_actions_hash(&actions, &commit_sha);
         upsert_lock_entry(next_lock, &pack_name, &commit_sha, &actions_hash);
     }
+}
+
+/// Build the single-threaded tokio runtime used to drive async pack-type
+/// plugin dispatch. Pack-type plugins expose `async fn` methods via
+/// `async_trait`, but the sync driver is synchronous end-to-end — we
+/// block on each plugin future inside the outer action loop. Extracted
+/// into a standalone helper so the runtime construction does not
+/// inflate `run_actions` beyond the 50-LOC per-function budget.
+///
+/// # Invariant (CE-B1)
+///
+/// Plugins invoked through this runtime must NOT call `block_on`
+/// themselves, directly or transitively — a current-thread runtime
+/// cannot re-enter. Today this is safe because:
+///
+/// * [`crate::plugin::pack_type::MetaPlugin`] does not yet recurse through
+///   [`crate::execute::ExecCtx::pack_type_registry`] (M5-2 will add that).
+/// * [`crate::plugin::pack_type::DeclarativePlugin`] awaits
+///   only the synchronous `ActionPlugin::execute`, which never re-enters
+///   the runtime.
+/// * [`crate::plugin::pack_type::ScriptedPlugin`] awaits `tokio::process`,
+///   which uses the runtime's I/O driver without blocking on it.
+///
+/// Before M5-2 lands `MetaPlugin` recursion via the registry, switch this
+/// to a `multi_thread` runtime (or construct one runtime per outer call)
+/// to prevent deadlock.
+fn build_pack_type_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime for pack-type dispatch")
+}
+
+/// Combined short-circuit helper: `--only` filter + skip-on-hash. Returns
+/// `true` when the outer loop should `continue` for this pack.
+///
+/// Extracted from `run_actions` so that function stays under the
+/// workspace's 50-LOC per-function lint. Semantics are unchanged; this
+/// is a pure structural refactor.
+#[allow(clippy::too_many_arguments)]
+fn try_skip_or_filter(
+    report: &mut SyncReport,
+    only: Option<&GlobSet>,
+    pack_name: &str,
+    pack_path: &Path,
+    actions: &[Action],
+    commit_sha: &str,
+    workspace: &Path,
+    prior_lock: &std::collections::HashMap<String, LockEntry>,
+    next_lock: &mut std::collections::HashMap<String, LockEntry>,
+    dry_run: bool,
+    force: bool,
+) -> bool {
+    if skip_for_only_filter(only, pack_name, pack_path, workspace) {
+        if let Some(prev) = prior_lock.get(pack_name) {
+            next_lock.insert(pack_name.to_string(), prev.clone());
+        }
+        return true;
+    }
+    try_skip_pack(
+        report, pack_name, pack_path, actions, commit_sha, prior_lock, next_lock, dry_run, force,
+    )
 }
 
 /// Return `true` when `--only` is active and the pack's
@@ -760,9 +852,88 @@ fn skip_for_only_filter(
     !matches
 }
 
-/// Per-pack execution loop. Returns `true` when the sync must halt.
+/// Per-pack lifecycle dispatch. Returns `true` when the sync must halt.
+///
+/// M5-1 Stage C replaces the blind `for action in manifest.actions` loop
+/// with a pack-type-aware dispatch:
+///
+/// * [`PackType::Declarative`] retains the per-action execution shape that
+///   M4 shipped — each action lands its own `ActionStarted` /
+///   `ActionCompleted` / `ActionHalted` event bracket. The registry is
+///   still consulted via [`PackTypeRegistry::get`] as a name-oracle so
+///   mistyped packs fail closed.
+/// * [`PackType::Meta`] / [`PackType::Scripted`] dispatch once through the
+///   pack-type plugin's `sync` method (the sync CLI verb is the only
+///   caller in M5-1; `install` / `update` / `teardown` verbs wire in
+///   M5-2), returning a single aggregate [`ExecStep`]. A single event
+///   bracket frames the async call.
+///
+/// Declarative is kept on the legacy per-action path because its event log
+/// semantics (one event per action, per-step rollback context) are exactly
+/// what plugin authors expect to observe. Unifying declarative under the
+/// plugin dispatch is M5-2 scope — it requires reshaping the trait surface
+/// to emit a step stream rather than a single aggregate.
 #[allow(clippy::too_many_arguments)]
-fn run_pack_actions(
+fn run_pack_lifecycle(
+    report: &mut SyncReport,
+    vars: &VarEnv,
+    workspace: &Path,
+    event_log: &Path,
+    lock_path: &Path,
+    dry_run: bool,
+    plan: &PlanExecutor,
+    fs: &FsExecutor,
+    registry: &Arc<Registry>,
+    pack_type_registry: &Arc<PackTypeRegistry>,
+    rt: &tokio::runtime::Runtime,
+    pack_name: &str,
+    pack_path: &Path,
+    manifest: &crate::pack::PackManifest,
+) -> bool {
+    let type_tag = manifest.r#type.as_str();
+    // Name-oracle check: every pack type must be registered. Unknown
+    // pack types halt the pack the same way M4 halted unknown actions.
+    if pack_type_registry.get(type_tag).is_none() {
+        let err = ExecError::UnknownAction(format!("pack type `{type_tag}`"));
+        record_action_err(report, event_log, lock_path, pack_name, 0, "pack-type", err);
+        return true;
+    }
+    match manifest.r#type {
+        crate::pack::PackType::Declarative => run_declarative_actions(
+            report,
+            vars,
+            workspace,
+            event_log,
+            lock_path,
+            dry_run,
+            plan,
+            fs,
+            pack_name,
+            pack_path,
+            &manifest.actions,
+        ),
+        crate::pack::PackType::Meta | crate::pack::PackType::Scripted => dispatch_pack_type_plugin(
+            report,
+            vars,
+            workspace,
+            event_log,
+            lock_path,
+            registry,
+            pack_type_registry,
+            rt,
+            pack_name,
+            pack_path,
+            manifest,
+            type_tag,
+        ),
+    }
+}
+
+/// Run a declarative pack's actions sequentially. Preserves the M4
+/// per-action event-log bracket (`ActionStarted` → `ActionCompleted` |
+/// `ActionHalted`). Returns `true` when the sync must halt.
+#[allow(clippy::too_many_arguments)]
+fn run_declarative_actions(
     report: &mut SyncReport,
     vars: &VarEnv,
     workspace: &Path,
@@ -804,6 +975,49 @@ fn run_pack_actions(
         }
     }
     false
+}
+
+/// Dispatch a pack-type plugin (meta / scripted) through the async
+/// registry. Brackets the call with a single `ActionStarted` /
+/// `ActionCompleted` / `ActionHalted` trio at index 0. Returns `true`
+/// when the sync must halt.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_pack_type_plugin(
+    report: &mut SyncReport,
+    vars: &VarEnv,
+    workspace: &Path,
+    event_log: &Path,
+    lock_path: &Path,
+    registry: &Arc<Registry>,
+    pack_type_registry: &Arc<PackTypeRegistry>,
+    rt: &tokio::runtime::Runtime,
+    pack_name: &str,
+    pack_path: &Path,
+    manifest: &crate::pack::PackManifest,
+    type_tag: &'static str,
+) -> bool {
+    let ctx = ExecCtx::new(vars, pack_path, workspace)
+        .with_platform(Platform::current())
+        .with_registry(registry)
+        .with_pack_type_registry(pack_type_registry);
+    append_manifest_event(
+        event_log,
+        lock_path,
+        &Event::ActionStarted {
+            ts: Utc::now(),
+            pack: pack_name.to_string(),
+            action_idx: 0,
+            action_name: type_tag.to_string(),
+        },
+        &mut report.event_log_warnings,
+    );
+    // SAFETY: `get` just confirmed the plugin is registered for
+    // `type_tag`, so this unwrap cannot panic under the matched arm.
+    let plugin = pack_type_registry
+        .get(type_tag)
+        .expect("pack-type plugin must be registered (guarded above)");
+    let step_result = rt.block_on(plugin.sync(&ctx, manifest));
+    !record_action_outcome(report, event_log, lock_path, pack_name, 0, type_tag, step_result)
 }
 
 /// Decide whether `pack_name` can be short-circuited via a lockfile
