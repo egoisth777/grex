@@ -59,6 +59,8 @@ pub enum Verb {
     Run(RunArgs),
     /// Execute a shell command in pack context.
     Exec(ExecArgs),
+    /// Tear down a pack tree (reverse of `sync`/`install`).
+    Teardown(TeardownArgs),
 }
 
 #[derive(Args, Debug)]
@@ -178,6 +180,25 @@ pub struct ExecArgs {
     /// Shell command and args to execute.
     #[arg(trailing_var_arg = true)]
     pub cmd: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct TeardownArgs {
+    /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
+    /// itself. When omitted, `teardown` prints a usage stub and exits 0.
+    pub pack_root: Option<std::path::PathBuf>,
+
+    /// Workspace directory. Defaults to `<pack_root>/.grex/workspace`.
+    #[arg(long)]
+    pub workspace: Option<std::path::PathBuf>,
+
+    /// Suppress per-action log lines.
+    #[arg(long, short = 'q')]
+    pub quiet: bool,
+
+    /// Skip plan-phase validators. Debug-only escape hatch.
+    #[arg(long)]
+    pub no_validate: bool,
 }
 
 #[cfg(test)]

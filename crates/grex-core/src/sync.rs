@@ -36,8 +36,8 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use thiserror::Error;
 
 use crate::execute::{
-    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
-    StepKind,
+    ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, MetaVisitedSet,
+    PlanExecutor, Platform, StepKind,
 };
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
@@ -701,6 +701,7 @@ fn run_actions(
     let plan = PlanExecutor::with_registry(registry.clone());
     let fs = FsExecutor::with_registry(registry.clone());
     let rt = build_pack_type_runtime();
+    let visited_meta = new_visited_meta();
     for &id in order {
         let Some(node) = report.graph.node(id) else { continue };
         let pack_name = node.name.clone();
@@ -741,6 +742,7 @@ fn run_actions(
             &pack_name,
             &pack_path,
             &manifest,
+            &visited_meta,
         );
         if pack_halted {
             // Route (b) halt-state gating: drop any prior entry for the
@@ -761,35 +763,43 @@ fn run_actions(
     }
 }
 
-/// Build the single-threaded tokio runtime used to drive async pack-type
+/// Build the multi-thread tokio runtime used to drive async pack-type
 /// plugin dispatch. Pack-type plugins expose `async fn` methods via
 /// `async_trait`, but the sync driver is synchronous end-to-end — we
 /// block on each plugin future inside the outer action loop. Extracted
 /// into a standalone helper so the runtime construction does not
 /// inflate `run_actions` beyond the 50-LOC per-function budget.
 ///
-/// # Invariant (CE-B1)
+/// # Multi-thread rationale (M5-2c)
 ///
-/// Plugins invoked through this runtime must NOT call `block_on`
-/// themselves, directly or transitively — a current-thread runtime
-/// cannot re-enter. Today this is safe because:
+/// M5-2c enabled real [`crate::plugin::pack_type::MetaPlugin`] recursion
+/// through [`crate::execute::ExecCtx::pack_type_registry`]. The recursion
+/// itself is purely `async` / `.await` (no nested `block_on`), but future
+/// plugin authors may reasonably compose `block_on` calls inside
+/// lifecycle hooks — and external callers that drive `MetaPlugin` via
+/// `rt.block_on(...)` within their own runtime would deadlock on a
+/// current-thread runtime the moment a hook re-enters. A multi-thread
+/// runtime with a small worker pool lets those re-entries resolve on a
+/// sibling worker instead of blocking the dispatcher thread.
 ///
-/// * [`crate::plugin::pack_type::MetaPlugin`] does not yet recurse through
-///   [`crate::execute::ExecCtx::pack_type_registry`] (M5-2 will add that).
-/// * [`crate::plugin::pack_type::DeclarativePlugin`] awaits
-///   only the synchronous `ActionPlugin::execute`, which never re-enters
-///   the runtime.
-/// * [`crate::plugin::pack_type::ScriptedPlugin`] awaits `tokio::process`,
-///   which uses the runtime's I/O driver without blocking on it.
-///
-/// Before M5-2 lands `MetaPlugin` recursion via the registry, switch this
-/// to a `multi_thread` runtime (or construct one runtime per outer call)
-/// to prevent deadlock.
+/// `worker_threads(2)` keeps the footprint small — sync is I/O-bound
+/// (spawn hooks, git pulls, manifest appends) rather than CPU-bound, so
+/// two workers suffice to unblock any nested `block_on` while avoiding
+/// scheduler churn.
 fn build_pack_type_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .expect("tokio runtime for pack-type dispatch")
+}
+
+/// Construct a fresh [`MetaVisitedSet`] for one sync run. Walker-driven
+/// dispatch does not attach it (see `dispatch_pack_type_plugin`), but
+/// the argument is threaded through so future explicit-install /
+/// teardown verbs can share the same set shape.
+fn new_visited_meta() -> MetaVisitedSet {
+    std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()))
 }
 
 /// Combined short-circuit helper: `--only` filter + skip-on-hash. Returns
@@ -889,6 +899,7 @@ fn run_pack_lifecycle(
     pack_name: &str,
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
     let type_tag = manifest.r#type.as_str();
     // Name-oracle check: every pack type must be registered. Unknown
@@ -910,6 +921,7 @@ fn run_pack_lifecycle(
             fs,
             pack_name,
             pack_path,
+            manifest,
             &manifest.actions,
         ),
         crate::pack::PackType::Meta | crate::pack::PackType::Scripted => dispatch_pack_type_plugin(
@@ -925,6 +937,7 @@ fn run_pack_lifecycle(
             pack_path,
             manifest,
             type_tag,
+            visited_meta,
         ),
     }
 }
@@ -944,8 +957,22 @@ fn run_declarative_actions(
     fs: &FsExecutor,
     pack_name: &str,
     pack_path: &Path,
+    manifest: &crate::pack::PackManifest,
     actions: &[Action],
 ) -> bool {
+    // `apply_gitignore` is called per-lifecycle by each PackTypePlugin
+    // for meta/scripted, and here for declarative (which bypasses the
+    // plugin in `sync::run`'s per-action driver). Keeping plugins as
+    // the single apply site everywhere else means the declarative
+    // per-action path is the only code outside the PackTypePlugin
+    // surface that needs a direct apply call.
+    if !dry_run {
+        let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
+        if let Err(e) = crate::plugin::pack_type::apply_gitignore(&ctx, manifest) {
+            record_action_err(report, event_log, lock_path, pack_name, 0, "gitignore", e);
+            return true;
+        }
+    }
     for (idx, action) in actions.iter().enumerate() {
         let ctx = ExecCtx::new(vars, pack_path, workspace).with_platform(Platform::current());
         let action_tag = action_kind_tag(action);
@@ -995,7 +1022,17 @@ fn dispatch_pack_type_plugin(
     pack_path: &Path,
     manifest: &crate::pack::PackManifest,
     type_tag: &'static str,
+    visited_meta: &MetaVisitedSet,
 ) -> bool {
+    // NB: `visited_meta` is intentionally NOT attached to the ctx here.
+    // The sync driver already walks children in post-order via the tree
+    // walker; attaching the visited set would trigger MetaPlugin's
+    // real-recursion branch and cause double dispatch (walker runs child
+    // packs as their own graph nodes, then MetaPlugin would recurse into
+    // them again). The `visited_meta` parameter is kept on the argument
+    // list so future explicit-install / teardown verbs that invoke
+    // MetaPlugin directly can share the same set shape.
+    let _ = visited_meta;
     let ctx = ExecCtx::new(vars, pack_path, workspace)
         .with_platform(Platform::current())
         .with_registry(registry)
@@ -1198,6 +1235,7 @@ fn action_kind_tag(action: &crate::pack::Action) -> &'static str {
     use crate::pack::Action;
     match action {
         Action::Symlink(_) => "symlink",
+        Action::Unlink(_) => "unlink",
         Action::Env(_) => "env",
         Action::Mkdir(_) => "mkdir",
         Action::Rmdir(_) => "rmdir",
@@ -1307,6 +1345,129 @@ fn append_event_locked(log: &Path, lock_path: &Path, event: &Event) -> Result<()
 #[must_use]
 pub fn pack_display_name(node: &PackNode) -> &str {
     &node.name
+}
+
+/// Run a full teardown over the pack tree rooted at `pack_root`.
+///
+/// Mirrors [`run`] but invokes
+/// [`crate::plugin::PackTypePlugin::teardown`] on every pack in
+/// **reverse** post-order so a parent tears down before its children
+/// (the inverse of install). Children composed later by an author
+/// consequently teardown earlier, matching the declarative
+/// auto-reverse contract (R-M5-11).
+///
+/// All other concerns are identical to [`run`]: workspace lock, plan-
+/// phase validators, lockfile update skipped (teardown does not
+/// write a `actions_hash` forward), and event-log bracketing.
+/// Teardown does NOT consult the lockfile skip-on-hash shortcut — a
+/// user explicitly asked to remove the pack, so we always dispatch.
+///
+/// # Errors
+///
+/// Returns the first error that halts the pipeline — see [`SyncError`].
+pub fn teardown(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError> {
+    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
+    ensure_workspace_dir(&workspace)?;
+    let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
+    let _ws_guard = match ws_lock.try_acquire() {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return Err(SyncError::WorkspaceBusy {
+                workspace: workspace.clone(),
+                lock_path: ws_lock_path,
+            });
+        }
+        Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
+    };
+
+    let graph =
+        walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
+    let prep = prepare_run_context(pack_root, &graph)?;
+
+    let mut report = SyncReport {
+        graph,
+        steps: Vec::new(),
+        halted: None,
+        event_log_warnings: Vec::new(),
+        pre_run_recovery: prep.pre_run_recovery,
+    };
+
+    run_teardown(
+        &mut report,
+        &prep.order,
+        &prep.vars,
+        &workspace,
+        &prep.event_log,
+        &prep.lock_path,
+        &prep.registry,
+        &prep.pack_type_registry,
+    );
+    Ok(report)
+}
+
+/// Dispatch `teardown` for every pack in **reverse** post-order.
+/// Declarative packs go through [`crate::plugin::PackTypePlugin`]
+/// rather than the per-action M4 path because the trait's
+/// auto-reverse / explicit-block logic must compose with the
+/// registry; going through the per-action path would mean
+/// re-implementing inverse synthesis in the sync loop.
+#[allow(clippy::too_many_arguments)]
+fn run_teardown(
+    report: &mut SyncReport,
+    order: &[usize],
+    vars: &VarEnv,
+    workspace: &Path,
+    event_log: &Path,
+    lock_path: &Path,
+    registry: &Arc<Registry>,
+    pack_type_registry: &Arc<PackTypeRegistry>,
+) {
+    let rt = build_pack_type_runtime();
+    // Reverse post-order: root first, then children. Pack-type plugin
+    // teardown methods reverse their own children/actions, so the
+    // outer loop only flips the inter-pack order.
+    for &id in order.iter().rev() {
+        let Some(node) = report.graph.node(id) else { continue };
+        let pack_name = node.name.clone();
+        let pack_path = node.path.clone();
+        let manifest = node.manifest.clone();
+        let type_tag = manifest.r#type.as_str();
+        if pack_type_registry.get(type_tag).is_none() {
+            let err = ExecError::UnknownAction(format!("pack type `{type_tag}`"));
+            record_action_err(report, event_log, lock_path, &pack_name, 0, "pack-type", err);
+            return;
+        }
+        let ctx = ExecCtx::new(vars, &pack_path, workspace)
+            .with_platform(Platform::current())
+            .with_registry(registry)
+            .with_pack_type_registry(pack_type_registry);
+        append_manifest_event(
+            event_log,
+            lock_path,
+            &Event::ActionStarted {
+                ts: Utc::now(),
+                pack: pack_name.clone(),
+                action_idx: 0,
+                action_name: type_tag.to_string(),
+            },
+            &mut report.event_log_warnings,
+        );
+        let plugin = pack_type_registry
+            .get(type_tag)
+            .expect("pack-type plugin must be registered (guarded above)");
+        let step_result = rt.block_on(plugin.teardown(&ctx, &manifest));
+        if !record_action_outcome(
+            report,
+            event_log,
+            lock_path,
+            &pack_name,
+            0,
+            type_tag,
+            step_result,
+        ) {
+            return;
+        }
+    }
 }
 
 /// Test-only hook: append one [`Event::Sync`] through the same

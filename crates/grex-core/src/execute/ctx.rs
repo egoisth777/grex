@@ -6,11 +6,28 @@
 //! machinery. Planner and (eventually) wet-run executors share the same
 //! shape so tests can round-trip either path with the same fixture.
 
-use std::path::Path;
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::plugin::{PackTypeRegistry, Registry};
 use crate::vars::VarEnv;
+
+/// Shared cycle-detection set threaded through
+/// [`crate::plugin::pack_type::MetaPlugin`] recursion.
+///
+/// Elements are canonicalised pack directories: every time `MetaPlugin`
+/// dispatches into a child, it canonicalises the child pack root and
+/// inserts it here. A re-entry check before insertion turns registry-level
+/// cycles into [`crate::execute::ExecError::MetaCycle`] rather than stack
+/// overflow.
+///
+/// `Arc<Mutex<HashSet<PathBuf>>>` (rather than `RefCell`) because `ExecCtx`
+/// is threaded into `async` plugin methods and the M5-2c multi-thread
+/// tokio runtime can dispatch siblings concurrently — the mutex window
+/// is cheap (two hashset lookups) and uncontended in the common
+/// sequential install path.
+pub type MetaVisitedSet = Arc<Mutex<HashSet<PathBuf>>>;
 
 /// OS discriminator used by the planner and `when`/`os` predicate paths.
 ///
@@ -126,6 +143,23 @@ pub struct ExecCtx<'a> {
     /// actually threads a pack-type registry through the executor chain
     /// lands in Stage C.
     pub pack_type_registry: Option<&'a Arc<PackTypeRegistry>>,
+    /// Shared cycle-detection set owned by the outer sync driver.
+    ///
+    /// M5-2c: [`crate::plugin::pack_type::MetaPlugin`] mutates this set
+    /// under a lock at every recursion boundary. Absent (`None`) means
+    /// no outer driver is tracking recursion — `MetaPlugin` treats that
+    /// as "caller promises a single-level dispatch" and skips the check.
+    /// The sync driver attaches a fresh empty set at the top of every
+    /// install / update / sync run so the first plugin call observes
+    /// an empty history. Teardown runs do NOT attach a set:
+    /// [`crate::sync::teardown`] drives every pack through the
+    /// walker's reverse post-order, so each
+    /// [`crate::plugin::PackTypePlugin::teardown`] invocation
+    /// corresponds to a single pack and has no in-process recursion
+    /// to guard. The cycle-detection set stays defense-in-depth for
+    /// direct plugin callers (e.g. the `meta_recursion` integration
+    /// tests) that recurse through `MetaPlugin::recurse_children`.
+    pub visited_meta: Option<&'a MetaVisitedSet>,
 }
 
 impl<'a> ExecCtx<'a> {
@@ -141,6 +175,7 @@ impl<'a> ExecCtx<'a> {
             platform: Platform::current(),
             registry: None,
             pack_type_registry: None,
+            visited_meta: None,
         }
     }
 
@@ -171,6 +206,17 @@ impl<'a> ExecCtx<'a> {
     #[must_use]
     pub fn with_pack_type_registry(mut self, reg: &'a Arc<PackTypeRegistry>) -> Self {
         self.pack_type_registry = Some(reg);
+        self
+    }
+
+    /// Attach the shared cycle-detection set used by
+    /// [`crate::plugin::pack_type::MetaPlugin`] recursion. The sync
+    /// driver builds one empty set per `run()` invocation and threads
+    /// it through every `ExecCtx` it constructs so nested `install` /
+    /// `sync` / `update` / `teardown` calls observe the same history.
+    #[must_use]
+    pub fn with_visited_meta(mut self, visited: &'a MetaVisitedSet) -> Self {
+        self.visited_meta = Some(visited);
         self
     }
 }

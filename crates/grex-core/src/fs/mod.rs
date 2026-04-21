@@ -4,7 +4,11 @@
 //! here so higher layers stay platform-agnostic.
 
 pub mod atomic;
+pub mod gitignore;
 pub mod lock;
 
 pub use atomic::atomic_write;
+pub use gitignore::{
+    read_managed_block, remove_managed_block, upsert_managed_block, GitignoreError,
+};
 pub use lock::{ManifestLock, ScopedLock};

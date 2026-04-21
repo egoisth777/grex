@@ -206,6 +206,7 @@ inventory::collect!(PluginSubmission);
 /// plugins. [`Registry::bootstrap`] is the common-case shortcut.
 pub fn register_builtins(reg: &mut Registry) {
     reg.register(SymlinkPlugin);
+    reg.register(UnlinkPlugin);
     reg.register(EnvPlugin);
     reg.register(MkdirPlugin);
     reg.register(RmdirPlugin);
@@ -244,6 +245,33 @@ impl ActionPlugin for SymlinkPlugin {
 
 #[cfg(feature = "plugin-inventory")]
 inventory::submit!(PluginSubmission::new(|| Box::new(SymlinkPlugin)));
+
+/// Wet-run `unlink` plugin — synthesized inverse of `symlink` used by
+/// the declarative auto-reverse teardown path (R-M5-09). Not reachable
+/// from a YAML-authored pack: the `Action::Unlink` variant is only
+/// manufactured by `DeclarativePlugin::inverse_of` (private helper in
+/// [`crate::plugin::pack_type`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UnlinkPlugin;
+
+impl ActionPlugin for UnlinkPlugin {
+    fn name(&self) -> &str {
+        "unlink"
+    }
+
+    fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+        match action {
+            Action::Unlink(u) => crate::execute::fs_executor::fs_unlink(u, ctx),
+            _ => Err(ExecError::ExecInvalid(format!(
+                "unlink plugin dispatched with non-unlink action `{}`",
+                action.name()
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission::new(|| Box::new(UnlinkPlugin)));
 
 /// Wet-run `env` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -418,10 +446,10 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_registers_all_seven_builtins() {
+    fn bootstrap_registers_all_eight_builtins() {
         let reg = Registry::bootstrap();
-        assert_eq!(reg.len(), 7);
-        for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
+        assert_eq!(reg.len(), 8);
+        for name in ["symlink", "unlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
             let plugin = reg.get(name).unwrap_or_else(|| panic!("missing built-in `{name}`"));
             assert_eq!(plugin.name(), name);
         }
@@ -430,10 +458,10 @@ mod tests {
 
     #[cfg(feature = "plugin-inventory")]
     #[test]
-    fn bootstrap_from_inventory_registers_all_seven_builtins() {
+    fn bootstrap_from_inventory_registers_all_eight_builtins() {
         let reg = Registry::bootstrap_from_inventory();
-        assert_eq!(reg.len(), 7);
-        for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
+        assert_eq!(reg.len(), 8);
+        for name in ["symlink", "unlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
             let plugin = reg.get(name).unwrap_or_else(|| panic!("missing built-in `{name}`"));
             assert_eq!(plugin.name(), name);
         }
@@ -441,22 +469,22 @@ mod tests {
 
     #[cfg(feature = "plugin-inventory")]
     #[test]
-    fn register_from_inventory_on_empty_registry_produces_seven_entries() {
+    fn register_from_inventory_on_empty_registry_produces_eight_entries() {
         let mut reg = Registry::new();
         assert!(reg.is_empty());
         reg.register_from_inventory();
-        assert_eq!(reg.len(), 7);
-        for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
+        assert_eq!(reg.len(), 8);
+        for name in ["symlink", "unlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
             assert!(reg.get(name).is_some(), "missing built-in `{name}`");
         }
     }
 
     #[cfg(feature = "plugin-inventory")]
     #[test]
-    fn register_from_inventory_twice_dedups_to_seven() {
+    fn register_from_inventory_twice_dedups_to_eight() {
         let mut reg = Registry::new();
         reg.register_from_inventory();
         reg.register_from_inventory();
-        assert_eq!(reg.len(), 7);
+        assert_eq!(reg.len(), 8);
     }
 }

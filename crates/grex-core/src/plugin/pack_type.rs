@@ -46,7 +46,67 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::execute::{ExecCtx, ExecError, ExecStep};
-use crate::pack::PackManifest;
+use crate::fs::gitignore;
+use crate::pack::{Action, PackManifest};
+
+/// Key used under [`PackManifest::extensions`] to carry a pack's
+/// `.gitignore` patterns (R-M5-08 integration). The YAML shape is a
+/// sequence of strings:
+///
+/// ```yaml
+/// x-gitignore:
+///   - target/
+///   - "*.log"
+/// ```
+///
+/// Missing key → pack contributes no managed block. Empty list → the
+/// block is written with zero pattern lines (author opt-in marker).
+/// Any non-sequence / non-string entries are silently ignored so a
+/// malformed extension never halts the lifecycle.
+const GITIGNORE_EXT_KEY: &str = "x-gitignore";
+
+/// Extract `x-gitignore` patterns from `pack.extensions`. Returns
+/// `None` when the key is absent so callers can skip gitignore
+/// integration entirely (no managed block written or removed).
+fn read_gitignore_patterns(pack: &PackManifest) -> Option<Vec<String>> {
+    let raw = pack.extensions.get(GITIGNORE_EXT_KEY)?;
+    let seq = raw.as_sequence()?;
+    Some(seq.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+}
+
+/// Resolve the `.gitignore` path a pack writes its managed block into.
+/// Convention: `<workspace>/.gitignore`. Keeps every pack's block in
+/// one file so operators inspect one location regardless of pack
+/// layout. The workspace-level placement also matches how tools
+/// (`git check-ignore`, editors) resolve rules.
+fn gitignore_target(ctx: &ExecCtx<'_>) -> std::path::PathBuf {
+    ctx.workspace.join(".gitignore")
+}
+
+/// Write the `x-gitignore` managed block for `pack` if the extension
+/// is present. No-op when the extension is absent. Errors map to
+/// [`ExecError::ExecInvalid`] so the lifecycle surfaces a single halt
+/// variant rather than leaking the gitignore error taxonomy.
+pub(crate) fn apply_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
+    let Some(patterns) = read_gitignore_patterns(pack) else {
+        return Ok(());
+    };
+    let target = gitignore_target(ctx);
+    let refs: Vec<&str> = patterns.iter().map(String::as_str).collect();
+    gitignore::upsert_managed_block(&target, &pack.name, &refs)
+        .map_err(|e| ExecError::ExecInvalid(format!("gitignore upsert failed: {e}")))
+}
+
+/// Remove the `x-gitignore` managed block for `pack`. No-op when the
+/// file is absent or the block is not present. Called on every
+/// teardown regardless of whether the manifest still carries the
+/// extension, so a pack whose author removed the extension before
+/// running teardown still gets its prior block cleaned.
+fn retire_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
+    let target = gitignore_target(ctx);
+    gitignore::remove_managed_block(&target, &pack.name)
+        .map_err(|e| ExecError::ExecInvalid(format!("gitignore remove failed: {e}")))
+}
 
 /// Uniform registration surface for every pack type.
 ///
@@ -302,44 +362,58 @@ fn noop_step(action_name: &'static str) -> ExecStep {
     }
 }
 
+/// Which lifecycle method a [`MetaPlugin`] recursion invokes on each child.
+///
+/// Distinguishes the four entry points so `recurse_children` can dispatch
+/// through a single helper regardless of which outer lifecycle is running.
+#[derive(Debug, Clone, Copy)]
+enum MetaLifecycle {
+    Install,
+    Update,
+    Teardown,
+    Sync,
+}
+
 /// Built-in driver for `type: meta` packs.
 ///
 /// Meta packs compose child packs and contain no actions of their own.
-/// Stage B enumerates [`PackManifest::children`] but does **not** load
-/// each child's `pack.yaml` or dispatch through the
-/// [`PackTypeRegistry`] — a child-pack loader helper does not yet exist
-/// in the crate. Stage C will add that helper (or wire an existing one)
-/// and swap this enumeration for real recursion via
-/// [`ExecCtx::pack_type_registry`].
+/// M5-2c wires real recursion: for each [`ChildRef`] in
+/// [`PackManifest::children`], the plugin resolves the child's on-disk
+/// directory (`<ctx.pack_root>/<child.effective_path()>`), loads the
+/// child manifest via [`load_child_manifest_from`], looks up the child
+/// pack-type plugin in [`ExecCtx::pack_type_registry`], and dispatches
+/// the matching lifecycle method.
 ///
-/// For now every lifecycle method walks children in-order (reverse order
-/// for [`teardown`](MetaPlugin::teardown)) and emits one synthetic
-/// [`ExecStep`] per child under a [`StepKind::When`] envelope so downstream
-/// audit tooling sees the composition shape, and returns the envelope as
-/// the aggregated step. An empty `children:` list yields a single
-/// `noop_step` so callers can distinguish "ran over zero children" from
-/// an execution error.
+/// Cycle detection canonicalises each child path before insert into
+/// [`ExecCtx::visited_meta`]; a re-entry yields
+/// [`ExecError::MetaCycle`]. The walker already rejects structural
+/// cycles at tree-walk time — this guards the registry-dispatch path
+/// as defence-in-depth.
+///
+/// Empty `children:` yields a single `noop_step("meta")` so callers can
+/// distinguish "ran over zero children" from an execution error.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MetaPlugin;
 
 impl MetaPlugin {
     const NAME: &'static str = "meta";
 
-    /// Synthesise a [`StepKind::When`] envelope enumerating `children` in
-    /// the provided iteration order. Each child becomes one nested
-    /// `noop_step` tagged with the child's [`ChildRef::effective_path`]
-    /// so audit logs can point at the on-disk directory even before Stage
-    /// C threads real dispatch.
-    fn compose<'c, I>(children: I) -> ExecStep
+    /// Resolve the child pack root on disk relative to `ctx.pack_root`.
+    fn child_root(ctx: &ExecCtx<'_>, child: &ChildRef) -> PathBuf {
+        ctx.pack_root.join(child.effective_path())
+    }
+
+    /// Build the aggregate `StepKind::When` envelope MetaPlugin emits in
+    /// walker-driven mode (the sync driver walks children in post-order
+    /// itself, so MetaPlugin does not recurse — it just surfaces a
+    /// composition-shape step so audit tooling can see the child set).
+    /// Mirrors the M5-1 `compose` behaviour verbatim.
+    fn synthesis_envelope<'c, I>(children: I) -> ExecStep
     where
         I: Iterator<Item = &'c ChildRef>,
     {
         let nested: Vec<ExecStep> = children
             .map(|c| ExecStep {
-                // `effective_path` allocates once per child — acceptable
-                // since pack children are on the order of tens, not
-                // thousands, and the path is the only stable human-
-                // readable label at this layer.
                 action_name: Cow::Owned(c.effective_path()),
                 result: ExecResult::NoOp,
                 details: StepKind::Require {
@@ -357,6 +431,119 @@ impl MetaPlugin {
             details: StepKind::When { branch_taken: true, nested_steps: nested },
         }
     }
+
+    /// Canonicalise `path` if possible; fall back to the raw input when
+    /// canonicalisation fails (missing directory, permission error).
+    /// Using a best-effort canonicalisation keeps cycle detection robust
+    /// against symlinked pack paths while still giving downstream errors
+    /// a usable path string when the child does not yet exist on disk.
+    fn canonical_or_raw(path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    /// Recurse into every child in iteration order, dispatching
+    /// `lifecycle` on each. Aborts on the first child error so a
+    /// failing sibling's descendants are not touched (matches
+    /// `run_declarative_actions` halt-on-first behaviour).
+    ///
+    /// Returns a composed [`StepKind::When`] envelope aggregating one
+    /// nested [`ExecStep`] per child. Empty `children:` yields
+    /// `noop_step("meta")`.
+    async fn recurse_children<'c, I>(
+        ctx: &ExecCtx<'_>,
+        children: I,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError>
+    where
+        I: Iterator<Item = &'c ChildRef>,
+    {
+        let mut nested: Vec<ExecStep> = Vec::new();
+        for child in children {
+            let step = Self::recurse_one(ctx, child, lifecycle).await?;
+            nested.push(step);
+        }
+        if nested.is_empty() {
+            return Ok(noop_step(Self::NAME));
+        }
+        Ok(ExecStep {
+            action_name: Cow::Borrowed(Self::NAME),
+            result: ExecResult::NoOp,
+            details: StepKind::When { branch_taken: true, nested_steps: nested },
+        })
+    }
+
+    /// Dispatch a single child: resolve path, cycle-check, load
+    /// manifest, look up plugin, invoke the matching lifecycle, pop
+    /// the cycle entry on the way out.
+    async fn recurse_one(
+        ctx: &ExecCtx<'_>,
+        child: &ChildRef,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError> {
+        let child_root = Self::child_root(ctx, child);
+
+        // Cycle detection — canonicalise for symlink-resolution parity,
+        // then insert under lock. A duplicate key halts immediately.
+        let canonical = Self::canonical_or_raw(&child_root);
+        if let Some(visited) = ctx.visited_meta {
+            let mut guard =
+                visited.lock().map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
+            if !guard.insert(canonical.clone()) {
+                return Err(ExecError::MetaCycle { path: canonical });
+            }
+        }
+
+        // Run the child dispatch, then always remove the canonical
+        // path from the visited set so siblings composed later don't
+        // wrongly observe it as "in-progress".
+        let result = Self::dispatch_child(ctx, &child_root, lifecycle).await;
+
+        if let Some(visited) = ctx.visited_meta {
+            if let Ok(mut guard) = visited.lock() {
+                guard.remove(&canonical);
+            }
+        }
+        result
+    }
+
+    /// Load the child manifest, look up the pack-type plugin, and call
+    /// the matching lifecycle method.
+    async fn dispatch_child(
+        ctx: &ExecCtx<'_>,
+        child_root: &Path,
+        lifecycle: MetaLifecycle,
+    ) -> Result<ExecStep, ExecError> {
+        let child_manifest = load_child_manifest_from(child_root)?;
+        let registry = ctx.pack_type_registry.ok_or_else(|| {
+            ExecError::ExecInvalid(
+                "meta plugin requires ctx.pack_type_registry for child dispatch".to_string(),
+            )
+        })?;
+        let type_tag = child_manifest.r#type.as_str();
+        let plugin = registry
+            .get(type_tag)
+            .ok_or_else(|| ExecError::UnknownPackType { requested: type_tag.to_string() })?;
+
+        // Rebind pack_root to the child directory; everything else
+        // threads through unchanged (vars, workspace, platform,
+        // registries, visited_meta).
+        let child_ctx = ExecCtx {
+            vars: ctx.vars,
+            pack_root: child_root,
+            workspace: ctx.workspace,
+            platform: ctx.platform,
+            registry: ctx.registry,
+            pack_type_registry: ctx.pack_type_registry,
+            visited_meta: ctx.visited_meta,
+        };
+
+        match lifecycle {
+            MetaLifecycle::Install => plugin.install(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Update => plugin.update(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Teardown => plugin.teardown(&child_ctx, &child_manifest).await,
+            MetaLifecycle::Sync => plugin.sync(&child_ctx, &child_manifest).await,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -365,31 +552,63 @@ impl PackTypePlugin for MetaPlugin {
         Self::NAME
     }
 
-    async fn install(
-        &self,
-        _ctx: &ExecCtx<'_>,
-        pack: &PackManifest,
-    ) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Install).await
+        } else {
+            // Walker-driven path: the outer sync driver walks children
+            // in post-order itself, so MetaPlugin only emits an
+            // aggregate synthesis envelope (matching M5-1 behaviour).
+            // Direct callers that want real recursion attach
+            // `visited_meta` via [`ExecCtx::with_visited_meta`].
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 
-    async fn update(&self, _ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Update).await
+        } else {
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 
     async fn teardown(
         &self,
-        _ctx: &ExecCtx<'_>,
+        ctx: &ExecCtx<'_>,
         pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
         // Teardown walks children in reverse install order so a child
-        // that was composed last is torn down first — mirrors the
-        // "reverse(actions)" default for declarative teardown.
-        Ok(Self::compose(pack.children.iter().rev()))
+        // composed last is torn down first — mirrors the
+        // `reverse(actions)` default for declarative teardown (R-M5-11).
+        let step = if ctx.visited_meta.is_some() {
+            // `?` propagates: if any child teardown fails the `?`
+            // short-circuits BEFORE `retire_gitignore` runs. On
+            // partial teardown the block stays to advertise the
+            // remaining patterns — operators can retry teardown
+            // once they've resolved the child failure.
+            Self::recurse_children(ctx, pack.children.iter().rev(), MetaLifecycle::Teardown).await?
+        } else {
+            Self::synthesis_envelope(pack.children.iter().rev())
+        };
+        // Retire the gitignore block AFTER all children teardown
+        // successfully (recurse_children path) or after the walker
+        // has already driven child teardown in reverse post-order
+        // (synthesis_envelope path). In both cases a child failure
+        // halts the pipeline before this retire executes.
+        retire_gitignore(ctx, pack)?;
+        Ok(step)
     }
 
-    async fn sync(&self, _ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
-        Ok(Self::compose(pack.children.iter()))
+    async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
+        if ctx.visited_meta.is_some() {
+            Self::recurse_children(ctx, pack.children.iter(), MetaLifecycle::Sync).await
+        } else {
+            Ok(Self::synthesis_envelope(pack.children.iter()))
+        }
     }
 }
 
@@ -423,22 +642,115 @@ impl DeclarativePlugin {
     /// Returns the last produced [`ExecStep`], or a `noop_step` if the
     /// pack contained no actions.
     fn run_actions(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        Self::run_action_slice(ctx, &pack.actions)
+    }
+
+    /// Dispatch every action in `actions` through `ctx.registry`.
+    /// Factored out of [`run_actions`] so teardown — which may feed
+    /// either `pack.teardown` directly or a synthesized reverse list —
+    /// reuses the same dispatch loop. Returns the last produced
+    /// [`ExecStep`], or a `noop_step` if `actions` was empty.
+    fn run_action_slice(ctx: &ExecCtx<'_>, actions: &[Action]) -> Result<ExecStep, ExecError> {
         let Some(registry) = ctx.registry else {
-            // Callers that invoke a declarative driver without attaching
-            // an action registry are a programming error (Stage B only —
-            // Stage C's executor-side dispatch swap will always attach
-            // one). Surface as UnknownAction so diagnostics point at the
-            // missing registry rather than a missing plugin.
             return Err(ExecError::UnknownAction(
                 "declarative plugin requires ctx.registry".to_string(),
             ));
         };
         let mut last: Option<ExecStep> = None;
-        for action in &pack.actions {
+        for action in actions {
             let plugin = registry
                 .get(action.name())
                 .ok_or_else(|| ExecError::UnknownAction(action.name().to_string()))?;
             last = Some(plugin.execute(action, ctx)?);
+        }
+        Ok(last.unwrap_or_else(|| noop_step(Self::NAME)))
+    }
+
+    /// Synthesize the inverse of `action` for auto-reverse teardown.
+    ///
+    /// Returns `Some(inverse)` when a natural inverse exists. Returns
+    /// `None` when no inverse is defined — the caller emits a `NoOp`
+    /// warning step and continues. R-M5-09.
+    ///
+    /// Supported inverses:
+    ///
+    /// * `mkdir` → `rmdir` with `force: false` so we only remove
+    ///   directories the author's install created-and-left-empty.
+    /// * `symlink` → `unlink` targeting the recorded `dst`. The
+    ///   `fs_unlink` wet-run checks that `dst` IS a symlink before
+    ///   removing it so a misdirected teardown cannot clobber
+    ///   operator-managed files.
+    /// * `when` → `when` with the same condition but `actions`
+    ///   recursively inverted. Preserving the gate is load-bearing:
+    ///   a platform-gated install must tear down only on the same
+    ///   platform.
+    ///
+    /// `env`, `require`, and `exec` have no safe auto-reverse: we
+    /// cannot distinguish operator-managed state from pack-managed
+    /// state without richer metadata. Authors who need precise
+    /// cleanup should supply an explicit `teardown:` block.
+    fn inverse_of(action: &Action) -> Option<Action> {
+        match action {
+            Action::Mkdir(m) => {
+                Some(Action::Rmdir(crate::pack::RmdirArgs::new(m.path.clone(), false, false)))
+            }
+            Action::Symlink(s) => Some(Action::Unlink(crate::pack::UnlinkArgs::new(s.dst.clone()))),
+            Action::When(w) => {
+                // Recursively invert `actions`; nested entries with no
+                // inverse (e.g. an `env` inside the gate) drop out of
+                // the reversed list rather than emitting a warning step
+                // here — the caller's auto-reverse loop handles the
+                // outermost no-inverse emission, and the inner gate's
+                // purpose is just to mirror install ordering.
+                let inner: Vec<Action> =
+                    w.actions.iter().rev().filter_map(Self::inverse_of).collect();
+                Some(Action::When(crate::pack::WhenSpec::new(
+                    w.os,
+                    w.all_of.clone(),
+                    w.any_of.clone(),
+                    w.none_of.clone(),
+                    inner,
+                )))
+            }
+            _ => None,
+        }
+    }
+
+    /// Build an auto-reverse teardown step list from `pack.actions` in
+    /// reverse order. Actions with no defined inverse become a `NoOp`
+    /// warning step carrying the action kind tag. Actions with an
+    /// inverse are dispatched through `ctx.registry` exactly like
+    /// install. Halts on the first error (install-consistent).
+    fn run_auto_reverse(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        let Some(registry) = ctx.registry else {
+            return Err(ExecError::UnknownAction(
+                "declarative plugin requires ctx.registry".to_string(),
+            ));
+        };
+        let mut last: Option<ExecStep> = None;
+        for action in pack.actions.iter().rev() {
+            match Self::inverse_of(action) {
+                Some(inv) => {
+                    let plugin = registry
+                        .get(inv.name())
+                        .ok_or_else(|| ExecError::UnknownAction(inv.name().to_string()))?;
+                    last = Some(plugin.execute(&inv, ctx)?);
+                }
+                None => {
+                    // No inverse: synthesize a NoOp warning step so
+                    // operators can see the skipped action in the
+                    // report. action_name carries the original tag so
+                    // the audit trail points at the uncleanable entry.
+                    last = Some(ExecStep {
+                        action_name: Cow::Owned(format!("teardown:no-inverse:{}", action.name())),
+                        result: ExecResult::NoOp,
+                        details: StepKind::Require {
+                            outcome: PredicateOutcome::Satisfied,
+                            on_fail: RequireOnFail::Skip,
+                        },
+                    });
+                }
+            }
         }
         Ok(last.unwrap_or_else(|| noop_step(Self::NAME)))
     }
@@ -451,6 +763,7 @@ impl PackTypePlugin for DeclarativePlugin {
     }
 
     async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
         Self::run_actions(ctx, pack)
     }
 
@@ -458,24 +771,30 @@ impl PackTypePlugin for DeclarativePlugin {
         // Declarative actions are idempotent by contract, so update ==
         // re-install. The M4 FsExecutor guarantees "already satisfied"
         // short-circuits for symlink/env/mkdir.
+        apply_gitignore(ctx, pack)?;
         Self::run_actions(ctx, pack)
     }
 
     async fn teardown(
         &self,
-        _ctx: &ExecCtx<'_>,
-        _pack: &PackManifest,
+        ctx: &ExecCtx<'_>,
+        pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
-        // TODO(M5-2): honour `pack.teardown` when `Some`, auto-reverse
-        // `pack.actions` when `None`. Stage B stubs this out so the
-        // trait surface stays complete without pulling teardown
-        // semantics into M5-1.
-        Ok(noop_step(Self::NAME))
+        // R-M5-09: honour explicit `pack.teardown` when `Some`; fall
+        // back to auto-reverse over `pack.actions` when `None`.
+        // `Some(vec![])` is an explicit no-op (distinct from absent).
+        let step = match &pack.teardown {
+            Some(actions) => Self::run_action_slice(ctx, actions)?,
+            None => Self::run_auto_reverse(ctx, pack)?,
+        };
+        retire_gitignore(ctx, pack)?;
+        Ok(step)
     }
 
     async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
         // Sync mirrors install at the declarative layer; upstream fetch
         // is a meta-pack concern (child-pack git pulls in M5-2+).
+        apply_gitignore(ctx, pack)?;
         Self::run_actions(ctx, pack)
     }
 }
@@ -593,27 +912,32 @@ impl PackTypePlugin for ScriptedPlugin {
         Self::NAME
     }
 
-    async fn install(
-        &self,
-        ctx: &ExecCtx<'_>,
-        _pack: &PackManifest,
-    ) -> Result<ExecStep, ExecError> {
+    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "setup").await
     }
 
-    async fn update(&self, ctx: &ExecCtx<'_>, _pack: &PackManifest) -> Result<ExecStep, ExecError> {
+    async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "update").await
     }
 
     async fn teardown(
         &self,
         ctx: &ExecCtx<'_>,
-        _pack: &PackManifest,
+        pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
-        Self::run_hook(ctx, "teardown").await
+        // R-M5-10: run `teardown.{sh,ps1}`, then retire the managed
+        // gitignore block. Hook errors propagate before the block is
+        // removed so a failing script does not "lose" the block (the
+        // next teardown retry will retry both steps).
+        let step = Self::run_hook(ctx, "teardown").await?;
+        retire_gitignore(ctx, pack)?;
+        Ok(step)
     }
 
-    async fn sync(&self, ctx: &ExecCtx<'_>, _pack: &PackManifest) -> Result<ExecStep, ExecError> {
+    async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+        apply_gitignore(ctx, pack)?;
         Self::run_hook(ctx, "sync").await
     }
 }
@@ -833,6 +1157,388 @@ mod tests {
         assert_eq!(step.action_name.as_ref(), "declarative");
         assert!(matches!(step.result, ExecResult::NoOp));
     }
+
+    #[test]
+    fn load_child_manifest_from_reads_pack_yaml() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().expect("tempdir");
+        let dir = tmp.path().join("child");
+        std::fs::create_dir_all(dir.join(".grex")).unwrap();
+        std::fs::write(
+            dir.join(".grex").join("pack.yaml"),
+            "schema_version: \"1\"\nname: kid\ntype: declarative\n",
+        )
+        .unwrap();
+        let manifest = load_child_manifest_from(&dir).expect("child manifest loads");
+        assert_eq!(manifest.name, "kid");
+    }
+
+    #[test]
+    fn load_child_manifest_from_missing_dir_errors() {
+        let missing = std::path::Path::new("/definitely/not/a/pack/path/123456789");
+        let err = load_child_manifest_from(missing).expect_err("missing manifest errors");
+        match err {
+            ExecError::ExecInvalid(msg) => {
+                assert!(msg.contains("child manifest load failed"), "msg: {msg}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn exec_error_meta_cycle_renders_path() {
+        let err = ExecError::MetaCycle { path: std::path::PathBuf::from("/tmp/a") };
+        let rendered = err.to_string();
+        assert!(rendered.contains("meta recursion cycle"), "got: {rendered}");
+        assert!(rendered.contains("/tmp/a") || rendered.contains("\\tmp\\a"), "got: {rendered}");
+    }
+
+    #[test]
+    fn exec_error_unknown_pack_type_renders_name() {
+        let err = ExecError::UnknownPackType { requested: "mystery".into() };
+        let rendered = err.to_string();
+        assert!(rendered.contains("mystery"), "got: {rendered}");
+        assert!(rendered.contains("no pack-type plugin"), "got: {rendered}");
+    }
+
+    // -------- M5-2b teardown tests ---------------------------------
+
+    /// Parse a manifest from a literal YAML source. Helper for the
+    /// teardown/auto-reverse tests below.
+    fn parse_pack(src: &str) -> PackManifest {
+        crate::pack::parse(src).expect("fixture must parse")
+    }
+
+    #[tokio::test]
+    async fn declarative_teardown_runs_explicit_block() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        // Explicit teardown: install creates two dirs; teardown removes
+        // only the second one. The auto-reverse fallback would remove
+        // both — so observing a/ still present proves the explicit
+        // block was honoured.
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let a = tmp_path.join("a");
+        let b = tmp_path.join("b");
+        let fwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        let src = format!(
+            "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - mkdir:\n      path: {}\n  - mkdir:\n      path: {}\nteardown:\n  - rmdir:\n      path: {}\n",
+            fwd(&a), fwd(&b), fwd(&b)
+        );
+        let pack = parse_pack(&src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+
+        let plugin = DeclarativePlugin;
+        plugin.install(&ctx, &pack).await.expect("install ok");
+        assert!(a.is_dir());
+        assert!(b.is_dir());
+        plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        // Only b was removed (explicit teardown block, not auto-reverse).
+        assert!(a.is_dir(), "explicit teardown should not touch a/");
+        assert!(!b.exists(), "explicit teardown should remove b/");
+    }
+
+    #[tokio::test]
+    async fn declarative_auto_reverse_mkdir_to_rmdir() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let a = tmp_path.join("auto_a");
+        let fwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        // No explicit teardown → auto-reverse. mkdir → rmdir.
+        let src = format!(
+            "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - mkdir:\n      path: {}\n",
+            fwd(&a)
+        );
+        let pack = parse_pack(&src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+
+        let plugin = DeclarativePlugin;
+        plugin.install(&ctx, &pack).await.expect("install ok");
+        assert!(a.is_dir());
+        plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        assert!(!a.exists(), "auto-reverse mkdir→rmdir should remove dir");
+    }
+
+    #[tokio::test]
+    async fn declarative_auto_reverse_skips_env_with_noop() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        // `env` has no safe auto-reverse (we can't know the prior
+        // value to restore). Auto-reverse emits a NoOp step with an
+        // annotated action_name and continues.
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let src = "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - env:\n      name: GREX_TEST_NO_INVERSE\n      value: x\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+
+        let plugin = DeclarativePlugin;
+        let _ = plugin.install(&ctx, &pack).await;
+        let step = plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        assert!(
+            step.action_name.as_ref().starts_with("teardown:no-inverse:"),
+            "got: {:?}",
+            step.action_name
+        );
+        assert!(matches!(step.result, ExecResult::NoOp));
+    }
+
+    #[tokio::test]
+    async fn declarative_auto_reverse_reverses_order() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        // Install creates a/, then a/inner. Auto-reverse must remove
+        // a/inner first then a/ — otherwise rmdir on a/ fails because
+        // it is non-empty. Observing both gone proves reverse order.
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let fwd = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+        let outer = tmp_path.join("outer");
+        let inner = outer.join("inner");
+        let src = format!(
+            "schema_version: \"1\"\nname: tp\ntype: declarative\nactions:\n  - mkdir:\n      path: {}\n  - mkdir:\n      path: {}\n",
+            fwd(&outer), fwd(&inner)
+        );
+        let pack = parse_pack(&src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+
+        let plugin = DeclarativePlugin;
+        plugin.install(&ctx, &pack).await.expect("install ok");
+        assert!(inner.is_dir());
+        plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        assert!(!inner.exists());
+        assert!(!outer.exists(), "reverse order must remove inner before outer");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scripted_teardown_runs_teardown_sh_on_unix() {
+        use crate::vars::VarEnv;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let hooks = tmp_path.join(".grex").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let marker = tmp_path.join("teardown.ran");
+        let hook = hooks.join("teardown.sh");
+        std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pack = fixture("scripted");
+        let vars = VarEnv::default();
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path);
+        let plugin = ScriptedPlugin;
+        let step = plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        assert!(marker.exists(), "teardown.sh must have run");
+        assert!(matches!(step.result, ExecResult::PerformedChange));
+    }
+
+    #[tokio::test]
+    async fn scripted_teardown_missing_hook_is_noop() {
+        use crate::vars::VarEnv;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let pack = fixture("scripted");
+        let vars = VarEnv::default();
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path);
+        let plugin = ScriptedPlugin;
+        let step = plugin.teardown(&ctx, &pack).await.expect("missing hook is no-op");
+        assert!(matches!(step.result, ExecResult::NoOp));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn scripted_teardown_non_zero_exit_surfaces_exec_non_zero() {
+        use crate::vars::VarEnv;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let hooks = tmp_path.join(".grex").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("teardown.sh");
+        std::fs::write(&hook, "#!/bin/sh\nexit 7\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pack = fixture("scripted");
+        let vars = VarEnv::default();
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path);
+        let plugin = ScriptedPlugin;
+        let err = plugin.teardown(&ctx, &pack).await.expect_err("non-zero exit must err");
+        match err {
+            ExecError::ExecNonZero { status, .. } => assert_eq!(status, 7),
+            other => panic!("expected ExecNonZero, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn meta_teardown_reverses_children_order_synthesis_mode() {
+        use crate::vars::VarEnv;
+        use std::path::Path;
+
+        // With no visited_meta, MetaPlugin emits a synthesis envelope
+        // over children in REVERSE order. Two children with known
+        // paths should appear back-to-front in the nested step list.
+        let src = "schema_version: \"1\"\nname: m\ntype: meta\nchildren:\n  - url: https://e.com/a.git\n  - url: https://e.com/b.git\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let root = Path::new(".");
+        let ctx = ExecCtx::new(&vars, root, root);
+        let plugin = MetaPlugin;
+        let step = plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        // Expect StepKind::When with nested steps in reverse order.
+        match step.details {
+            StepKind::When { nested_steps, .. } => {
+                assert_eq!(nested_steps.len(), 2);
+                assert_eq!(nested_steps[0].action_name.as_ref(), "b");
+                assert_eq!(nested_steps[1].action_name.as_ref(), "a");
+            }
+            other => panic!("expected When envelope, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn meta_teardown_cycle_guards_via_visited_meta() {
+        use crate::execute::MetaVisitedSet;
+        use crate::vars::VarEnv;
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+        use tempfile::TempDir;
+
+        // Pre-populate visited_meta with the canonical child path so
+        // recurse_one short-circuits into MetaCycle before touching
+        // the filesystem.
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let child_dir = tmp_path.join("kid");
+        std::fs::create_dir_all(child_dir.join(".grex")).unwrap();
+        std::fs::write(
+            child_dir.join(".grex").join("pack.yaml"),
+            "schema_version: \"1\"\nname: kid\ntype: declarative\n",
+        )
+        .unwrap();
+
+        let canon = std::fs::canonicalize(&child_dir).unwrap_or(child_dir.clone());
+        let mut seen: HashSet<std::path::PathBuf> = HashSet::new();
+        seen.insert(canon);
+        let visited: MetaVisitedSet = Arc::new(Mutex::new(seen));
+        let src = "schema_version: \"1\"\nname: parent\ntype: meta\nchildren:\n  - url: https://e.com/kid.git\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let pt_reg = Arc::new(PackTypeRegistry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path)
+            .with_registry(&action_reg)
+            .with_pack_type_registry(&pt_reg)
+            .with_visited_meta(&visited);
+        let plugin = MetaPlugin;
+        let err = plugin.teardown(&ctx, &pack).await.expect_err("cycle must err");
+        assert!(matches!(err, ExecError::MetaCycle { .. }));
+    }
+
+    #[tokio::test]
+    async fn meta_teardown_aborts_on_first_child_failure() {
+        use crate::execute::MetaVisitedSet;
+        use crate::vars::VarEnv;
+        use std::collections::HashSet;
+        use std::sync::{Arc, Mutex};
+        use tempfile::TempDir;
+
+        // A child that references an unknown pack type surfaces
+        // UnknownPackType; teardown must propagate, not continue.
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let child_dir = tmp_path.join("kid");
+        std::fs::create_dir_all(child_dir.join(".grex")).unwrap();
+        // Write a valid declarative manifest but use an UNREGISTERED
+        // pack-type registry so UnknownPackType fires.
+        std::fs::write(
+            child_dir.join(".grex").join("pack.yaml"),
+            "schema_version: \"1\"\nname: kid\ntype: declarative\n",
+        )
+        .unwrap();
+
+        let visited: MetaVisitedSet = Arc::new(Mutex::new(HashSet::new()));
+        let src = "schema_version: \"1\"\nname: parent\ntype: meta\nchildren:\n  - url: https://e.com/kid.git\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let empty_reg = Arc::new(PackTypeRegistry::new());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path)
+            .with_pack_type_registry(&empty_reg)
+            .with_visited_meta(&visited);
+        let plugin = MetaPlugin;
+        let err = plugin.teardown(&ctx, &pack).await.expect_err("unknown type halts");
+        assert!(matches!(err, ExecError::UnknownPackType { .. }));
+    }
+
+    #[tokio::test]
+    async fn gitignore_extension_absent_writes_nothing() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let src = "schema_version: \"1\"\nname: ng\ntype: declarative\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+        let plugin = DeclarativePlugin;
+        plugin.install(&ctx, &pack).await.expect("install ok");
+        assert!(!tmp_path.join(".gitignore").exists(), "no extension → no file");
+    }
+
+    #[tokio::test]
+    async fn gitignore_extension_present_writes_managed_block() {
+        use crate::vars::VarEnv;
+        use std::sync::Arc;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let tmp_path = tmp.path().to_path_buf();
+        let src = "schema_version: \"1\"\nname: gi\ntype: declarative\nx-gitignore:\n  - target/\n  - \"*.log\"\n";
+        let pack = parse_pack(src);
+        let vars = VarEnv::default();
+        let action_reg = Arc::new(crate::plugin::Registry::bootstrap());
+        let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
+        let plugin = DeclarativePlugin;
+        plugin.install(&ctx, &pack).await.expect("install ok");
+        let gitig = std::fs::read_to_string(tmp_path.join(".gitignore")).unwrap();
+        assert!(gitig.contains("# >>> grex:gi >>>"));
+        assert!(gitig.contains("target/"));
+        assert!(gitig.contains("*.log"));
+        // Teardown removes the block.
+        plugin.teardown(&ctx, &pack).await.expect("teardown ok");
+        let after = std::fs::read_to_string(tmp_path.join(".gitignore")).unwrap_or_default();
+        assert!(!after.contains("grex:gi"), "teardown must remove block: {after}");
+    }
+
+    // -------- end M5-2b tests --------------------------------------
 
     #[tokio::test]
     async fn scripted_plugin_name_and_missing_hook_install_noop() {
