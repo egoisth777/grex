@@ -329,7 +329,7 @@ impl Action {
     /// Short kebab-case identifier matching the YAML key that produced this
     /// variant (and the name plugins register under). Returned as
     /// `&'static str` so callers can zero-cost compare against constants
-    /// like [`crate::execute::ACTION_SYMLINK`].
+    /// like `ACTION_SYMLINK` (defined in the `execute::step` module).
     #[must_use]
     pub fn name(&self) -> &'static str {
         match self {

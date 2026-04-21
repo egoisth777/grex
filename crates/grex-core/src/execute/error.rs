@@ -44,13 +44,14 @@ pub enum ExecError {
     #[error("exec validation failed: {0}")]
     ExecInvalid(String),
     /// The executor's plugin registry has no entry registered under the
-    /// action's name. Emitted by the registry-dispatched [`FsExecutor`] /
-    /// [`PlanExecutor`] when a caller constructs them with a partial
-    /// registry that does not cover every variant present in the pack.
+    /// action's name. Emitted by the registry-dispatched
+    /// [`super::FsExecutor`] / [`super::PlanExecutor`] when a caller
+    /// constructs them with a partial registry that does not cover every
+    /// variant present in the pack.
     ///
     /// The stock [`crate::plugin::Registry::bootstrap`] path registers all
-    /// seven Tier-1 built-ins, so the default [`FsExecutor::new`] /
-    /// [`PlanExecutor::new`] constructors never surface this variant — it
+    /// seven Tier-1 built-ins, so the default [`super::FsExecutor::new`] /
+    /// [`super::PlanExecutor::new`] constructors never surface this variant — it
     /// is only reachable through the explicit `with_registry` entry points
     /// that accept a custom registry.
     #[error("no plugin registered for action `{0}`")]
@@ -94,7 +95,7 @@ pub enum ExecError {
         /// Target platform tag.
         platform: &'static str,
     },
-    /// A predicate probed by [`crate::execute::predicate::evaluate`] cannot
+    /// A predicate probed by the predicate evaluator (internal) cannot
     /// be answered on the current platform (e.g. `reg_key` / `psversion`
     /// evaluated on non-Windows). Replaces the pre-M4-C conservative-false
     /// stub: planners and wet-run executors now surface the limitation as

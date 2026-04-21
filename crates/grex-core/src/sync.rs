@@ -74,11 +74,11 @@ pub struct SyncOptions {
     /// layer.
     pub ref_override: Option<String>,
     /// Pack-path filter patterns (`grex sync --only <glob>`). Raw glob
-    /// strings — compiled internally via [`compile_only_globset`] so the
-    /// [`globset`] crate version does not leak into the public API.
+    /// strings — compiled internally via an in-crate `globset` helper so the
+    /// `globset` crate version does not leak into the public API.
     /// `None` / empty means every pack runs (M3 semantics). Matching is
     /// against the pack's **workspace-relative** path normalized to
-    /// forward-slash form; see [`skip_for_only_filter`].
+    /// forward-slash form.
     pub only_patterns: Option<Vec<String>>,
     /// Bypass the lockfile hash-match skip (`grex sync --force`). When
     /// `true`, every pack re-executes even if its `actions_hash` is
