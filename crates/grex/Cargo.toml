@@ -27,9 +27,6 @@ owo-colors = { workspace = true }
 grex-core = { workspace = true }
 grex-plugins-builtin = { workspace = true }
 
-# feat-m6-1: `grex sync --parallel` default resolves via num_cpus::get().
-num_cpus = "1.16"
-
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }

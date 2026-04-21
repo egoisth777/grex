@@ -398,6 +398,26 @@ pub fn with_tier<R>(_tier: Tier, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// Wrap an async future in a task-local tier-stack scope so any
+/// [`TierGuard`] pushes inside it land in the correct frame even when
+/// the task migrates across tokio workers after `.await`. Release
+/// builds compile this down to the raw future — no scope, no cost.
+///
+/// Callers should wrap every top-level async dispatch (e.g. the
+/// per-pack plugin lifecycle calls driven by `rt.block_on(...)`) so
+/// the tier check can operate on a fresh stack per dispatch.
+#[cfg(debug_assertions)]
+pub async fn with_tier_scope<F: std::future::Future>(f: F) -> F::Output {
+    tier::TIER_STACK.scope(std::cell::RefCell::new(Vec::new()), f).await
+}
+
+/// Release-build no-op mirror of [`with_tier_scope`].
+#[cfg(not(debug_assertions))]
+#[inline]
+pub async fn with_tier_scope<F: std::future::Future>(f: F) -> F::Output {
+    f.await
+}
+
 /// RAII guard — pushes a tier onto the current-thread stack on
 /// construction, pops on drop. Lets lifecycle prologues enforce
 /// tier ordering across `.await` points without nesting the rest of
@@ -443,16 +463,30 @@ impl Drop for TierGuard {
 }
 
 #[cfg(debug_assertions)]
-mod tier {
+pub(crate) mod tier {
     use super::Tier;
     use std::cell::RefCell;
 
-    thread_local! {
-        static STACK: RefCell<Vec<Tier>> = const { RefCell::new(Vec::new()) };
+    // feat-m6 CI fix — previously this used `thread_local!`, but under a
+    // tokio multi-thread runtime a task can resume on a different worker
+    // after `.await`. A push on worker A followed by a yield and a pop on
+    // worker B left A's stack polluted and tripped the tier-ordering
+    // assertion on the next acquire. Migrating to `tokio::task_local!`
+    // pins the stack to the *task*, not the worker, so nested
+    // `TierGuard` bookkeeping follows the task across workers.
+    //
+    // `try_with` silently no-ops outside a `TIER_STACK.scope(...)`
+    // frame — that makes the module safe to use from synchronous
+    // (non-tokio) test harnesses and the module's own unit tests at
+    // the cost of debug-only tier enforcement being disabled there.
+    // Production dispatch wraps every pack-type plugin call in a scope
+    // (see `sync::dispatch_*`), so real runs retain enforcement.
+    tokio::task_local! {
+        pub(crate) static TIER_STACK: RefCell<Vec<Tier>>;
     }
 
     pub fn push(next: Tier) {
-        STACK.with(|s| {
+        let _ = TIER_STACK.try_with(|s| {
             let mut s = s.borrow_mut();
             if let Some(&top) = s.last() {
                 assert!(
@@ -466,7 +500,7 @@ mod tier {
     }
 
     pub fn pop_if_top(expected: Tier) {
-        STACK.with(|s| {
+        let _ = TIER_STACK.try_with(|s| {
             let mut s = s.borrow_mut();
             if s.last().copied() == Some(expected) {
                 s.pop();
@@ -479,11 +513,6 @@ mod tier {
                 );
             }
         });
-    }
-
-    #[cfg(test)]
-    pub fn clear() {
-        STACK.with(|s| s.borrow_mut().clear());
     }
 }
 
@@ -604,30 +633,39 @@ mod tests {
 
     // --- tier ordering (debug-only) -----------------------------------------
 
+    // feat-m6 CI fix — tier enforcement now lives in a `tokio::task_local!`
+    // stack, so these tests drive the check through a scoped task to
+    // establish the frame. `try_with` outside a scope silently no-ops.
+
     #[cfg(debug_assertions)]
-    #[test]
-    fn tier_strictly_increasing_ok() {
-        tier::clear();
-        with_tier(Tier::Semaphore, || {
-            with_tier(Tier::PerPack, || {
-                with_tier(Tier::Backend, || {
-                    with_tier(Tier::Manifest, || {});
+    #[tokio::test]
+    async fn tier_strictly_increasing_ok() {
+        tier::TIER_STACK
+            .scope(std::cell::RefCell::new(Vec::new()), async {
+                with_tier(Tier::Semaphore, || {
+                    with_tier(Tier::PerPack, || {
+                        with_tier(Tier::Backend, || {
+                            with_tier(Tier::Manifest, || {});
+                        });
+                    });
                 });
-            });
-        });
+            })
+            .await;
     }
 
     #[cfg(debug_assertions)]
-    #[test]
-    fn tier_reversed_panics_in_debug() {
+    #[tokio::test]
+    async fn tier_reversed_panics_in_debug() {
         use std::panic::{catch_unwind, AssertUnwindSafe};
-        tier::clear();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            with_tier(Tier::PerPack, || {
-                with_tier(Tier::Semaphore, || {});
-            });
-        }));
-        tier::clear();
+        let result = tier::TIER_STACK
+            .scope(std::cell::RefCell::new(Vec::new()), async {
+                catch_unwind(AssertUnwindSafe(|| {
+                    with_tier(Tier::PerPack, || {
+                        with_tier(Tier::Semaphore, || {});
+                    });
+                }))
+            })
+            .await;
         assert!(result.is_err(), "reversed tier order must panic in debug builds");
     }
 }

@@ -1106,7 +1106,11 @@ fn dispatch_pack_type_plugin(
     let plugin = pack_type_registry
         .get(type_tag)
         .expect("pack-type plugin must be registered (guarded above)");
-    let step_result = rt.block_on(plugin.sync(&ctx, manifest));
+    // feat-m6 CI fix — establish a task-local tier stack frame for every
+    // async dispatch. Without this, `TierGuard::push` (which runs inside
+    // the plugin lifecycle and may span `.await` / thread hops under the
+    // multi-thread runtime) has no enforcement frame to push into.
+    let step_result = rt.block_on(crate::pack_lock::with_tier_scope(plugin.sync(&ctx, manifest)));
     !record_action_outcome(report, event_log, lock_path, pack_name, 0, type_tag, step_result)
 }
 
@@ -1519,7 +1523,9 @@ fn run_teardown(
         let plugin = pack_type_registry
             .get(type_tag)
             .expect("pack-type plugin must be registered (guarded above)");
-        let step_result = rt.block_on(plugin.teardown(&ctx, &manifest));
+        // feat-m6 CI fix — see dispatch_pack_type note.
+        let step_result =
+            rt.block_on(crate::pack_lock::with_tier_scope(plugin.teardown(&ctx, &manifest)));
         if !record_action_outcome(
             report,
             event_log,
