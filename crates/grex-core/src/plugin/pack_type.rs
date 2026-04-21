@@ -694,9 +694,7 @@ impl DeclarativePlugin {
             Action::Mkdir(m) => {
                 Some(Action::Rmdir(crate::pack::RmdirArgs::new(m.path.clone(), false, false)))
             }
-            Action::Symlink(s) => {
-                Some(Action::Unlink(crate::pack::UnlinkArgs::new(s.dst.clone())))
-            }
+            Action::Symlink(s) => Some(Action::Unlink(crate::pack::UnlinkArgs::new(s.dst.clone()))),
             Action::When(w) => {
                 // Recursively invert `actions`; nested entries with no
                 // inverse (e.g. an `env` inside the gate) drop out of

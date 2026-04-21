@@ -396,10 +396,7 @@ fn declarative_autoreverse_inverts_symlink() {
     );
 
     run(&root, &options(workspace.clone())).expect("install ok");
-    assert!(
-        link.symlink_metadata().unwrap().file_type().is_symlink(),
-        "install must create link"
-    );
+    assert!(link.symlink_metadata().unwrap().file_type().is_symlink(), "install must create link");
 
     teardown(&root, &options(workspace)).expect("teardown ok");
     assert!(link.symlink_metadata().is_err(), "auto-reverse must unlink");

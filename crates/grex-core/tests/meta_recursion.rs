@@ -566,10 +566,7 @@ fn meta_teardown_child_failure_preserves_parent_gitignore_block() {
     let parent_yaml = "schema_version: \"1\"\nname: parent\ntype: meta\nx-gitignore:\n  - parent-ignored/\nchildren:\n  - url: https://example.invalid/a\n    path: a\n  - url: https://example.invalid/b\n    path: b\n";
     write_pack(&root, parent_yaml);
     // Child a: valid declarative pack (teardown succeeds).
-    write_pack(
-        &root.join("a"),
-        "schema_version: \"1\"\nname: child-a\ntype: declarative\n",
-    );
+    write_pack(&root.join("a"), "schema_version: \"1\"\nname: child-a\ntype: declarative\n");
     // Child b: malformed manifest → child teardown dispatch errors
     // (load_child_manifest_from fails during recurse_children).
     fs::create_dir_all(root.join("b").join(".grex")).unwrap();
@@ -687,7 +684,8 @@ fn cycle_detection_under_multi_thread_runtime() {
         (t1.await.unwrap(), t2.await.unwrap())
     });
 
-    let is_cycle = |r: &Result<grex_core::ExecStep, ExecError>| matches!(r, Err(ExecError::MetaCycle { .. }));
+    let is_cycle =
+        |r: &Result<grex_core::ExecStep, ExecError>| matches!(r, Err(ExecError::MetaCycle { .. }));
     assert!(
         is_cycle(&r1) || is_cycle(&r2),
         "at least one dispatch must halt with MetaCycle — r1={r1:?} r2={r2:?}"

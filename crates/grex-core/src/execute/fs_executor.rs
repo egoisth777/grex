@@ -298,8 +298,7 @@ pub(crate) fn fs_unlink(args: &UnlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep
     let dst = require_path(expand_field(&args.dst, ctx.vars, "unlink.dst")?)?;
     let result = match std::fs::symlink_metadata(&dst) {
         Ok(meta) if meta.file_type().is_symlink() => {
-            std::fs::remove_file(&dst)
-                .map_err(|e| io_to_fs("unlink", dst.clone(), e))?;
+            std::fs::remove_file(&dst).map_err(|e| io_to_fs("unlink", dst.clone(), e))?;
             ExecResult::PerformedChange
         }
         _ => ExecResult::AlreadySatisfied,
