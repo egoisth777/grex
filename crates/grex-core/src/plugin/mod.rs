@@ -133,7 +133,50 @@ impl Registry {
         register_builtins(&mut reg);
         reg
     }
+
+    /// Register every plugin submitted via [`inventory::submit!`] into the
+    /// `PluginSubmission` collector. Order is linker-defined; duplicate
+    /// names follow `register`'s last-writer-wins rule.
+    ///
+    /// Only available when the `plugin-inventory` feature is enabled.
+    #[cfg(feature = "plugin-inventory")]
+    pub fn register_from_inventory(&mut self) {
+        for sub in inventory::iter::<PluginSubmission> {
+            let plugin = (sub.factory)();
+            let name: Cow<'static, str> = Cow::Owned(plugin.name().to_owned());
+            self.actions.insert(name, plugin);
+        }
+    }
+
+    /// Build a registry populated exclusively from
+    /// [`inventory::submit!`] entries. Equivalent to
+    /// `let mut r = Registry::new(); r.register_from_inventory(); r`.
+    ///
+    /// Only available when the `plugin-inventory` feature is enabled.
+    #[cfg(feature = "plugin-inventory")]
+    #[must_use]
+    pub fn bootstrap_from_inventory() -> Self {
+        let mut reg = Self::new();
+        reg.register_from_inventory();
+        reg
+    }
 }
+
+/// Submission record for compile-time plugin collection via `inventory`.
+///
+/// Each Tier-1 built-in ships an `inventory::submit!` block (gated by the
+/// same feature) pointing at this type, so a consumer opting into
+/// `plugin-inventory` can construct a `Registry` purely from linker-time
+/// registrations instead of calling [`register_builtins`] explicitly.
+#[cfg(feature = "plugin-inventory")]
+pub struct PluginSubmission {
+    /// Factory producing a boxed plugin instance. Invoked once per
+    /// submission during [`Registry::register_from_inventory`].
+    pub factory: fn() -> Box<dyn ActionPlugin>,
+}
+
+#[cfg(feature = "plugin-inventory")]
+inventory::collect!(PluginSubmission);
 
 /// Register all 7 Tier-1 built-in plugins in wet-run form.
 ///
@@ -178,6 +221,9 @@ impl ActionPlugin for SymlinkPlugin {
     }
 }
 
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(SymlinkPlugin) });
+
 /// Wet-run `env` plugin.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EnvPlugin;
@@ -197,6 +243,9 @@ impl ActionPlugin for EnvPlugin {
         }
     }
 }
+
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(EnvPlugin) });
 
 /// Wet-run `mkdir` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -218,6 +267,9 @@ impl ActionPlugin for MkdirPlugin {
     }
 }
 
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(MkdirPlugin) });
+
 /// Wet-run `rmdir` plugin.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RmdirPlugin;
@@ -238,6 +290,9 @@ impl ActionPlugin for RmdirPlugin {
     }
 }
 
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(RmdirPlugin) });
+
 /// `require` plugin (predicate gate; side-effect-free).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RequirePlugin;
@@ -257,6 +312,9 @@ impl ActionPlugin for RequirePlugin {
         }
     }
 }
+
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(RequirePlugin) });
 
 /// `when` plugin (conditional block; wet-run).
 #[derive(Debug, Default, Clone, Copy)]
@@ -286,6 +344,9 @@ impl ActionPlugin for WhenPlugin {
     }
 }
 
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(WhenPlugin) });
+
 /// Wet-run `exec` plugin.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ExecPlugin;
@@ -305,6 +366,9 @@ impl ActionPlugin for ExecPlugin {
         }
     }
 }
+
+#[cfg(feature = "plugin-inventory")]
+inventory::submit!(PluginSubmission { factory: || Box::new(ExecPlugin) });
 
 // ---------------------------------------------------------------- tests
 
@@ -341,5 +405,28 @@ mod tests {
             assert_eq!(plugin.name(), name);
         }
         assert!(reg.get("unknown").is_none());
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn bootstrap_from_inventory_registers_all_seven_builtins() {
+        let reg = Registry::bootstrap_from_inventory();
+        assert_eq!(reg.len(), 7);
+        for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
+            let plugin = reg.get(name).unwrap_or_else(|| panic!("missing built-in `{name}`"));
+            assert_eq!(plugin.name(), name);
+        }
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn register_from_inventory_on_empty_registry_produces_seven_entries() {
+        let mut reg = Registry::new();
+        assert!(reg.is_empty());
+        reg.register_from_inventory();
+        assert_eq!(reg.len(), 7);
+        for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
+            assert!(reg.get(name).is_some(), "missing built-in `{name}`");
+        }
     }
 }
