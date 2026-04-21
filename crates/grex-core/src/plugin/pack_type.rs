@@ -584,13 +584,20 @@ impl PackTypePlugin for MetaPlugin {
         // composed last is torn down first — mirrors the
         // `reverse(actions)` default for declarative teardown (R-M5-11).
         let step = if ctx.visited_meta.is_some() {
+            // `?` propagates: if any child teardown fails the `?`
+            // short-circuits BEFORE `retire_gitignore` runs. On
+            // partial teardown the block stays to advertise the
+            // remaining patterns — operators can retry teardown
+            // once they've resolved the child failure.
             Self::recurse_children(ctx, pack.children.iter().rev(), MetaLifecycle::Teardown).await?
         } else {
             Self::synthesis_envelope(pack.children.iter().rev())
         };
-        // Retire the gitignore block AFTER children teardown succeeds
-        // so a half-torn-down tree still advertises the block (matches
-        // install-consistent halt behaviour).
+        // Retire the gitignore block AFTER all children teardown
+        // successfully (recurse_children path) or after the walker
+        // has already driven child teardown in reverse post-order
+        // (synthesis_envelope path). In both cases a child failure
+        // halts the pipeline before this retire executes.
         retire_gitignore(ctx, pack)?;
         Ok(step)
     }

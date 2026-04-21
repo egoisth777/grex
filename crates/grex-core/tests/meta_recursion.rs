@@ -549,6 +549,76 @@ fn cycle_detection_canonicalises_symlinks() {
     );
 }
 
+/// Child-failure preserves the parent meta pack's managed gitignore
+/// block: a partial teardown must leave the block in place so
+/// operators still see the advertised patterns until the remaining
+/// children tear down cleanly. Exercises the halt-before-retire
+/// ordering in `MetaPlugin::teardown` (recurse_children returns
+/// `Err(..)`, the `?` operator short-circuits before
+/// `retire_gitignore` runs).
+#[test]
+fn meta_teardown_child_failure_preserves_parent_gitignore_block() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("root");
+    let workspace = tmp.path().join("ws");
+    fs::create_dir_all(&workspace).unwrap();
+    // Parent meta pack with two children and an x-gitignore block.
+    let parent_yaml = "schema_version: \"1\"\nname: parent\ntype: meta\nx-gitignore:\n  - parent-ignored/\nchildren:\n  - url: https://example.invalid/a\n    path: a\n  - url: https://example.invalid/b\n    path: b\n";
+    write_pack(&root, parent_yaml);
+    // Child a: valid declarative pack (teardown succeeds).
+    write_pack(
+        &root.join("a"),
+        "schema_version: \"1\"\nname: child-a\ntype: declarative\n",
+    );
+    // Child b: malformed manifest → child teardown dispatch errors
+    // (load_child_manifest_from fails during recurse_children).
+    fs::create_dir_all(root.join("b").join(".grex")).unwrap();
+    fs::write(root.join("b").join(".grex").join("pack.yaml"), "garbage: : :").unwrap();
+
+    let pack = parse(parent_yaml);
+    let vars = VarEnv::default();
+    let action_reg = Arc::new(Registry::bootstrap());
+    let pack_type_reg = Arc::new(PackTypeRegistry::bootstrap());
+
+    // Install first so the parent's managed gitignore block exists.
+    // Only the parent meta has `x-gitignore`; children a/b don't write
+    // blocks (they are content-less declarative packs).
+    let v1 = new_visited();
+    let ctx1 = ExecCtx::new(&vars, &root, &workspace)
+        .with_registry(&action_reg)
+        .with_pack_type_registry(&pack_type_reg)
+        .with_visited_meta(&v1);
+    // Before install the malformed child would break the meta install
+    // too — fix `b` to be valid for install, then re-break it for the
+    // teardown dispatch path.
+    fs::write(
+        root.join("b").join(".grex").join("pack.yaml"),
+        "schema_version: \"1\"\nname: child-b\ntype: declarative\n",
+    )
+    .unwrap();
+    rt().block_on(MetaPlugin.install(&ctx1, &pack)).expect("install ok");
+    let gi_path = workspace.join(".gitignore");
+    let pre = fs::read_to_string(&gi_path).expect("gitignore present post-install");
+    assert!(pre.contains("# >>> grex:parent >>>"), "install must write block: {pre}");
+    // Now corrupt child b's manifest so teardown's child dispatch halts.
+    fs::write(root.join("b").join(".grex").join("pack.yaml"), "garbage: : :").unwrap();
+
+    // Teardown — child b fails → parent retire MUST NOT run.
+    let v2 = new_visited();
+    let ctx2 = ExecCtx::new(&vars, &root, &workspace)
+        .with_registry(&action_reg)
+        .with_pack_type_registry(&pack_type_reg)
+        .with_visited_meta(&v2);
+    let err = rt().block_on(MetaPlugin.teardown(&ctx2, &pack)).expect_err("child b halts");
+    assert!(matches!(err, ExecError::ExecInvalid(_)), "got: {err:?}");
+
+    let post = fs::read_to_string(&gi_path).expect("gitignore still present");
+    assert!(
+        post.contains("# >>> grex:parent >>>"),
+        "gitignore block must survive partial teardown: {post}"
+    );
+}
+
 // Tiny sanity guard: ensure the Path and PathBuf imports aren't flagged
 // as dead if no test exercises them directly.
 #[test]
