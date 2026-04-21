@@ -25,11 +25,13 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use crate::pack::{
     Action, EnvArgs, EnvScope, ExecOnFail, ExecSpec, MkdirArgs, RequireOnFail, RequireSpec,
     RmdirArgs, SymlinkArgs, SymlinkKind, WhenSpec,
 };
+use crate::plugin::Registry;
 use crate::vars::{expand, VarEnv};
 
 use super::ctx::ExecCtx;
@@ -43,18 +45,46 @@ use super::ActionExecutor;
 
 /// Wet-run [`ActionExecutor`] — performs real filesystem and process work.
 ///
-/// Stateless by contract; cheap to clone and safe to share across threads.
+/// Dispatch is registry-driven (M4-B S1): every action is resolved to an
+/// [`crate::plugin::ActionPlugin`] via the embedded [`Registry`] and the
+/// plugin's `execute` method is invoked. The registry is wrapped in an
+/// [`Arc`] so the executor stays `Clone` and cheap to share across
+/// threads; cloning the executor bumps a refcount rather than duplicating
+/// plugin state.
+///
 /// Callers are responsible for driving the sequence (plan-phase validators,
 /// ordering, rollback on failure); `FsExecutor` operates on one action at a
 /// time and never looks at peers.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct FsExecutor;
+#[derive(Debug, Clone)]
+pub struct FsExecutor {
+    registry: Arc<Registry>,
+}
+
+impl Default for FsExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FsExecutor {
-    /// Construct a fresh wet-run executor.
+    /// Construct a fresh wet-run executor backed by the full Tier-1
+    /// built-in registry ([`Registry::bootstrap`]). Equivalent to the
+    /// pre-M4-B signature; existing test sites continue to compile.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self { registry: Arc::new(Registry::bootstrap()) }
+    }
+
+    /// Construct a wet-run executor backed by an explicit registry.
+    ///
+    /// Used by the sync driver (which builds one registry at CLI entry
+    /// and shares it across executors) and by tests that need to exercise
+    /// the [`ExecError::UnknownAction`] path or shadow a built-in. For
+    /// typical call sites the bootstrapped [`FsExecutor::new`] is the
+    /// right default.
+    #[must_use]
+    pub fn with_registry(registry: Arc<Registry>) -> Self {
+        Self { registry }
     }
 }
 
@@ -64,15 +94,21 @@ impl ActionExecutor for FsExecutor {
     }
 
     fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-        match action {
-            Action::Symlink(s) => fs_symlink(s, ctx),
-            Action::Env(e) => fs_env(e, ctx),
-            Action::Mkdir(m) => fs_mkdir(m, ctx),
-            Action::Rmdir(r) => fs_rmdir(r, ctx),
-            Action::Require(r) => fs_require(r, ctx),
-            Action::When(w) => fs_when(self, w, ctx),
-            Action::Exec(x) => fs_exec(x, ctx),
-        }
+        let name = action.name();
+        let plugin =
+            self.registry.get(name).ok_or_else(|| ExecError::UnknownAction(name.to_string()))?;
+        // Attach our registry to the ctx so plugins that recurse (today:
+        // `when`) can dispatch nested actions through the same registry
+        // the caller handed us — preventing a fresh bootstrap that would
+        // shadow caller-registered custom plugins.
+        let nested_ctx = ExecCtx {
+            vars: ctx.vars,
+            pack_root: ctx.pack_root,
+            workspace: ctx.workspace,
+            platform: ctx.platform,
+            registry: Some(&self.registry),
+        };
+        plugin.execute(action, &nested_ctx)
     }
 }
 
@@ -91,7 +127,7 @@ fn require_path(expanded: String) -> Result<PathBuf, ExecError> {
 
 // ---------------------------------------------------------------- symlink
 
-fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_symlink(args: &SymlinkArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let src = require_path(expand_field(&args.src, ctx.vars, "symlink.src")?)?;
     let dst = require_path(expand_field(&args.dst, ctx.vars, "symlink.dst")?)?;
 
@@ -248,7 +284,7 @@ fn map_windows_symlink_error(dst: &Path, err: std::io::Error) -> ExecError {
 
 // ---------------------------------------------------------------- env
 
-fn fs_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_env(args: &EnvArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let value = expand_field(&args.value, ctx.vars, "env.value")?;
     apply_env(&args.name, &value, args.scope)?;
     Ok(ExecStep {
@@ -324,7 +360,7 @@ fn apply_env_machine(_name: &str, _value: &str) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- mkdir
 
-fn fs_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_mkdir(args: &MkdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "mkdir.path")?)?;
     let result = apply_mkdir(&path, args.mode.as_deref())?;
     Ok(ExecStep {
@@ -370,7 +406,7 @@ fn apply_mode(_path: &Path, _mode: Option<&str>) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- rmdir
 
-fn fs_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_rmdir(args: &RmdirArgs, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let path = require_path(expand_field(&args.path, ctx.vars, "rmdir.path")?)?;
     let result = apply_rmdir(&path, args.backup, args.force)?;
     Ok(ExecStep {
@@ -431,8 +467,8 @@ fn backup_with_timestamp(path: &Path) -> Result<(), ExecError> {
 
 // ---------------------------------------------------------------- require
 
-fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let satisfied = evaluate_combiner(&spec.combiner, ctx);
+pub(crate) fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let satisfied = evaluate_combiner(&spec.combiner, ctx)?;
     let outcome =
         if satisfied { PredicateOutcome::Satisfied } else { PredicateOutcome::Unsatisfied };
     let result = classify_require(satisfied, spec.on_fail)?;
@@ -443,12 +479,36 @@ fn fs_require(spec: &RequireSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecErr
     })
 }
 
-fn evaluate_combiner(combiner: &crate::pack::Combiner, ctx: &ExecCtx<'_>) -> bool {
+fn evaluate_combiner(
+    combiner: &crate::pack::Combiner,
+    ctx: &ExecCtx<'_>,
+) -> Result<bool, ExecError> {
     use crate::pack::Combiner;
     match combiner {
-        Combiner::AllOf(list) => list.iter().all(|p| evaluate(p, ctx)),
-        Combiner::AnyOf(list) => list.iter().any(|p| evaluate(p, ctx)),
-        Combiner::NoneOf(list) => !list.iter().any(|p| evaluate(p, ctx)),
+        Combiner::AllOf(list) => {
+            for p in list {
+                if !evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        Combiner::AnyOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        Combiner::NoneOf(list) => {
+            for p in list {
+                if evaluate(p, ctx)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
     }
 }
 
@@ -470,12 +530,20 @@ fn classify_require(satisfied: bool, on_fail: RequireOnFail) -> Result<ExecResul
 
 // ---------------------------------------------------------------- when
 
-fn fs_when(exec: &FsExecutor, spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
-    let branch_taken = evaluate_when_gate(spec, ctx);
+/// Wet-run `when` dispatch.
+///
+/// Nested actions are routed through the registry attached to `ctx` by the
+/// outer [`FsExecutor::execute`] so custom plugins registered by the caller
+/// are honoured inside `when` bodies. If no registry is attached (direct
+/// plugin invocation in a test that bypassed the executor), we fall back
+/// to a fresh bootstrap registry — the historical Stage-A behaviour —
+/// which preserves the built-in semantics.
+pub(crate) fn fs_when(spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let branch_taken = evaluate_when_gate(spec, ctx)?;
     let (result, nested_steps) = if branch_taken {
         let mut out = Vec::with_capacity(spec.actions.len());
         for a in &spec.actions {
-            out.push(exec.execute(a, ctx)?);
+            out.push(dispatch_nested(a, ctx)?);
         }
         (ExecResult::PerformedChange, out)
     } else {
@@ -488,9 +556,26 @@ fn fs_when(exec: &FsExecutor, spec: &WhenSpec, ctx: &ExecCtx<'_>) -> Result<Exec
     })
 }
 
+/// Dispatch one nested wet-run action via the registry attached to `ctx`.
+/// Falls back to a bootstrap registry when none is attached so direct
+/// plugin invocations in tests still resolve the Tier-1 built-ins.
+fn dispatch_nested(action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+    let name = action.name();
+    match ctx.registry {
+        Some(reg) => {
+            let plugin = reg.get(name).ok_or_else(|| ExecError::UnknownAction(name.to_string()))?;
+            plugin.execute(action, ctx)
+        }
+        None => {
+            let fallback = FsExecutor::new();
+            fallback.execute(action, ctx)
+        }
+    }
+}
+
 // ---------------------------------------------------------------- exec
 
-fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
+pub(crate) fn fs_exec(spec: &ExecSpec, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError> {
     let cwd = match spec.cwd.as_deref() {
         Some(s) => Some(require_path(expand_field(s, ctx.vars, "exec.cwd")?)?),
         None => None,

@@ -120,14 +120,15 @@ M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-cor
 
 1. **`ActionPlugin` trait** at `crates/grex-core/src/plugin/mod.rs`. Method signatures (exact):
    - `fn name(&self) -> &str`
-   - `async fn execute(&self, ctx: &ExecCtx<'_>, args: &Value) -> Result<ExecOutcome, ExecError>`
-   Rollback is NOT on the trait surface; it stays in the `ActionOutcome` contract as it does in the M3 executor shape. Rationale: matches the current executor's outcome-carrying model; promoting to a trait method is an M5+ decision if pack-type drivers require it.
+   - `fn execute(&self, action: &Action, ctx: &ExecCtx<'_>) -> Result<ExecStep, ExecError>`
+   (2026-04-20 — aligned with shipped trait in M4-B review fix.) Sync `fn` (not `async`); takes the typed `&Action` (not raw `&Value`); returns the richer `ExecStep` envelope (not the retired `ActionOutcome`). The async + `&Value` shape is reserved for v2 external plugin loading (dylib/WASM) where the trait crosses an ABI boundary. Rollback is NOT on the trait surface; per-action inverse logic stays in the executor. Promoting rollback to a trait method is an M5+ decision if pack-type drivers require it.
 2. **`Registry` struct** with methods:
    - `fn register<P: ActionPlugin + 'static>(&mut self, plugin: P)`
    - `fn get(&self, name: &str) -> Option<&dyn ActionPlugin>`
    - `fn bootstrap() -> Self` — returns a `Registry` pre-populated with all 7 built-ins via `register_builtins(&mut reg)`.
-3. **Built-in re-export**: the 7 current built-ins (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) move behind the `ActionPlugin` trait. Executor dispatch becomes `registry.get(action.name()).ok_or(UnknownAction)` instead of a direct match on the parsed `Action` enum. The `Action` enum stays as the parsed form; the trait layer is the execution form.
-4. **Lockfile `actions_hash`** computed per pack as sha256 of canonical JSON of the pack's `actions:` list plus the resolved commit sha. On sync, if the stored hash equals the recomputed hash the executor emits `ExecResult::Skipped { pack_path, actions_hash }` and performs no work for that pack. Stored in the existing lockfile JSONL via a new `Skipped` event; the variant was reserved in PR #14.
+3. **Built-in re-export** (Stage A): the 7 current built-ins (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) move behind the `ActionPlugin` trait and are re-exported from `grex-core::plugin`. Stage A keeps executor dispatch on the existing direct `Action` enum match — the `Registry` is a parallel surface exercised only by plugin-layer unit tests. **Executor dispatch swap is Stage B** (see §4a below), deferred 2026-04-20 because threading `Registry` through `FsExecutor` / `PlanExecutor` cascades into >50 test-constructor changes; cleaner as its own unit. The `Action` enum stays as the parsed form; post-Stage-B the trait layer is the execution form.
+4. **Executor dispatch swap (Stage B)**: executor dispatch becomes `registry.get(action.name()).ok_or(UnknownAction)` in place of the direct match on the parsed `Action` enum. Landed together with lockfile idempotency (§4a) because both stages thread `Registry` / lockfile state through the executor constructors.
+4a. **Lockfile `actions_hash`** (Stage B): computed per pack as sha256 of canonical JSON of the pack's `actions:` list plus the resolved commit sha. On sync, if the stored hash equals the recomputed hash the executor emits `ExecResult::Skipped { pack_path, actions_hash }` and performs no work for that pack. Stored in the existing lockfile JSONL via a new `Skipped` event; the variant was reserved in PR #14.
 5. **Real predicate probes**:
    - `reg_key`: Windows uses the `winreg` crate (`RegOpenKeyEx` + `RegQueryValueEx`); non-Windows returns `PredicateNotSupported`.
    - `psversion`: Windows probes `$PSVersionTable.PSVersion` via `powershell.exe -NoProfile -Command`; non-Windows returns `PredicateNotSupported`.
@@ -142,5 +143,5 @@ M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-cor
 
 - External plugin loading: dylib (`libloading`), WASM (`wasmtime` / `extism`), `abi_stable` wiring.
 - Third-party crate plugin distribution (out-of-repo plugins).
-- Rollback as a trait method — stays in the `ActionOutcome` contract; promote to trait in M5+ if pack-type drivers require it.
+- Rollback as a trait method — per-action inverse logic stays in the executor (the retired `ActionOutcome` shape is not the home; `ExecStep` is the v1 per-action envelope). Promote to trait in M5+ if pack-type drivers require it.
 - `PackTypePlugin` trait work — that is M5 scope per `milestone.md`.

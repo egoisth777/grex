@@ -90,7 +90,7 @@ fn plan_symlink_expands_vars() {
     vars.insert("HOME", "/home/user");
     let t = tmp();
     let action = mk_symlink_action("$HOME/src", "$HOME/dst");
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     match step.details {
         StepKind::Symlink { src, dst, .. } => {
             assert_eq!(src, PathBuf::from("/home/user/src"));
@@ -106,7 +106,7 @@ fn plan_symlink_missing_var_errors() {
     let vars = VarEnv::new();
     let t = tmp();
     let action = mk_symlink_action("$UNKNOWN/src", "/tmp/dst");
-    let err = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap_err();
+    let err = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap_err();
     assert!(matches!(err, ExecError::VarExpand { field: "symlink.src", .. }));
 }
 
@@ -121,7 +121,7 @@ fn plan_symlink_already_exists_reports_satisfied() {
 
     let vars = VarEnv::new();
     let action = mk_symlink_action(src.to_str().unwrap(), dst.to_str().unwrap());
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     assert_eq!(step.result, ExecResult::AlreadySatisfied);
 }
 
@@ -138,7 +138,7 @@ fn plan_symlink_wrong_target_reports_would_change() {
 
     let vars = VarEnv::new();
     let action = mk_symlink_action(real_src.to_str().unwrap(), dst.to_str().unwrap());
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     assert_eq!(step.result, ExecResult::WouldPerformChange);
 }
 
@@ -148,8 +148,9 @@ fn plan_symlink_wrong_target_reports_would_change() {
 fn plan_env_reports_would_perform() {
     let vars = VarEnv::new();
     let t = tmp();
-    let step =
-        PlanExecutor.execute(&mk_env_action("FOO", "bar"), &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new()
+        .execute(&mk_env_action("FOO", "bar"), &empty_ctx(&vars, t.path()))
+        .unwrap();
     assert_eq!(step.result, ExecResult::WouldPerformChange);
 }
 
@@ -158,8 +159,9 @@ fn plan_env_already_matches_reports_satisfied() {
     let mut vars = VarEnv::new();
     vars.insert("FOO", "bar");
     let t = tmp();
-    let step =
-        PlanExecutor.execute(&mk_env_action("FOO", "bar"), &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new()
+        .execute(&mk_env_action("FOO", "bar"), &empty_ctx(&vars, t.path()))
+        .unwrap();
     assert_eq!(step.result, ExecResult::AlreadySatisfied);
 }
 
@@ -168,7 +170,7 @@ fn plan_env_value_expansion() {
     let mut vars = VarEnv::new();
     vars.insert("BASE", "/opt");
     let t = tmp();
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_env_action("FOO", "$BASE/bin"), &empty_ctx(&vars, t.path()))
         .unwrap();
     match step.details {
@@ -185,7 +187,7 @@ fn plan_mkdir_idempotent() {
     let existing = t.path().join("already");
     std::fs::create_dir(&existing).unwrap();
     let vars = VarEnv::new();
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_mkdir(existing.to_str().unwrap()), &empty_ctx(&vars, t.path()))
         .unwrap();
     assert_eq!(step.result, ExecResult::AlreadySatisfied);
@@ -196,7 +198,7 @@ fn plan_mkdir_needed() {
     let t = tmp();
     let vars = VarEnv::new();
     let missing = t.path().join("new-dir");
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_mkdir(missing.to_str().unwrap()), &empty_ctx(&vars, t.path()))
         .unwrap();
     assert_eq!(step.result, ExecResult::WouldPerformChange);
@@ -207,7 +209,7 @@ fn plan_rmdir_noop_when_absent() {
     let t = tmp();
     let vars = VarEnv::new();
     let missing = t.path().join("not-there");
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_rmdir(missing.to_str().unwrap()), &empty_ctx(&vars, t.path()))
         .unwrap();
     assert_eq!(step.result, ExecResult::AlreadySatisfied);
@@ -219,7 +221,7 @@ fn plan_rmdir_present_would_perform() {
     let existing = t.path().join("gone-soon");
     std::fs::create_dir(&existing).unwrap();
     let vars = VarEnv::new();
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_rmdir(existing.to_str().unwrap()), &empty_ctx(&vars, t.path()))
         .unwrap();
     assert_eq!(step.result, ExecResult::WouldPerformChange);
@@ -235,7 +237,7 @@ fn plan_require_satisfied() {
     std::fs::write(&existing, b"x").unwrap();
     let pred = Predicate::PathExists(existing.to_str().unwrap().to_string());
     let action = mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Error);
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     assert_eq!(step.result, ExecResult::AlreadySatisfied);
     match step.details {
         StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
@@ -249,7 +251,7 @@ fn plan_require_unsatisfied_errors() {
     let vars = VarEnv::new();
     let pred = Predicate::PathExists("/definitely/not/here-xyz".to_string());
     let action = mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Error);
-    let err = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap_err();
+    let err = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap_err();
     assert!(matches!(err, ExecError::RequireFailed { .. }));
 }
 
@@ -259,7 +261,7 @@ fn plan_require_unsatisfied_skip_is_noop() {
     let vars = VarEnv::new();
     let pred = Predicate::PathExists("/definitely/not/here-xyz".to_string());
     let action = mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip);
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     assert_eq!(step.result, ExecResult::NoOp);
     match step.details {
         StepKind::Require { outcome, on_fail } => {
@@ -276,7 +278,7 @@ fn plan_require_unsatisfied_warn_is_noop() {
     let vars = VarEnv::new();
     let pred = Predicate::PathExists("/definitely/not/here-xyz".to_string());
     let action = mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Warn);
-    let step = PlanExecutor.execute(&action, &empty_ctx(&vars, t.path())).unwrap();
+    let step = PlanExecutor::new().execute(&action, &empty_ctx(&vars, t.path())).unwrap();
     assert_eq!(step.result, ExecResult::NoOp);
 }
 
@@ -289,7 +291,7 @@ fn plan_when_matching_os_recurses() {
     let nested = mk_mkdir(t.path().join("linux-only").to_str().unwrap());
     let action = mk_when(Some(OsKind::Linux), vec![nested]);
     let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
-    let step = PlanExecutor.execute(&action, &ctx).unwrap();
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
     match step.details {
         StepKind::When { branch_taken, nested_steps } => {
             assert!(branch_taken);
@@ -307,7 +309,7 @@ fn plan_when_non_matching_os_no_branch() {
     let nested = mk_mkdir(t.path().join("wat").to_str().unwrap());
     let action = mk_when(Some(OsKind::Windows), vec![nested]);
     let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
-    let step = PlanExecutor.execute(&action, &ctx).unwrap();
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
     assert_eq!(step.result, ExecResult::NoOp);
     match step.details {
         StepKind::When { branch_taken, nested_steps } => {
@@ -333,7 +335,7 @@ fn plan_when_conjunctive_os_plus_allof() {
     );
     let action = Action::When(spec);
     let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
-    let step = PlanExecutor.execute(&action, &ctx).unwrap();
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
     match step.details {
         StepKind::When { branch_taken, .. } => assert!(branch_taken),
         other => panic!("expected When, got {other:?}"),
@@ -355,7 +357,8 @@ fn plan_exec_builds_cmdline_argv() {
         None,
         ExecOnFail::Error,
     );
-    let step = PlanExecutor.execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
+    let step =
+        PlanExecutor::new().execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
     match step.details {
         StepKind::Exec { cmdline, shell, .. } => {
             assert_eq!(cmdline, "echo hello");
@@ -373,7 +376,8 @@ fn plan_exec_builds_cmdline_shell() {
     vars.insert("X", "there");
     let spec =
         ExecSpec::new(None, Some("echo hi $X".to_string()), true, None, None, ExecOnFail::Warn);
-    let step = PlanExecutor.execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
+    let step =
+        PlanExecutor::new().execute(&Action::Exec(spec), &empty_ctx(&vars, t.path())).unwrap();
     match step.details {
         StepKind::Exec { cmdline, shell, on_fail, .. } => {
             assert_eq!(cmdline, "echo hi there");
@@ -397,8 +401,8 @@ fn predicate_path_exists_true_false() {
     let false_pred = Predicate::PathExists("/nope/nowhere-xyz".to_string());
     let action_t = mk_require(Combiner::AllOf(vec![true_pred]), RequireOnFail::Skip);
     let action_f = mk_require(Combiner::AllOf(vec![false_pred]), RequireOnFail::Skip);
-    let step_t = PlanExecutor.execute(&action_t, &ctx).unwrap();
-    let step_f = PlanExecutor.execute(&action_f, &ctx).unwrap();
+    let step_t = PlanExecutor::new().execute(&action_t, &ctx).unwrap();
+    let step_f = PlanExecutor::new().execute(&action_f, &ctx).unwrap();
     match step_t.details {
         StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
         other => panic!("unexpected {other:?}"),
@@ -433,10 +437,10 @@ fn predicate_cmd_available_checks_path() {
 
     let present = Predicate::CmdAvailable("faketool".to_string());
     let absent = Predicate::CmdAvailable("definitely-not-there-xyz".to_string());
-    let step_p = PlanExecutor
+    let step_p = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![present]), RequireOnFail::Skip), &ctx)
         .unwrap();
-    let step_a = PlanExecutor
+    let step_a = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![absent]), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step_p.details {
@@ -456,7 +460,7 @@ fn predicate_os_matches_current_platform() {
     let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
     let action =
         mk_require(Combiner::AllOf(vec![Predicate::Os(OsKind::Linux)]), RequireOnFail::Skip);
-    let step = PlanExecutor.execute(&action, &ctx).unwrap();
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
     match step.details {
         StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
         other => panic!("unexpected {other:?}"),
@@ -474,7 +478,7 @@ fn predicate_combiner_all_of() {
         Predicate::PathExists(real.to_str().unwrap().to_string()),
         Predicate::PathExists("/nope-xyz".to_string()),
     ];
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(mixed), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step.details {
@@ -494,7 +498,7 @@ fn predicate_combiner_any_of() {
         Predicate::PathExists("/nope-xyz".to_string()),
         Predicate::PathExists(real.to_str().unwrap().to_string()),
     ];
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_require(Combiner::AnyOf(mixed), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step.details {
@@ -509,7 +513,7 @@ fn predicate_combiner_none_of_inverts() {
     let vars = VarEnv::new();
     let ctx = empty_ctx(&vars, t.path());
     let all_missing = vec![Predicate::PathExists("/no-xyz".to_string())];
-    let step = PlanExecutor
+    let step = PlanExecutor::new()
         .execute(&mk_require(Combiner::NoneOf(all_missing), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step.details {
@@ -528,15 +532,21 @@ fn predicate_nested_combiner_depth_2() {
     let inner_any =
         Predicate::AnyOf(vec![Predicate::PathExists(real.to_str().unwrap().to_string())]);
     let outer = Combiner::AllOf(vec![inner_any]);
-    let step = PlanExecutor.execute(&mk_require(outer, RequireOnFail::Skip), &ctx).unwrap();
+    let step = PlanExecutor::new().execute(&mk_require(outer, RequireOnFail::Skip), &ctx).unwrap();
     match step.details {
         StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
         other => panic!("unexpected {other:?}"),
     }
 }
 
+// M4-C: `reg_key` / `psversion` went from conservative-false stubs to real
+// probes on Windows and a typed `PredicateNotSupported` error elsewhere.
+// The pre-M4-C "defaults_false_stage5a" tests are retired; their
+// replacements live below (platform-gated).
+
+#[cfg(not(windows))]
 #[test]
-fn predicate_reg_key_defaults_false_stage5a() {
+fn predicate_reg_key_errors_on_non_windows() {
     let t = tmp();
     let vars = VarEnv::new();
     let ctx = empty_ctx(&vars, t.path());
@@ -544,26 +554,146 @@ fn predicate_reg_key_defaults_false_stage5a() {
         path: "HKCU\\Software\\Grex\\Probe".to_string(),
         name: Some("V".to_string()),
     };
-    let step = PlanExecutor
+    let err = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
-        .unwrap();
-    match step.details {
-        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Unsatisfied),
+        .expect_err("reg_key must not be satisfiable off Windows");
+    match err {
+        ExecError::PredicateNotSupported { predicate, platform } => {
+            assert_eq!(predicate, "reg_key");
+            // Brief's zero-drift audit: platform field tracks
+            // `std::env::consts::OS`.
+            assert_eq!(platform, std::env::consts::OS);
+        }
         other => panic!("unexpected {other:?}"),
     }
 }
 
+// F5: nested `Predicate::AnyOf` on non-Windows — a `reg_key` leg returns
+// `PredicateNotSupported`, which the combiner must tolerate so the
+// sibling `path_exists` leg can rescue the expression.
+#[cfg(not(windows))]
 #[test]
-fn predicate_ps_version_defaults_false_stage5a() {
+fn predicate_any_of_tolerates_unsupported_leg_on_non_windows() {
+    let t = tmp();
+    let rescue = t.path().join("rescue");
+    std::fs::write(&rescue, b"").unwrap();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    let pred = Predicate::AnyOf(vec![
+        Predicate::RegKey {
+            path: "HKCU\\Software\\Grex\\Probe".to_string(),
+            name: Some("V".to_string()),
+        },
+        Predicate::PathExists(rescue.to_str().unwrap().to_string()),
+    ]);
+    let step = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .expect("combiner must rescue unsupported leg");
+    match step.details {
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+// F5: top-level single-leaf `require: [{reg_key: ...}]` on non-Windows
+// must still bubble `PredicateNotSupported` — combiner tolerance does
+// NOT extend to the top-level `Combiner` attached to `RequireSpec`.
+#[cfg(not(windows))]
+#[test]
+fn predicate_top_level_require_bubbles_unsupported() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    let pred = Predicate::RegKey { path: "HKCU\\Software\\Probe".to_string(), name: None };
+    let err = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Error), &ctx)
+        .expect_err("top-level require must not swallow PredicateNotSupported");
+    assert!(
+        matches!(err, ExecError::PredicateNotSupported { predicate: "reg_key", .. }),
+        "got {err:?}"
+    );
+}
+
+// F5 + when-gate: the same tolerance must hold for `when.any_of` legs on
+// non-Windows so cross-platform `when` gates do not halt on a
+// `reg_key` leg that is unanswerable here.
+#[cfg(not(windows))]
+#[test]
+fn when_gate_any_of_tolerates_unsupported_leg_on_non_windows() {
+    let t = tmp();
+    let rescue = t.path().join("rescue");
+    std::fs::write(&rescue, b"").unwrap();
+    let vars = VarEnv::new();
+    let spec = WhenSpec::new(
+        None,
+        None,
+        Some(vec![
+            Predicate::RegKey { path: "HKCU\\Software\\Probe".to_string(), name: None },
+            Predicate::PathExists(rescue.to_str().unwrap().to_string()),
+        ]),
+        None,
+        vec![mk_mkdir(t.path().join("out").to_str().unwrap())],
+    );
+    let action = Action::When(spec);
+    let ctx = ctx_with(&vars, t.path(), t.path(), Platform::Linux);
+    let step = PlanExecutor::new().execute(&action, &ctx).unwrap();
+    match step.details {
+        StepKind::When { branch_taken, nested_steps } => {
+            assert!(branch_taken, "any_of must rescue via path_exists leg");
+            assert_eq!(nested_steps.len(), 1);
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn predicate_ps_version_errors_on_non_windows() {
     let t = tmp();
     let vars = VarEnv::new();
     let ctx = empty_ctx(&vars, t.path());
     let pred = Predicate::PsVersion(">=5.1".to_string());
-    let step = PlanExecutor
+    let err = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .expect_err("psversion must not be satisfiable off Windows");
+    match err {
+        ExecError::PredicateNotSupported { predicate, .. } => {
+            assert_eq!(predicate, "psversion");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn predicate_reg_key_probes_real_registry_on_windows() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    // HKLM\Software exists on every Windows install.
+    let pred = Predicate::RegKey { path: "HKLM\\Software".to_string(), name: None };
+    let step = PlanExecutor::new()
         .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
         .unwrap();
     match step.details {
-        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Unsatisfied),
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn predicate_ps_version_probes_powershell_on_windows() {
+    let t = tmp();
+    let vars = VarEnv::new();
+    let ctx = empty_ctx(&vars, t.path());
+    // Every supported Windows runner ships PowerShell >= 1.
+    let pred = Predicate::PsVersion(">=1".to_string());
+    let step = PlanExecutor::new()
+        .execute(&mk_require(Combiner::AllOf(vec![pred]), RequireOnFail::Skip), &ctx)
+        .unwrap();
+    match step.details {
+        StepKind::Require { outcome, .. } => assert_eq!(outcome, PredicateOutcome::Satisfied),
         other => panic!("unexpected {other:?}"),
     }
 }

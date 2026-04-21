@@ -40,13 +40,21 @@ pub enum ExecResult {
     /// Action was a no-op: `when.os` branch not taken, or `require` failed
     /// with `on_fail: skip | warn`. Not an error.
     NoOp,
-    /// Action was deliberately skipped by a caller-level policy (lockfile
-    /// actions-hash match, user decline, plugin veto, …). The `reason`
-    /// string is informational — consumers should render it verbatim. No
-    /// executor emits this variant in M3; it is reserved for M4+.
+    /// Action was deliberately skipped by a caller-level policy — in M4 the
+    /// trigger is a lockfile `actions_hash` match on the pack. The variant
+    /// carries the pack path and the matched hash so downstream audit
+    /// tooling can render "pack X at hash Y was skipped" without having to
+    /// thread extra context.
+    ///
+    /// Marked `#[non_exhaustive]` at the variant level so future audit
+    /// fields (e.g. `skipped_at`, `policy_source`) can be added without
+    /// breaking downstream struct-pattern match sites.
+    #[non_exhaustive]
     Skipped {
-        /// Short human-readable explanation for audit / CLI display.
-        reason: String,
+        /// Path to the pack whose actions were skipped.
+        pack_path: std::path::PathBuf,
+        /// Actions-hash that matched the lockfile entry.
+        actions_hash: String,
     },
 }
 
@@ -139,6 +147,14 @@ pub enum StepKind {
         /// Whether this is a shell form.
         shell: bool,
     },
+    /// Dedicated pack-level skip detail. Emitted when a pack's
+    /// `actions_hash` matches a prior lockfile entry and the sync layer
+    /// short-circuits the entire pack. Replaces the M4-B proxy of
+    /// `Require { Satisfied, Skip }` with `action_name == "pack"`.
+    PackSkipped {
+        /// Actions-hash that matched the lockfile entry for this pack.
+        actions_hash: String,
+    },
 }
 
 /// Observable record of a single action's execution (or planned execution).
@@ -178,3 +194,37 @@ pub const ACTION_REQUIRE: &str = "require";
 pub const ACTION_WHEN: &str = "when";
 /// Built-in `exec` action identifier.
 pub const ACTION_EXEC: &str = "exec";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skipped_carries_pack_path_and_hash() {
+        // Within-crate construction of a `#[non_exhaustive]` variant is
+        // allowed without `..`; this guards against accidental promotion
+        // of the variant to `#[non_exhaustive(pub)]`-equivalent semantics.
+        let r = ExecResult::Skipped {
+            pack_path: PathBuf::from("/tmp/packs/foo"),
+            actions_hash: "a".repeat(64),
+        };
+        match r {
+            ExecResult::Skipped { pack_path, actions_hash } => {
+                assert_eq!(pack_path, PathBuf::from("/tmp/packs/foo"));
+                assert_eq!(actions_hash.len(), 64);
+            }
+            _ => panic!("expected Skipped"),
+        }
+    }
+
+    #[test]
+    fn pack_skipped_round_trips() {
+        let k = StepKind::PackSkipped { actions_hash: "abc".into() };
+        match k {
+            StepKind::PackSkipped { actions_hash } => {
+                assert_eq!(actions_hash, "abc");
+            }
+            _ => panic!("expected PackSkipped"),
+        }
+    }
+}

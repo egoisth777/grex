@@ -87,7 +87,7 @@ fn sync_pre_action_event_written_before_execute() {
     write_pack_yaml(&pack_root, &mkdir_pack(target.to_str().unwrap()));
     let workspace = tmp.path().join("ws");
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("sync ok");
     assert!(report.halted.is_none(), "no halt on success path");
 
@@ -117,7 +117,7 @@ fn sync_halted_event_written_on_error() {
     write_pack_yaml(&pack_root, &failing_exec_pack());
     let workspace = tmp.path().join("ws");
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("sync returns report even on halt");
     assert!(report.halted.is_some(), "must halt");
 
@@ -146,7 +146,7 @@ fn sync_halted_context_carries_pack_action_error() {
     write_pack_yaml(&pack_root, &failing_exec_pack());
     let workspace = tmp.path().join("ws");
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("report");
     let Some(SyncError::Halted(ctx)) = report.halted else {
         panic!("expected Halted variant, got {:?}", report.halted);
@@ -248,7 +248,7 @@ fn exec_nonzero_captures_stderr() {
     );
     write_pack_yaml(&pack_root, body);
     let workspace = tmp.path().join("ws");
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("report");
     let Some(SyncError::Halted(ctx)) = report.halted else {
         panic!("expected Halted, got {:?}", report.halted);
@@ -275,7 +275,7 @@ fn noop_pack_writes_no_action_events() {
     write_pack_yaml(&pack_root, NOOP_PACK);
     let workspace = tmp.path().join("ws");
 
-    let opts = SyncOptions { workspace: Some(workspace), ..Default::default() };
+    let opts = SyncOptions::new().with_workspace(Some(workspace));
     sync_run(&pack_root, &opts).expect("sync ok");
 
     let log = pack_root.join(".grex").join("grex.jsonl");
