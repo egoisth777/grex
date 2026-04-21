@@ -22,6 +22,15 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = "0.10"
 globset = { workspace = true }
+inventory = { version = "0.3", optional = true }
+
+[features]
+# Opt-in compile-time auto-registration of Tier-1 built-in action plugins
+# via the `inventory` crate. Off by default so `grex-core` carries no hard
+# dependency on `inventory`; linker-based collection is a deployment
+# concern per-consumer. See `.omne/cfg/plugin-api.md` §"Feature flag
+# `plugin-inventory`" and `openspec/feat-grex/spec.md` §7.
+plugin-inventory = ["dep:inventory"]
 
 # Windows-only: HKCU / HKLM env-variable persistence for `env` action in
 # FsExecutor, plus the `reg_key` predicate probe (M4-C) in
