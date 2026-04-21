@@ -269,10 +269,7 @@ use crate::tree::{FsPackLoader, PackLoader};
 /// Returns [`ExecError::ExecInvalid`] when the manifest cannot be read
 /// or parsed. The error carries the resolved path so callers can render
 /// actionable diagnostics.
-pub fn load_child_manifest(
-    ctx: &ExecCtx<'_>,
-    child: &ChildRef,
-) -> Result<PackManifest, ExecError> {
+pub fn load_child_manifest(ctx: &ExecCtx<'_>, child: &ChildRef) -> Result<PackManifest, ExecError> {
     let dir = ctx.workspace.join(child.effective_path());
     load_child_manifest_from(&dir)
 }
@@ -716,6 +713,38 @@ mod tests {
             assert_eq!(plugin.name(), name);
         }
         assert!(reg.get("unknown").is_none());
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn bootstrap_from_inventory_registers_all_three_builtins() {
+        let reg = PackTypeRegistry::bootstrap_from_inventory();
+        assert_eq!(reg.len(), 3);
+        for name in ["meta", "declarative", "scripted"] {
+            let plugin = reg.get(name).unwrap_or_else(|| panic!("missing built-in `{name}`"));
+            assert_eq!(plugin.name(), name);
+        }
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn register_from_inventory_on_empty_registry_produces_three_entries() {
+        let mut reg = PackTypeRegistry::new();
+        assert!(reg.is_empty());
+        reg.register_from_inventory();
+        assert_eq!(reg.len(), 3);
+        for name in ["meta", "declarative", "scripted"] {
+            assert!(reg.get(name).is_some(), "missing built-in `{name}`");
+        }
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn register_from_inventory_twice_dedups_to_three() {
+        let mut reg = PackTypeRegistry::new();
+        reg.register_from_inventory();
+        reg.register_from_inventory();
+        assert_eq!(reg.len(), 3);
     }
 
     #[test]
