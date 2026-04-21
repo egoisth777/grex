@@ -99,6 +99,7 @@ impl ActionExecutor for PlanExecutor {
             workspace: ctx.workspace,
             platform: ctx.platform,
             registry: Some(&self.registry),
+            pack_type_registry: ctx.pack_type_registry,
         };
         dispatch_plan(action, &nested_ctx)
     }

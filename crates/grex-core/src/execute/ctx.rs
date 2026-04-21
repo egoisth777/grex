@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::plugin::Registry;
+use crate::plugin::{PackTypeRegistry, Registry};
 use crate::vars::VarEnv;
 
 /// OS discriminator used by the planner and `when`/`os` predicate paths.
@@ -115,6 +115,17 @@ pub struct ExecCtx<'a> {
     /// absence as "no nested dispatch available" and fall back to their
     /// own bootstrap.
     pub registry: Option<&'a Arc<Registry>>,
+    /// Outer [`PackTypeRegistry`] handle for pack-type plugins that recurse
+    /// across sibling pack types (today: `meta` dispatching into child
+    /// packs of arbitrary type). Populated by the pack-level driver before
+    /// invoking [`crate::plugin::PackTypePlugin`] methods. `None` outside a
+    /// driver-scoped call — see [`ExecCtx::registry`] for the same pattern
+    /// at the action level.
+    ///
+    /// Stage B (M5-1B) only exposes the slot; the dispatch swap that
+    /// actually threads a pack-type registry through the executor chain
+    /// lands in Stage C.
+    pub pack_type_registry: Option<&'a Arc<PackTypeRegistry>>,
 }
 
 impl<'a> ExecCtx<'a> {
@@ -123,7 +134,14 @@ impl<'a> ExecCtx<'a> {
     /// [`ExecCtx::with_registry`] before invoking plugin dispatch.
     #[must_use]
     pub fn new(vars: &'a VarEnv, pack_root: &'a Path, workspace: &'a Path) -> Self {
-        Self { vars, pack_root, workspace, platform: Platform::current(), registry: None }
+        Self {
+            vars,
+            pack_root,
+            workspace,
+            platform: Platform::current(),
+            registry: None,
+            pack_type_registry: None,
+        }
     }
 
     /// Override the platform tag (useful for tests and dry-run overrides).
@@ -141,6 +159,18 @@ impl<'a> ExecCtx<'a> {
     #[must_use]
     pub fn with_registry(mut self, reg: &'a Arc<Registry>) -> Self {
         self.registry = Some(reg);
+        self
+    }
+
+    /// Attach the outer [`PackTypeRegistry`] so pack-type plugins that
+    /// recurse across child packs (today: `meta`) dispatch through the
+    /// caller's registry rather than a fresh
+    /// [`PackTypeRegistry::bootstrap`]. The dispatch swap that exercises
+    /// this slot ships in M5-1 Stage C; Stage B only lands the slot and
+    /// the builder method.
+    #[must_use]
+    pub fn with_pack_type_registry(mut self, reg: &'a Arc<PackTypeRegistry>) -> Self {
+        self.pack_type_registry = Some(reg);
         self
     }
 }
