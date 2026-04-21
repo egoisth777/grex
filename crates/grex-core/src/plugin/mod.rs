@@ -136,7 +136,9 @@ impl Registry {
 
     /// Register every plugin submitted via [`inventory::submit!`] into the
     /// `PluginSubmission` collector. Order is linker-defined; duplicate
-    /// names follow `register`'s last-writer-wins rule.
+    /// names follow `register`'s last-writer-wins rule. Safe to call after
+    /// [`Registry::bootstrap`] — inventory entries shadow existing
+    /// registrations like any other `register` call (last-writer-wins).
     ///
     /// Only available when the `plugin-inventory` feature is enabled.
     #[cfg(feature = "plugin-inventory")]
@@ -169,10 +171,23 @@ impl Registry {
 /// `plugin-inventory` can construct a `Registry` purely from linker-time
 /// registrations instead of calling [`register_builtins`] explicitly.
 #[cfg(feature = "plugin-inventory")]
+#[non_exhaustive]
 pub struct PluginSubmission {
     /// Factory producing a boxed plugin instance. Invoked once per
     /// submission during [`Registry::register_from_inventory`].
     pub factory: fn() -> Box<dyn ActionPlugin>,
+}
+
+#[cfg(feature = "plugin-inventory")]
+impl PluginSubmission {
+    /// Construct a submission from a plugin factory. Prefer this over
+    /// struct-literal syntax so future fields can be added without
+    /// breaking downstream `inventory::submit!` sites (the type is
+    /// `#[non_exhaustive]`).
+    #[must_use]
+    pub const fn new(factory: fn() -> Box<dyn ActionPlugin>) -> Self {
+        Self { factory }
+    }
 }
 
 #[cfg(feature = "plugin-inventory")]
@@ -222,7 +237,7 @@ impl ActionPlugin for SymlinkPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(SymlinkPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(SymlinkPlugin)));
 
 /// Wet-run `env` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -245,7 +260,7 @@ impl ActionPlugin for EnvPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(EnvPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(EnvPlugin)));
 
 /// Wet-run `mkdir` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -268,7 +283,7 @@ impl ActionPlugin for MkdirPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(MkdirPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(MkdirPlugin)));
 
 /// Wet-run `rmdir` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -291,7 +306,7 @@ impl ActionPlugin for RmdirPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(RmdirPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(RmdirPlugin)));
 
 /// `require` plugin (predicate gate; side-effect-free).
 #[derive(Debug, Default, Clone, Copy)]
@@ -314,7 +329,7 @@ impl ActionPlugin for RequirePlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(RequirePlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(RequirePlugin)));
 
 /// `when` plugin (conditional block; wet-run).
 #[derive(Debug, Default, Clone, Copy)]
@@ -345,7 +360,7 @@ impl ActionPlugin for WhenPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(WhenPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(WhenPlugin)));
 
 /// Wet-run `exec` plugin.
 #[derive(Debug, Default, Clone, Copy)]
@@ -368,7 +383,7 @@ impl ActionPlugin for ExecPlugin {
 }
 
 #[cfg(feature = "plugin-inventory")]
-inventory::submit!(PluginSubmission { factory: || Box::new(ExecPlugin) });
+inventory::submit!(PluginSubmission::new(|| Box::new(ExecPlugin)));
 
 // ---------------------------------------------------------------- tests
 
@@ -428,5 +443,14 @@ mod tests {
         for name in ["symlink", "env", "mkdir", "rmdir", "require", "when", "exec"] {
             assert!(reg.get(name).is_some(), "missing built-in `{name}`");
         }
+    }
+
+    #[cfg(feature = "plugin-inventory")]
+    #[test]
+    fn register_from_inventory_twice_dedups_to_seven() {
+        let mut reg = Registry::new();
+        reg.register_from_inventory();
+        reg.register_from_inventory();
+        assert_eq!(reg.len(), 7);
     }
 }
