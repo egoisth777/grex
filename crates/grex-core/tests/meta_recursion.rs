@@ -58,9 +58,7 @@ fn meta_pack_with_children(name: &str, child_paths: &[&str]) -> String {
         yaml.push_str("children:\n");
         for path in child_paths {
             // Use a placeholder url; the plugin resolves via `path:`.
-            yaml.push_str(&format!(
-                "  - url: https://example.invalid/{path}\n    path: {path}\n"
-            ));
+            yaml.push_str(&format!("  - url: https://example.invalid/{path}\n    path: {path}\n"));
         }
     }
     yaml
@@ -211,10 +209,7 @@ fn meta_cycle_a_to_b_to_a_errors() {
     let ctx = ctx(&vars, &dir_a, tmp.path(), &action_reg, &pack_type_reg, &visited);
 
     let err = rt().block_on(MetaPlugin.install(&ctx, &pack)).expect_err("cycle must error");
-    assert!(
-        matches!(err, ExecError::MetaCycle { .. }),
-        "expected MetaCycle, got: {err:?}"
-    );
+    assert!(matches!(err, ExecError::MetaCycle { .. }), "expected MetaCycle, got: {err:?}");
 }
 
 #[test]
@@ -241,10 +236,7 @@ fn meta_self_cycle_errors() {
     let ctx = ctx(&vars, &root, tmp.path(), &action_reg, &pack_type_reg, &visited);
 
     let err = rt().block_on(MetaPlugin.install(&ctx, &pack)).expect_err("self-cycle errors");
-    assert!(
-        matches!(err, ExecError::MetaCycle { .. }),
-        "expected MetaCycle, got: {err:?}"
-    );
+    assert!(matches!(err, ExecError::MetaCycle { .. }), "expected MetaCycle, got: {err:?}");
 }
 
 #[test]
@@ -339,6 +331,8 @@ fn meta_halts_on_second_child_error_does_not_run_third() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Probe plugin declaration inflates the line count; splitting it
+                                 // across helpers would obscure the test's intent.
 fn meta_teardown_visits_children_in_reverse() {
     // Probe plugin records the order each child is dispatched; a custom
     // pack-type registry swaps the declarative plugin with the probe so
@@ -367,10 +361,10 @@ fn meta_teardown_visits_children_in_reverse() {
             ctx: &ExecCtx<'_>,
             pack: &PackManifest,
         ) -> Result<grex_core::ExecStep, ExecError> {
-            self.order.lock().unwrap().push(format!(
-                "install:{}",
-                ctx.pack_root.file_name().unwrap().to_string_lossy()
-            ));
+            self.order
+                .lock()
+                .unwrap()
+                .push(format!("install:{}", ctx.pack_root.file_name().unwrap().to_string_lossy()));
             DeclarativePlugin.install(ctx, pack).await
         }
         async fn update(
@@ -385,10 +379,10 @@ fn meta_teardown_visits_children_in_reverse() {
             ctx: &ExecCtx<'_>,
             pack: &PackManifest,
         ) -> Result<grex_core::ExecStep, ExecError> {
-            self.order.lock().unwrap().push(format!(
-                "teardown:{}",
-                ctx.pack_root.file_name().unwrap().to_string_lossy()
-            ));
+            self.order
+                .lock()
+                .unwrap()
+                .push(format!("teardown:{}", ctx.pack_root.file_name().unwrap().to_string_lossy()));
             // DeclarativePlugin::teardown is a no-op stub; reuse its
             // returned ExecStep so we don't construct one ourselves.
             DeclarativePlugin.teardown(ctx, pack).await

@@ -426,9 +426,8 @@ impl MetaPlugin {
         // then insert under lock. A duplicate key halts immediately.
         let canonical = Self::canonical_or_raw(&child_root);
         if let Some(visited) = ctx.visited_meta {
-            let mut guard = visited
-                .lock()
-                .map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
+            let mut guard =
+                visited.lock().map_err(|_| ExecError::MetaCycle { path: canonical.clone() })?;
             if !guard.insert(canonical.clone()) {
                 return Err(ExecError::MetaCycle { path: canonical });
             }
