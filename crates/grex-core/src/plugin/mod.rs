@@ -36,6 +36,12 @@ use std::collections::HashMap;
 use crate::execute::{ExecCtx, ExecError, ExecStep};
 use crate::pack::Action;
 
+pub mod pack_type;
+
+#[cfg(feature = "plugin-inventory")]
+pub use pack_type::PackTypePluginSubmission;
+pub use pack_type::{PackTypePlugin, PackTypeRegistry};
+
 /// Uniform registration surface for every Tier-1 action.
 ///
 /// Implementations MUST be `Send + Sync` so the registry can be threaded
