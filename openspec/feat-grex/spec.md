@@ -150,25 +150,25 @@ M3 landed the action executor and all 7 Tier 1 actions directly inside `grex-cor
 
 ## M5 — Pack-Type Plugin System
 
-**Status (2026-04-20)**: Spec drafted; implementation pending. M4 plugin system (`ActionPlugin` trait + `Registry` + dispatch swap) is the prerequisite and has landed on `main`. M5 adds the parallel pack-type layer and retires the enum-match dispatch on `pack.pack_type`.
+**Status (2026-04-20)**: Spec drafted; implementation pending. M4 plugin system (`ActionPlugin` trait + `Registry` + dispatch swap) is the prerequisite and has landed on `main`. M5 adds the parallel pack-type layer and retires the enum-match dispatch on `PackManifest.r#type`.
 
 M4 formalized action extensibility. M5 does the same for pack-types: the 3 built-ins (`meta`, `declarative`, `scripted`) move behind a `PackTypePlugin` trait, dispatch is by string lookup in a `PackTypeRegistry`, and teardown semantics are nailed down per pack-type. Gitignore synchronization moves to a per-pack managed-block writer so each pack owns its own ignore section without clobbering user edits. External pack-type plugin loading stays deferred to v2.
 
 ### Requirements
 
-1. **`PackTypePlugin` trait** at `crates/grex-core/src/plugin/pack_type.rs`. Method signatures (exact):
-   - `fn name(&self) -> &'static str`
-   - `async fn install(&self, ctx: &Context) -> Result<Outcome>`
-   - `async fn update(&self, ctx: &Context) -> Result<Outcome>`
-   - `async fn teardown(&self, ctx: &Context) -> Result<Outcome>`
-   - `async fn sync(&self, ctx: &Context) -> Result<Outcome>`
+1. **`PackTypePlugin` trait** at `crates/grex-core/src/plugin/pack_type.rs`. Method signatures (exact, aligned to M4 ground-truth `ActionPlugin` shape):
+   - `fn name(&self) -> &str`
+   - `async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>`
+   - `async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>`
+   - `async fn teardown(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>`
+   - `async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>`
    Async methods use 2024-edition native async-in-trait. Fallback to the `async_trait` macro only if a blocking toolchain issue surfaces during implementation; document the switch in the commit that flips it.
 2. **`PackTypeRegistry` struct** parallel to the M4 action `Registry`. Methods:
    - `fn register<P: PackTypePlugin + 'static>(&mut self, plugin: P)`
    - `fn get(&self, name: &str) -> Option<&dyn PackTypePlugin>`
    - `fn bootstrap() -> Self` — returns a registry pre-populated with the 3 built-ins via `register_builtins(&mut reg)`.
 3. **Built-in pack-types (3)**: `meta`, `declarative`, `scripted` register by default through `register_builtins`. No other pack-types ship in v1.
-4. **Executor dispatch by string**: pack-type dispatch becomes `pack_type_registry.get(pack.pack_type.as_str()).ok_or(UnknownPackType)`. The prior `match pack.pack_type` on an enum is retired. `pack.pack_type` stays a `String` in the parsed manifest (mirrors the post-M4-B action story: enum as parsed form, trait as execution form).
+4. **Executor dispatch by string**: pack-type dispatch becomes `pack_type_registry.get(pack.r#type.as_str()).ok_or(UnknownPackType)`. The prior `match pack.r#type` on the `PackType` enum is retired at dispatch time. `PackManifest.r#type` stays the typed `PackType` enum in the parsed manifest (mirrors the post-M4-B action story: enum as parsed form, trait as execution form); the registry lookup reads its string view via `PackType::as_str()` or equivalent.
 5. **`meta` semantics**: installs children depth-first, sequential, in registration order. Each child's full install/update/sync runs to completion before the next starts. A child error aborts the remaining chain and bubbles up; no partial-continue. Parallel meta execution is out of scope (R-M5-out-1). The trait method returns a `Future`, so parallelization can be added later without an API break.
 6. **`declarative` semantics**: runs the manifest's `actions:` list through the M4 `ActionPlugin` registry. No new executor — declarative dispatch is a thin shim that walks `actions:` and delegates each action to `action_registry.get(action.name())`.
 7. **`scripted` semantics**: executes OS-matched hooks under `.grex/hooks/` relative to the pack root:
@@ -194,15 +194,23 @@ M4 formalized action extensibility. M5 does the same for pack-types: the 3 built
 
 ```rust
 pub trait PackTypePlugin: Send + Sync {
-    fn name(&self) -> &'static str;
-    async fn install(&self, ctx: &Context) -> Result<Outcome>;
-    async fn update(&self, ctx: &Context) -> Result<Outcome>;
-    async fn teardown(&self, ctx: &Context) -> Result<Outcome>;
-    async fn sync(&self, ctx: &Context) -> Result<Outcome>;
+    fn name(&self) -> &str;
+    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>;
+    async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>;
+    async fn teardown(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>;
+    async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError>;
 }
 ```
 
-`Context` carries the pack root, resolved env, action registry handle, and lockfile writer — same shape as the M4 `ExecCtx` but scoped one level up. `Outcome` is the pack-level result envelope (reuses / extends `ExecStep` aggregation; final shape pinned in M5-1 implementation).
+`ExecCtx<'_>` is the M4-shipped context struct (`crates/grex-core/src/execute/ctx.rs:96-146`) — carries `vars: &VarEnv` (env resolver), `pack_root: &Path`, `workspace: &Path`, `platform: Platform`, and `registry: Option<&Arc<Registry>>` (action registry handle for nested dispatch). M5 reuses it verbatim rather than introducing a parallel `Context` type. `ExecCtx` already has `registry: Option<&'a Arc<Registry>>` for action-plugin nested dispatch; M5 adds a parallel `pack_type_registry: Option<&'a Arc<PackTypeRegistry>>` field (or a unified registry bundle — implementation choice left to M5-1). `PackManifest` is the parsed manifest struct (`crates/grex-core/src/pack/mod.rs:171-197`) — the M4 ground-truth name is `PackManifest`, not `Pack`. `ExecStep` is the per-step result envelope shipped with M4's `ActionPlugin`; the pack-type trait returns it directly (same error type `ExecError`) rather than introducing a parallel `Outcome` type. Aggregation across multiple child steps (for `meta` and `declarative`) is an executor-level concern, not a trait-level one.
+
+#### Ground-truth references
+
+- M4 `ActionPlugin` trait: `crates/grex-core/src/plugin/mod.rs:49-62` (signature pattern reused by `PackTypePlugin`).
+- `ExecCtx<'a>`: `crates/grex-core/src/execute/ctx.rs:96-146` (reused as-is; extended with pack-type registry handle).
+- `PackManifest`: `crates/grex-core/src/pack/mod.rs:171-197` (parsed manifest struct — canonical name is `PackManifest`).
+- `ExecStep` / `ExecError`: same module as `ActionPlugin` (`crates/grex-core/src/plugin/mod.rs`); reused verbatim for pack-type return type.
+- `PackManifest.teardown: Option<Vec<Action>>` is **already parsed** by M4 (see `pack/mod.rs:186-193`); R-M5-09's "explicit `teardown:` path" just reads this field — no new parse work is required in M5.
 
 ### Gitignore block contract
 
@@ -253,7 +261,7 @@ bin/custom-tool
 **M5-1 — Trait + 3 built-ins + dispatch swap (PR #1)**
 - Land `PackTypePlugin` trait, `PackTypeRegistry`, `register_builtins`.
 - Port `meta`, `declarative`, `scripted` behind the trait.
-- Swap executor dispatch from enum match to `registry.get(pack.pack_type.as_str())`.
+- Swap executor dispatch from enum match to `registry.get(pack.r#type.as_str())`.
 - `plugin-inventory` feature extended to pack-types.
 - Acceptance: existing end-to-end sync tests for all 3 pack-types pass unchanged; unit tests cover `PackTypeRegistry::bootstrap` returns 3 registered names.
 
