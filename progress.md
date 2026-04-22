@@ -1,9 +1,26 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + **M6 complete** (M6 closed 2026-04-21 on `main` via PR #24 squash-merge). **M6 COMPLETE (2026-04-21)**: parallel scheduler (tokio `Semaphore`, `--parallel` flag, `ExecCtx` wiring) + per-pack `.grex-lock` with 5-tier lock ordering + `TierGuard` runtime enforcement + Lean4 mechanized proof of `no_double_lock` + `no_deadlock` in CI (`lake build`). Test count: **495 workspace / 501 with `--features grex-core/plugin-inventory`**, all green, `lake build` green. Next: **M7** (MCP server + `grex import` from REPOS.json + `grex doctor` — see `milestone.md`).
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7 openspec drafts complete, IMPL NOT STARTED** (branch `feat-m7`, 4 chained changes, 3 review cycles done). **M7 SPECS DRAFTED (2026-04-21)**: 4 openspec changes drafted on `feat-m7` → 3 review cycles (R1 REJECT 2/10 → Path B rewrite, R2 REVISE 7.3/10 → 13 findings patched, R3 SHIP with codex residuals patched). Deliverables locked: `feat-m7-1` MCP server (rmcp 1.5, 11 tools, stdio), `feat-m7-2` test harness (nested in `crates/grex-mcp/tests/`), `feat-m7-3` CI conformance (`mcp-validator==0.3.1`, SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2`), `feat-m7-4` import/doctor/license (`MIT OR Apache-2.0` dual). Next: **M7 impl Stage 1 of feat-m7-1** (workspace deps + crate scaffold + rmcp surface verification).
 
-## Last endpoint (2026-04-21, main — M6 closed via PR #24)
+## Last endpoint (2026-04-21, feat-m7 — M7 openspec drafts complete, IMPL NOT STARTED)
+- Branch: `feat-m7` (not yet pushed to origin — pushing at session end).
+- Commits on branch (chain tip → base): `da2d60c docs(openspec): round-3 revisions — align M7 specs post-review` → `c151e6c docs(openspec): draft M7 change proposals (feat-m7-1/2/3/4)`. (Task note flagged `cf78b16` as a tip SHA, but that commit is an older M6 draft on `feat-m6` — the actual `feat-m7` chain is the two SHAs above.)
+- **M7 scope — MCP server + import + doctor + license** — 4 chained openspec changes drafted, NO code written yet.
+  - **Review series (3 rounds)**:
+    - **R1 REJECT (2/10)**: original drafts proposed custom `grex.<verb>` JSON-RPC surface; reviewers flagged as non-conformant to MCP; rewrote as Path B (MCP-native via rmcp).
+    - **R2 REVISE (7.3/10)**: Path B rewrite landed but had 13 findings (tool-surface drift, lock-ordering gaps, tests-crate duplication, validator pin ambiguity, cancel budget missing, etc.); all 13 patched.
+    - **R3 SHIP**: scope + feasibility clean from codex + CE parallel review; minor residuals patched (agent-safety annotations, `exec --shell` strip from MCP surface, Barrier-based saturation assertion tightened).
+  - **Deliverables locked (all on `feat-m7` branch)**:
+    - **feat-m7-1 MCP server** — `rmcp 1.5.0`, 11 tools exposed via `#[tool]` macro, cancellable `Scheduler` + `PackLock` APIs (`acquire_cancellable` via `tokio::select!`), stderr-only tracing, agent-safety annotations on each tool, `exec --shell` stripped from MCP surface (CLI keeps it), single-session stdio server, 5-tier lock ordering honoured end-to-end.
+    - **feat-m7-2 test harness** — tests nest under `crates/grex-mcp/tests/` (NO separate `grex-mcp-tests` crate); L2-L5 layers; `tokio::io::duplex` in-process harness; 3-OS real-pipe smoke (Linux + macOS + Windows); 2-token tracing normalizer; Barrier-based saturation (`high_water >= PARALLEL && <= PARALLEL` via `Barrier::wait(N+1)`); cancel budget 250ms Linux/macOS / 500ms Windows.
+    - **feat-m7-3 CI conformance** — `mcp-validator==0.3.1` + SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2` + repo `Janix-ai/mcp-validator`; self-contained release build (no `needs: [build]`); PR-blocking required check.
+    - **feat-m7-4 import/doctor/license** — `grex import --from-repos-json`; `grex doctor` with 3 default checks + `--lint-config` opt-in; license `MIT OR Apache-2.0` dual.
+  - **SSOT update**: `.omne/cfg/mcp.md` rewritten to Path B MCP-native (rmcp, tools/list, tools/call, notifications/cancelled, protocol 2025-06-18).
+  - **Carry-forward from M6** (still open, picked up in M7 impl window as maintenance): MED maint — unused `PackLock::acquire` sync variant, `Scheduler::permits()`; MED perf — top-level `sync::run` still sequential outside meta recursion, needs `FuturesUnordered` dispatch; verification debt — H2 `register_self_in_visited` ordering, H8 panic-safety test for `PackLockHold`.
+  - **Next action**: M7 impl start — Stage 1 of feat-m7-1 (workspace deps + crate scaffold + rmcp surface verification: confirm `rmcp 1.5.0` exposes `#[tool]` macro, `Parameters<T: JsonSchema>`, `peer().send_request().cancel()`).
+
+## Prior endpoint (2026-04-21, main — M6 closed via PR #24)
 - Main head: PR #24 squash-merged 2026-04-21T22:27Z. CI all green including `lake build`.
 - **M6 — Concurrency + Lean4 proof** — fully shipped to main 2026-04-21 via 1 squash PR (#24) chaining 3 OpenSpec changes.
   - **feat-m6-1 — Parallel scheduler**: `tokio::sync::Semaphore` gated by `--parallel N` flag (default `num_cpus`); dynamic `worker_threads` on the tokio runtime; `ExecCtx` wired with scheduler permit + cancellation handle; pack execution acquires a semaphore slot before action dispatch. Covers M6 req "bounded Semaphore gated by --parallel N".
@@ -316,7 +333,7 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-**M6 closed 2026-04-21 (main via PR #24 squash-merge). Next: M7** — MCP stdio JSON-RPC server + `grex import --from-repos-json` + `grex doctor` + license decision (MIT vs Apache-2.0 vs dual). See `milestone.md` §M7. Non-blocking M6 carry-forwards tracked in `memory/m6_scope.md` and `memory/m7_scope.md`.
+**M7 specs committed on `feat-m7` (2026-04-21), awaiting impl.** Start Stage 1 of `feat-m7-1` — workspace deps + `crates/grex-mcp` crate scaffold + rmcp 1.5.0 surface verification gate (confirm `#[tool]` macro, `Parameters<T: JsonSchema>`, `peer().send_request().cancel()` all exposed as documented). Then chain through Stage 2+ per `openspec/changes/feat-m7-1-mcp-server/tasks.md`. Non-blocking M6 carry-forwards (picked up as maint in M7 window) tracked in `memory/m6_scope.md` and `memory/m7_scope.md`.
 
 M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓ complete.
 - A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait; re-exports; plugin-layer unit tests. Dispatch unchanged. [PR #20, `2175a09`]
