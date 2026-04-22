@@ -37,7 +37,7 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "allow"  # relax for M1; tighten later
+multiple-versions = "allow"  # relax for M1; tighten once deps stabilize — see https://github.com/egoisth777/grex/issues/32
 wildcards = "deny"
 
 [sources]
