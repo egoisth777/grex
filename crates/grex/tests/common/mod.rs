@@ -30,7 +30,7 @@ pub const VERBS: &[&str] = &[
 /// that actually *run* the verb; use `VERBS` for tests that only inspect
 /// help text or the verb-name surface.
 pub const STUB_VERBS: &[&str] =
-    &["init", "add", "rm", "ls", "status", "sync", "update", "import", "run", "exec"];
+    &["init", "add", "rm", "ls", "status", "sync", "update", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.
