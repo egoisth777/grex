@@ -1,7 +1,7 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 open vs main)** (branch `feat-m7`, HEAD `19ca7c4`). **M7-1 SHIPPED (2026-04-22)**: 8-stage TDD impl landed on `feat-m7` (8 commits, tip `19ca7c4`), PR #25 open, hygiene fix-up `19ca7c4` pushed (typos + cargo-deny wildcard + cargo fmt 39 files). Next: **merge PR #25 then resume M7-2** on `feat-m7-2`.
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 squash-merged to main)** + **M7-2 COMPLETE on `feat-m7-2`** (PR #26 open vs `main`, 12/12 hard CI gates green, awaiting squash-merge). **M7-1 SHIPPED & MERGED (2026-04-22)**: PR #25 squash-merged into `main` as `0b80a63`. **M7-2 COMPLETE (2026-04-22)**: all 8 stages (L2-L5 test harness) shipped on `feat-m7-2`; 10 commits ahead of `main` (8 stages + hygiene + progress doc); PR #26 12/12 hard CI gates green; ready to merge.
 
 ## Last endpoint (2026-04-22, feat-m7 — M7-1 shipped, PR #25 open)
 - Branch: `feat-m7` (HEAD `19ca7c4`), pushed to origin, PR #25 open vs `main`.
@@ -16,14 +16,33 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M
   - Stage 7 `spec.md:21` surface fix patched (`send_request().cancel` → `send_cancellable_request`).
 - **Workspace state**:
   - Test count: **553** with `--features grex-mcp/test-hooks` (m7-1 baseline); **555** default.
+
+## Sub-endpoint (2026-04-22, feat-m7-2 — M7-2 COMPLETE, PR #26 open vs main)
+- Branch: `feat-m7-2` (HEAD `8474c00`), rebased onto post-merge `main` (`0b80a63`, the squash of PR #25). Pushed to origin; PR #26 open vs `main`.
+- **M7-2 (test-harness L2-L5) — COMPLETE on `feat-m7-2`, awaiting merge**:
+  - 10 commits ahead of `main`: 8 stages + hygiene + progress doc; chain tip `8474c00` (full SHA list available via `git log --oneline main..feat-m7-2`).
+  - All 8 stages shipped: Stage 1 RED scaffold → Stage 2 L2 GREEN (Client + duplex harness) → Stage 3 L2 real-pipe per-OS (Linux + macOS + Windows) → Stage 4 L3 normalize (2-token tracing normaliser) → Stage 5 L3 11-parity (verbs vs tools surface) → Stage 6 L4 stress RED → Stage 7 L4 stress GREEN + permit gate at MCP edge → Stage 8 L5 cancel chaos + budget recalibration.
+  - PR #26 (`feat-m7-2` → `main`) — 12/12 hard CI gates green; meta-reviewer APPROVED; awaiting squash-merge.
+- **Spec drift documented (m7-2)** — 6 entries in m7-2 `spec.md` `## Known limitations`:
+  1. L2.2 transport-close deviation
+  2. L2.3 protocol-version-only deviation
+  3. L2 burst substitute
+  4. L2 stderr-null substitute
+  5. L3 ParitySignal
+  6. L4 same-pack relaxed
+- **Production change in m7-2**: Stage 7 wires `Scheduler::acquire_cancellable` at the MCP edge — resolves m7-1 PR #25 reviewer flag (`acquire_cancellable` was "unused in production" at m7-1 close).
+- **Workspace state (m7-2 sub-branch)**:
+  - Test count: bumped through L3/L4/L5 layers; all-features green.
   - Clippy `--workspace --all-targets -D warnings` clean.
   - schemars 0.8 → 1.0 workspace bump (rmcp 1.5 transitive constraint — `#[tool]` macro derives JsonSchema against schemars 1.x; mismatched majors hit orphan-rule errors at the tools/* boundary).
   - New crate `grex-mcp` (license `MIT OR Apache-2.0` inline pending m7-4 workspace migration).
-- **Carry-forwards**:
+- **Carry-forwards (open after m7-2 merge)**:
   - **M6 (still open per m6_scope.md)**: delete unused `PackLock::acquire` (sync), delete `Scheduler::permits()`, inline single-element const, rename `OwnCycleGuard` → `VisitedInsertGuard`. Stage 7 H2/H8 verification debt. M5 declarative install path.
   - **M7-1 Stage 2 reviewer flag**: re-export `CancellationToken` from `grex-core` to drop CLI direct `tokio-util` dep (DEFERRED — 16+ file edit).
-  - **m7-1 follow-up**: wire `init_state_error()` (defined `error.rs:93`, unused) at dispatch layer for both pre-init + double-init gates.
-- **Next action**: merge PR #25 then resume M7-2 on `feat-m7-2` (Stage 3 — L2 real-pipe per-OS).
+  - **For m7-3**: wire `PackLock::acquire_cancellable` in production (still unused per m7-2 spec entry 6 / "L4 same-pack relaxed").
+  - **For m7-3**: wire `init_state_error()` (defined `error.rs:93`, unused) at the rmcp dispatch layer — closes m7-1 spec entries on pre-init + double-init gates.
+- **Active branch**: `feat-m7-2` (HEAD `8474c00`), awaiting PR #26 merge.
+- **Next action**: merge PR #26, then start **M7-3** (mcp-validator CI conformance).
 
 ## Prior endpoint (2026-04-21, feat-m7 — M7 openspec drafts complete)
 - Branch: `feat-m7` (not yet pushed to origin — pushing at session end).

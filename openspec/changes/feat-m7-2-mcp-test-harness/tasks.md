@@ -22,6 +22,11 @@
 
 ## Stage 3 — L2 real-pipe per-OS guard
 
+> **Note:** Stage 3 tests went GREEN on first run because m7-1's server contract
+> already satisfies the back-pressure + stderr-null invariants. Tests are real
+> (would fail on regression — strict JSON parsing, monotonic IDs, cumulative
+> >64 KiB threshold, post-init liveness). RED-first discipline N/A here.
+
 - [ ] 3.1 Write `crates/grex-mcp/tests/real_pipe_linux.rs` (`#[cfg(target_os = "linux")]`) with 2 failing cases — `large_response_crosses_pipe_buffer`, `client_stderr_close_does_not_panic_server`.
 - [ ] 3.2 Write `crates/grex-mcp/tests/real_pipe_macos.rs` (`#[cfg(target_os = "macos")]`) with the same 2 cases.
 - [ ] 3.3 Write `crates/grex-mcp/tests/real_pipe_windows.rs` (`#[cfg(target_os = "windows")]`) with the same 2 cases.
@@ -68,6 +73,14 @@
 - [ ] 7.6 **Verify**: `cargo test -p grex-mcp --test stress` — 3 passes; run `cargo test --release` locally and confirm p50 / p99 fit under 5 s.
 
 ## Stage 8 — L5 cancellation chaos + budget recalibration
+
+> **Note:** Stage 8 went GREEN on first run because feat-m7-1's cancellation
+> plumbing already satisfies the L5 contract: the natural `tokio::select!`
+> race in `run_with_cancel` drops `_permit` on the cancel arm, and the
+> per-pack `PackLock` is owned inside `grex_core::sync::run` (released on
+> spawn_blocking unwind). Tests are real (would fail on regression — 250/500ms
+> wall-clock budget, `REQUEST_CANCELLED` code assertion, second-sync probe).
+> RED-first discipline N/A here.
 
 - [ ] 8.1 Write `crates/grex-mcp/tests/cancel.rs` with 11 parametric failing cases (one per `VERBS_EXPOSED` entry) — each sends `tools/call` then immediately `notifications/cancelled`; asserts `-32800 RequestCancelled` OR clean `CallToolResult`.
 - [ ] 8.2 Add `cancel_permit_released_under_budget` — post-cancel, acquire `PARALLEL` permits within budget; fail if any `acquire` blocks.

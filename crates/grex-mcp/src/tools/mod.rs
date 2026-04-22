@@ -40,14 +40,19 @@ pub mod status;
 pub mod sync;
 pub mod update;
 
-/// The 11 CLI verbs surfaced as MCP tools. Order is the spec's
+/// The CLI verbs surfaced as MCP tools. Order is the spec's
 /// documentation order — keep stable so doc-string snapshots remain
 /// meaningful.
-pub const VERBS_11_EXPOSED_AS_TOOLS: &[&str] =
+///
+/// Renamed from `VERBS_EXPOSED` in feat-m7-2 Stage 5 (Flag 3
+/// from m7-2 discovery). The arity (11) is enforced at compile-time
+/// below; the const name no longer carries the count so future MCP-only
+/// tools (e.g. `workspace/subscribe`) can join without a churny rename.
+pub const VERBS_EXPOSED: &[&str] =
     &["init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec"];
 
 // Compile-time invariant: spec mandates exactly 11 tools.
-const _: () = assert!(VERBS_11_EXPOSED_AS_TOOLS.len() == 11);
+const _: () = assert!(VERBS_EXPOSED.len() == 11);
 
 /// Per-verb annotation matrix. Source of truth for tests 6.T2 / 6.T3.
 /// Kept as a `const &[…]` (not a `HashMap`) so the table is greppable
@@ -83,7 +88,7 @@ mod tests {
     use super::*;
 
     /// 6.T1 — `tools/list` advertises exactly 11 tools, matching
-    /// `VERBS_11_EXPOSED_AS_TOOLS`.
+    /// `VERBS_EXPOSED`.
     #[test]
     fn tools_list_advertises_exactly_11() {
         let tools = list_all();
@@ -96,8 +101,7 @@ mod tests {
         );
         let names: std::collections::BTreeSet<&str> =
             tools.iter().map(|t| t.name.as_ref()).collect();
-        let expected: std::collections::BTreeSet<&str> =
-            VERBS_11_EXPOSED_AS_TOOLS.iter().copied().collect();
+        let expected: std::collections::BTreeSet<&str> = VERBS_EXPOSED.iter().copied().collect();
         assert_eq!(names, expected);
     }
 
@@ -150,20 +154,20 @@ mod tests {
 
     #[test]
     fn lists_exactly_eleven_verbs() {
-        assert_eq!(VERBS_11_EXPOSED_AS_TOOLS.len(), 11);
+        assert_eq!(VERBS_EXPOSED.len(), 11);
     }
 
     #[test]
     fn excludes_serve_and_teardown() {
-        assert!(!VERBS_11_EXPOSED_AS_TOOLS.contains(&"serve"));
-        assert!(!VERBS_11_EXPOSED_AS_TOOLS.contains(&"teardown"));
+        assert!(!VERBS_EXPOSED.contains(&"serve"));
+        assert!(!VERBS_EXPOSED.contains(&"teardown"));
     }
 
     #[test]
     fn names_are_unique() {
-        let mut sorted: Vec<&str> = VERBS_11_EXPOSED_AS_TOOLS.to_vec();
+        let mut sorted: Vec<&str> = VERBS_EXPOSED.to_vec();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(sorted.len(), VERBS_11_EXPOSED_AS_TOOLS.len());
+        assert_eq!(sorted.len(), VERBS_EXPOSED.len());
     }
 }

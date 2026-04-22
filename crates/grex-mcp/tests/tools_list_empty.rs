@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use grex_mcp::{GrexMcpServer, ServerState, VERBS_11_EXPOSED_AS_TOOLS};
+use grex_mcp::{GrexMcpServer, ServerState, VERBS_EXPOSED};
 use rmcp::{
     model::{ClientJsonRpcMessage, ServerJsonRpcMessage, ServerResult},
     transport::IntoTransport,
@@ -68,9 +68,9 @@ async fn drive_list_tools() -> rmcp::model::ListToolsResult {
 fn assert_count_and_annotations(list: rmcp::model::ListToolsResult) {
     assert_eq!(
         list.tools.len(),
-        VERBS_11_EXPOSED_AS_TOOLS.len(),
+        VERBS_EXPOSED.len(),
         "tools/list must advertise exactly {} tools, got {} ({:?})",
-        VERBS_11_EXPOSED_AS_TOOLS.len(),
+        VERBS_EXPOSED.len(),
         list.tools.len(),
         list.tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
     );
