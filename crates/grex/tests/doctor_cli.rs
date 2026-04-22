@@ -6,12 +6,47 @@
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn bin() -> Command {
     Command::cargo_bin("grex").expect("grex binary")
+}
+
+/// Recursive path+bytes snapshot of a directory, keyed by path
+/// relative to `root`. Used to prove `--fix` writes nothing when the
+/// doctor refuses to heal (schema error, drift error). Skips `.git/`
+/// and `target/` — never relevant here and keeps output deterministic.
+fn fs_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            if name == ".git" || name == "target" {
+                continue;
+            }
+            let ft = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if ft.is_dir() {
+                walk(&path, root, out);
+            } else if ft.is_file() {
+                let rel = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                let bytes = fs::read(&path).unwrap_or_default();
+                out.insert(rel, bytes);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(root, root, &mut out);
+    out
 }
 
 /// Minimal valid grex.jsonl with one declarative pack `pack_id` rooted
@@ -92,10 +127,17 @@ fn doctor_fix_does_not_touch_missing_pack_dir() {
     seed_manifest(dir.path(), "a");
     fs::remove_dir_all(dir.path().join("a")).unwrap();
 
+    // SAFETY CRITICAL: --fix must NOT write anywhere in the workspace
+    // on drift error — a recursive path+bytes snapshot proves no stray
+    // write landed in `grex.jsonl`, a `.gitignore`, or the missing
+    // pack dir.
+    let before = fs_snapshot(dir.path());
+
     bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().code(2);
 
-    // SAFETY CRITICAL: --fix must NOT create the missing dir.
-    assert!(!dir.path().join("a").exists());
+    let after = fs_snapshot(dir.path());
+    assert_eq!(before, after, "--fix must not write anywhere on drift error");
+    assert!(!dir.path().join("a").exists(), "missing pack dir must stay missing");
 }
 
 #[test]
@@ -109,12 +151,20 @@ fn doctor_fix_does_not_touch_manifest_on_corruption() {
     )
     .unwrap();
     fs::create_dir_all(dir.path().join("x")).unwrap();
-    let before = fs::read(&manifest).unwrap();
+    let before_manifest = fs::read(&manifest).unwrap();
+    let before = fs_snapshot(dir.path());
 
     bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().code(2);
 
-    let after = fs::read(&manifest).unwrap();
-    assert_eq!(before, after, "manifest bytes must be unchanged by --fix on schema error");
+    let after_manifest = fs::read(&manifest).unwrap();
+    assert_eq!(
+        before_manifest, after_manifest,
+        "manifest bytes must be unchanged by --fix on schema error"
+    );
+    // SAFETY: extend the byte-equal contract to the whole workspace —
+    // no stray write in `.gitignore`, pack dirs, or anywhere else.
+    let after = fs_snapshot(dir.path());
+    assert_eq!(before, after, "--fix must not write anywhere on schema error");
 }
 
 #[test]
@@ -126,9 +176,13 @@ fn doctor_lint_config_skipped_by_default() {
     fs::create_dir_all(dir.path().join("openspec")).unwrap();
     fs::write(dir.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
 
+    let before = fs_snapshot(dir.path());
     let out = bin().current_dir(dir.path()).arg("doctor").assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(!stdout.contains("config-lint"), "default run must not mention config-lint: {stdout}");
+    // SAFETY: default (read-only) run must not touch the fixture.
+    let after = fs_snapshot(dir.path());
+    assert_eq!(before, after, "default doctor run must be read-only");
 }
 
 #[test]

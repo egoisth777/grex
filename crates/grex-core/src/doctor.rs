@@ -295,6 +295,11 @@ pub fn check_manifest_schema(manifest_path: &Path) -> (CheckResult, Option<Vec<E
 /// as a constant slice; until a richer list lands we keep the contract
 /// small and explicit: every pack's managed block holds its own path so
 /// the parent workspace ignores its working tree.
+///
+/// TODO(m8): populate this list once plugin packs emit their own
+/// pattern sets — tracked by issue #34. Until then any pack that writes
+/// patterns via the M5-2 writer would be misreported as drift; this is
+/// acceptable for M7-4b scope (declarative packs only, no patterns).
 fn expected_patterns_for_pack(_state: &PackState) -> Vec<String> {
     // M7-4 contract: the doctor is anchored on M5-2's default
     // managed-block body. We don't re-define the content here; the
@@ -521,6 +526,44 @@ mod tests {
 
     fn ts() -> chrono::DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 4, 22, 10, 0, 0).unwrap()
+    }
+
+    /// Recursive path+bytes snapshot of a directory, keyed by path
+    /// relative to `root`. Used by `--fix` safety tests to prove that
+    /// a fix attempt left NO write anywhere in the fixture when the
+    /// doctor refused to heal (e.g. schema error, drift error).
+    ///
+    /// Skips `.git/` and `target/` if present, since they are never
+    /// relevant to doctor writes and keep the snapshot deterministic
+    /// on machines that might have stray VCS/build state.
+    fn fs_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        fn walk(dir: &Path, root: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+            let entries = match fs::read_dir(dir) {
+                Ok(e) => e,
+                Err(_) => return,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                if name == ".git" || name == "target" {
+                    continue;
+                }
+                let ft = match entry.file_type() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if ft.is_dir() {
+                    walk(&path, root, out);
+                } else if ft.is_file() {
+                    let rel = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                    let bytes = fs::read(&path).unwrap_or_default();
+                    out.insert(rel, bytes);
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(root, root, &mut out);
+        out
     }
 
     fn seed_pack(workspace: &Path, id: &str) {
@@ -773,14 +816,19 @@ mod tests {
         )
         .unwrap();
         let before_bytes = fs::read(&m).unwrap();
+        let before = fs_snapshot(d.path());
 
         let opts = DoctorOpts { fix: true, lint_config: false };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 2, "schema error → exit 2");
 
-        // SAFETY CRITICAL: --fix must NOT touch the manifest on schema errors.
+        // SAFETY CRITICAL: --fix must NOT touch the manifest OR any
+        // other file on schema errors. The recursive snapshot proves
+        // no stray write happened anywhere in the fixture.
         let after_bytes = fs::read(&m).unwrap();
         assert_eq!(before_bytes, after_bytes, "manifest bytes must be unchanged");
+        let after = fs_snapshot(d.path());
+        assert_eq!(before, after, "--fix must not write anywhere on schema error");
     }
 
     #[test]
@@ -790,24 +838,20 @@ mod tests {
         // Delete the pack dir → on-disk drift error.
         fs::remove_dir_all(d.path().join("a")).unwrap();
 
-        let workspace_entries_before: Vec<String> = fs::read_dir(d.path())
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
+        // SAFETY CRITICAL: --fix must NOT write anywhere in the
+        // workspace on drift error — not the missing dir, not
+        // `grex.jsonl`, not a stray `.gitignore`, nothing. A recursive
+        // path+bytes snapshot catches any such write, not just the
+        // presence/absence of the missing pack dir.
+        let before = fs_snapshot(d.path());
 
         let opts = DoctorOpts { fix: true, lint_config: false };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 2);
 
-        // SAFETY CRITICAL: --fix must NOT create the missing dir.
+        let after = fs_snapshot(d.path());
+        assert_eq!(before, after, "--fix must not write anywhere on drift error");
         assert!(!d.path().join("a").exists(), "missing pack dir must stay missing");
-        let after: Vec<String> = fs::read_dir(d.path())
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(workspace_entries_before, after);
     }
 
     #[test]
@@ -818,12 +862,16 @@ mod tests {
         // Seed a broken config.yaml; default run must ignore it.
         fs::create_dir_all(d.path().join("openspec")).unwrap();
         fs::write(d.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
+        let before = fs_snapshot(d.path());
         let report = run_doctor(d.path(), &DoctorOpts::default()).unwrap();
         assert_eq!(report.exit_code(), 0, "config-lint must be skipped by default");
         assert!(
             !report.findings.iter().any(|f| f.check == CheckKind::ConfigLint),
             "no ConfigLint finding when --lint-config absent"
         );
+        // SAFETY: read-only run — every byte must be untouched.
+        let after = fs_snapshot(d.path());
+        assert_eq!(before, after, "default doctor run must be read-only");
     }
 
     #[test]
