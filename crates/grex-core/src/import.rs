@@ -124,21 +124,16 @@ pub fn classify(url: &str) -> ImportedKind {
 }
 
 fn parse_repos_json(repos_json: &Path) -> Result<Vec<RawEntry>, ImportError> {
-    let bytes = std::fs::read(repos_json).map_err(|source| ImportError::Io {
-        path: repos_json.to_path_buf(),
-        source,
-    })?;
-    let parsed: Vec<RawEntry> =
-        serde_json::from_slice(&bytes).map_err(|source| ImportError::Parse {
-            path: repos_json.to_path_buf(),
-            source,
-        })?;
+    let bytes = std::fs::read(repos_json)
+        .map_err(|source| ImportError::Io { path: repos_json.to_path_buf(), source })?;
+    let parsed: Vec<RawEntry> = serde_json::from_slice(&bytes)
+        .map_err(|source| ImportError::Parse { path: repos_json.to_path_buf(), source })?;
     Ok(parsed)
 }
 
 fn existing_paths(manifest_path: &Path) -> Result<std::collections::HashSet<String>, ImportError> {
     let events = manifest::read_all(manifest_path)?;
-    let state = manifest::fold(events.into_iter());
+    let state = manifest::fold(events);
     Ok(state.values().map(|s| s.path.clone()).collect())
 }
 
@@ -161,8 +156,7 @@ pub fn import_from_repos_json(
             continue;
         }
         if !seen_in_input.insert(path.clone()) {
-            plan.skipped
-                .push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
+            plan.skipped.push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
             continue;
         }
         let kind = classify(&entry.url);
@@ -449,8 +443,7 @@ mod tests {
                 {"url": "https://other.git", "path": "foo"}
             ]"#,
         );
-        let plan =
-            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
+        let plan = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
         assert_eq!(plan.imported.len(), 1);
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(plan.skipped[0].reason, SkipReason::DuplicateInInput);
@@ -507,8 +500,7 @@ mod tests {
                 {"url": "git://h/x.git", "path": "e"}
             ]"#,
         );
-        let plan =
-            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
+        let plan = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
         assert_eq!(plan.imported.len(), 5);
         for entry in &plan.imported {
             assert_eq!(entry.kind, classify(&entry.url));
