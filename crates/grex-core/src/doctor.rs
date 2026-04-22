@@ -11,8 +11,8 @@
 //! `--fix` ONLY heals gitignore drift (re-emit the managed block via
 //! the M5-2 writer). It must NOT touch the manifest (user data) or the
 //! filesystem (user state) or any config file. The contract is
-//! enforced by [`apply_fixes`] which dispatches exclusively on
-//! [`CheckKind::GitignoreSync`].
+//! enforced by the private `apply_fixes` helper which dispatches
+//! exclusively on [`CheckKind::GitignoreSync`].
 //!
 //! See `openspec/changes/feat-m7-4-import-doctor-license/spec.md`
 //! §"Sub-scope 2 — `grex doctor`".
