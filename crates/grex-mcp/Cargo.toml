@@ -10,13 +10,24 @@ authors.workspace = true
 description = "MCP-native server for grex (M7): exposes the 11 core verbs as MCP tools."
 
 [dependencies]
-rmcp = { workspace = true }
+# `rmcp` defaults already include the server feature; we additionally need
+# `client` so the integration tests can build a duplex client transport
+# against our server. Pulling it into `[dependencies]` (not just dev-deps)
+# keeps the feature unification trivial for downstream crates that re-export
+# our types.
+rmcp = { workspace = true, features = ["server", "client", "macros", "transport-io"] }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 grex-core = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

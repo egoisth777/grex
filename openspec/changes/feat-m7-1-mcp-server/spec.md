@@ -301,6 +301,22 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
 12. `mcp-validator` CI job green.
 13. No regressions on M5 + M6 test suites.
 
+## Known limitations
+
+- Batched JSON-RPC requests (`[req,req]`) are silent-dropped by rmcp 1.5.0 rather than rejected with -32600. Acceptable for MCP 2025-06-18 (no batch support); upstream rmcp follow-up tracked separately. Stage 5 test `batch_request_array_is_silently_dropped_no_dispatch` enforces the safety contract (no dispatch, no crash); supersedes acceptance criterion #8.
+
+## rmcp 1.5.0 wiring notes
+
+Captured during Stage 5 implementation; relevant for Stages 6-8.
+
+1. `Implementation` is `#[non_exhaustive]` — no `..Default::default()` struct-literal across crates; build via `Implementation::default()` then mutate. Likely applies to `InitializeResult`, `ServerCapabilities` too.
+2. Batch frames are silent-dropped (see `## Known limitations`). `mcp-validator` in Stage 8's CI may flag as JSON-RPC §6 conformance miss — be ready.
+3. `ServerHandler` returns `impl Future<Output = ...> + MaybeSendFuture + '_`, NOT `async fn`. Future trait must be in scope (`use std::future::Future;`); rmcp does not re-export it. Stage 6 tool handlers mirror this signature shape.
+4. `ServiceExt::serve` consumes `self`, returns `RunningService`; the loop driver is `running.waiting().await`. Stage 7 cancellation uses `serve_with_ct` (rmcp's `CancellationToken` variant), NOT a separate cancel task wrapping `serve`.
+5. `ServerInitializeError::ConnectionClosed` fires from `serve()` itself (before `waiting()`) when transport closes during initialize handshake. The 5.T2 batch case hits this. Stage 8 CLI must distinguish "clean shutdown" from "init-time connection closed" for exit codes.
+6. `serve()` requires the `client` feature on the server side too (test-side dependency unification). Pulled into `[dependencies]`, ~no compile-time cost since rmcp is shared.
+7. rmcp emits `tracing::info!` from `serve_inner` ("Service initialized as server", etc.) — loud at INFO. Stage 8 `grex serve` should default env-filter to `grex=info,rmcp=warn`.
+
 ## Source-of-truth links
 
 - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — Path B spec (wire, tools, cancellation, errors, session).
