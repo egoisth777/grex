@@ -204,9 +204,9 @@ async fn handshake_ok() {
 
     let len = tools["result"]["tools"].as_array().map(|a| a.len()).unwrap_or(0);
     assert!(
-        len >= grex_mcp::VERBS_11_EXPOSED_AS_TOOLS.len(),
+        len >= grex_mcp::VERBS_EXPOSED.len(),
         "tools/list must expose at least {} tools, got {}",
-        grex_mcp::VERBS_11_EXPOSED_AS_TOOLS.len(),
+        grex_mcp::VERBS_EXPOSED.len(),
         len
     );
 

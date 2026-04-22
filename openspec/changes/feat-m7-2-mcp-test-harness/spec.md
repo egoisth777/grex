@@ -236,6 +236,8 @@ Discovered during Stage 2 implementation; affect L2 envelope-layer assertions.
 
 4. **L2 real-pipe `client_stderr_close_does_not_panic_server`** implements "close client stderr" as `Stdio::null()` at child-spawn time, NOT a mid-session `CloseHandle`/`dup2`. Reason: closing stderr after the child starts races the `tracing_subscriber::fmt().with_writer(stderr).init()` call inside `grex serve`, producing flaky tests. Both forms exercise the same invariant from `.omne/cfg/mcp.md` §Stdio discipline ("server tolerates an unreadable stderr").
 
+5. **L3 parity** asserts shape-equal `ParitySignal` (`Unimplemented` | `PackOpError`) rather than the spec's byte-equal `normalize(cli_json) == normalize(mcp_json)`. Reason: m7-1 ships `--json` parsed on `GlobalFlags` (`crates/grex/src/cli/args.rs:16`) but unwired into any verb (`crates/grex/src/cli/verbs/sync.rs:30` ignores `global.json`; 9 stub verbs print `"grex <verb>: unimplemented (M1 scaffold)"`). The current contract proves both surfaces agree on outcome class for every verb in `VERBS_EXPOSED` (10 stubs → `Unimplemented`, `sync` against a missing pack root → `PackOpError`). Flip to byte-equal once CLI `--json` wiring lands (m7-4 scope alongside real verb impls); call sites in `crates/grex-mcp/tests/parity.rs` stay unchanged.
+
 ## Source-of-truth links
 
 - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — tool catalog, cancellation, session model, stdio discipline.

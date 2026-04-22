@@ -445,3 +445,310 @@ mod normalize_tests {
         assert_eq!(once, twice);
     }
 }
+
+// ============================================================================
+// L3 parity helpers — Stage 5 of feat-m7-2
+// ============================================================================
+//
+// Pragmatic parity contract (see `tests/parity.rs` module-doc for the long
+// form). Spec line 98 calls for `assert_eq!(normalize(cli_json),
+// normalize(mcp_json))` — strict byte-equal of two normalised JSON
+// payloads. That cannot be satisfied today because `crates/grex/src/cli/
+// args.rs::GlobalFlags::json` is parsed but not consumed by any verb's
+// `run()`. None of the 11 CLI verbs emits JSON; 9 print
+// `"grex <verb>: unimplemented (M1 scaffold)"`, `sync` (the one real
+// impl) prints `[ok]/[would]/[skipped] pack=... action=... idx=...` text.
+//
+// Until CLI `--json` wiring lands (post-m7-4), parity asserts the
+// **structural shape** both surfaces DO carry: each verb is observably
+// in an "M7-1-stub" state — CLI text contains `unimplemented` or fails
+// non-zero; MCP returns `CallToolResult { isError: true }` whose body
+// parses as a JSON envelope with `data.kind` ∈ {`not_implemented`,
+// `pack_op`}. Call sites stay unchanged when `assert_parity` flips to
+// the spec-shaped strict byte-equal in m7-4.
+
+use std::process::Stdio;
+
+use assert_cmd::cargo::CommandCargoExt as _;
+
+/// Per-surface parity signal observed in the wild today.
+///
+/// Both surfaces emit one of these for every verb in `VERBS_EXPOSED`.
+/// Strict byte-equal of CLI JSON vs MCP JSON awaits CLI `--json` wiring;
+/// see module-level comment block above for rationale.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParitySignal {
+    /// Verb is an M7-1 stub. CLI prints `"unimplemented"` text; MCP
+    /// returns the spec-shaped `not_implemented` envelope.
+    Unimplemented,
+    /// Verb dispatched into `grex_core` and surfaced a domain-level
+    /// error (e.g. missing pack root for `sync`). CLI exits non-zero
+    /// with stderr text; MCP returns `packop_error(...)`.
+    PackOpError,
+}
+
+/// CLI argv for every verb that drives `assert_parity` into a
+/// **deterministic** outcome (no flake on host filesystem state).
+///
+/// `sync` gets a `fixture`-rooted absolute path that does not exist as a
+/// `.grex/pack.yaml` — both surfaces dispatch into `sync::run`, both
+/// surface a structural error. Every other verb is a stub that prints
+/// `"unimplemented"` from `cli/verbs/<verb>.rs::run()` (search the file
+/// for the exact string) regardless of args. Passing the fixture in
+/// (instead of a bare relative path) keeps the CLI subprocess from
+/// creating stray dirs in the test runner's cwd — a real footgun
+/// observed during Stage 5 first run (`crates/grex-mcp/grex-mcp-parity-
+/// nonexistent/` was being created next to `Cargo.toml`).
+///
+/// Returns owned `Vec<String>` so the caller can extend at the call
+/// site without lifetime gymnastics. Empty `Vec` = no extra args.
+#[must_use]
+pub fn default_args_for(verb: &str, fixture: &TestFixture) -> Vec<String> {
+    match verb {
+        // `add` requires a positional URL; pass a deterministic dummy.
+        "add" => vec!["https://example.invalid/parity-fixture.git".to_string()],
+        // `rm` requires a positional path.
+        "rm" => vec!["nonexistent-pack".to_string()],
+        // `run` requires a positional action name.
+        "run" => vec!["parity-fixture-action".to_string()],
+        // `exec` collects trailing args; pass one so clap-parse succeeds.
+        "exec" => vec!["true".to_string()],
+        // `sync` needs an absolute path inside the per-test tempdir so
+        // the CLI's `pack_root.is_none()` legacy-stub branch is not
+        // taken AND the runner cwd never gets polluted. The path
+        // intentionally points at a sub-dir of the fixture that does
+        // NOT exist (no `.grex/pack.yaml` seeded), so `sync::run`
+        // surfaces a structural error on both surfaces.
+        "sync" => vec![sync_pack_root(fixture).to_string_lossy().into_owned()],
+        // Every other verb is a bare stub — no args needed for the parse
+        // path or the print path.
+        _ => Vec::new(),
+    }
+}
+
+/// MCP `tools/call` arguments matching [`default_args_for`] in shape so
+/// both surfaces dispatch through equivalent code paths.
+///
+/// The MCP-side `Params` structs (in `crates/grex-mcp/src/tools/<verb>.rs`)
+/// use `serde(deny_unknown_fields)`. Required fields per verb are pulled
+/// from those `Params` structs verbatim — over-supplying yields
+/// `-32602 Invalid params` and breaks the parity signal.
+#[must_use]
+pub fn default_mcp_params_for(verb: &str, fixture: &TestFixture) -> Value {
+    match verb {
+        "add" => json!({ "url": "https://example.invalid/parity-fixture.git" }),
+        "rm" => json!({ "path": "nonexistent-pack" }),
+        "run" => json!({ "action": "parity-fixture-action" }),
+        "exec" => json!({ "cmd": ["true"] }),
+        // `sync` requires `pack_root`. Use the same absolute fixture-
+        // rooted path the CLI side gets so both surfaces hit
+        // `sync::run` against the identical (non-existent) target and
+        // produce the matching structural error envelope.
+        "sync" => json!({
+            "packRoot": sync_pack_root(fixture),
+            "dryRun": true,
+            "noValidate": true,
+        }),
+        // `update` accepts an optional pack name; bare is fine.
+        // All other stubs accept no required params.
+        _ => json!({}),
+    }
+}
+
+/// Per-fixture pack-root path used by both surfaces' `sync` parity
+/// case. Sub-dir name is fixed (not random) so the CLI subprocess
+/// argv and the MCP params dict remain string-equal — important
+/// because the spec's `<PATH>` normaliser (Stage 4) collapses both to
+/// `<PATH>` only after stage-5 byte-equal flips on; today the path
+/// is just an input to `sync::run` and never appears in either output.
+fn sync_pack_root(fixture: &TestFixture) -> std::path::PathBuf {
+    fixture.workspace.path().join("parity-sync-pack-root")
+}
+
+/// Drive `grex <verb> [args...]` as a subprocess against the freshly-
+/// built workspace `grex` binary; capture stdout + stderr + exit code
+/// and classify into a [`ParitySignal`].
+///
+/// Today every verb either prints `"unimplemented"` to stdout (9 stubs +
+/// `sync` without `pack_root`) OR exits non-zero with a structural error
+/// to stderr (`sync` with `pack_root` pointing at a non-`.grex` path).
+/// When CLI `--json` wiring lands the body parses as JSON; until then we
+/// classify on text shape.
+async fn drive_cli(verb: &str, args: &[String]) -> ParitySignal {
+    // `cargo_bin` resolves to `target/debug/grex[.exe]`. `assert_cmd`
+    // ensures it is built before the test runs (same wiring m7-1
+    // serve_smoke uses).
+    let mut cmd = std::process::Command::cargo_bin("grex").expect("grex binary builds");
+    cmd.arg(verb);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    // tokio-async wrapper around `std::process::Command::output()` keeps
+    // the test future-friendly (parity runs are independent so no
+    // throughput win, but the helper is `async fn` for symmetry with
+    // `drive_mcp` and to leave room for cancellation budgets in m7-3).
+    let output = tokio::task::spawn_blocking(move || cmd.output())
+        .await
+        .expect("spawn_blocking joins")
+        .expect("CLI subprocess runs");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if stdout.contains("unimplemented") {
+        ParitySignal::Unimplemented
+    } else if !output.status.success() {
+        // Non-zero exit with no `"unimplemented"` marker → real domain
+        // error path (currently only `sync` against a missing pack
+        // reaches here).
+        ParitySignal::PackOpError
+    } else {
+        panic!(
+            "CLI `grex {verb}` returned success with no 'unimplemented' marker — \
+             parity-helper assumption violated. CLI surface has gained real \
+             output for this verb; flip `assert_parity` to the spec-shaped \
+             strict byte-equal of normalised JSON. \
+             stdout: {stdout:?} stderr: {stderr:?}"
+        );
+    }
+}
+
+/// Drive an MCP `tools/call` for `verb` with `params` against an
+/// in-process duplex server; classify the result envelope into a
+/// [`ParitySignal`].
+///
+/// Mirrors `drive_cli`'s classification: `not_implemented` envelope →
+/// [`ParitySignal::Unimplemented`]; `pack_op` envelope →
+/// [`ParitySignal::PackOpError`]. Anything else is a parity-helper
+/// assumption violation worth a panic so the contract update lands in
+/// the same diff as the surface change.
+async fn drive_mcp(verb: &str, fixture: &TestFixture, params: Value) -> ParitySignal {
+    let mut client = new_duplex_server(fixture);
+    let _ = client.initialize().await;
+    client.notify("initialized", json!({})).await;
+
+    let resp = client.call("tools/call", json!({ "name": verb, "arguments": params })).await;
+    client.shutdown().await;
+
+    // Preflight from spec §"Tool enumeration": tools/list must advertise
+    // `>= VERBS_EXPOSED.len()`. Keeping it inside the call path (as
+    // tasks 5.4 directs) means a registry shrink fails `parity_*` first,
+    // before the per-verb assertion even runs. Cheap (~one JSON
+    // walk) and the diagnostic localises to the verb that tripped.
+    {
+        let mut probe = new_duplex_server(fixture);
+        let _ = probe.initialize().await;
+        probe.notify("initialized", json!({})).await;
+        let tools = probe.call("tools/list", json!({})).await;
+        probe.shutdown().await;
+        let len = tools["result"]["tools"].as_array().map(Vec::len).unwrap_or(0);
+        assert!(
+            len >= grex_mcp::VERBS_EXPOSED.len(),
+            "tools/list must expose at least {} tools, got {} (verb under test: {verb})",
+            grex_mcp::VERBS_EXPOSED.len(),
+            len,
+        );
+    }
+
+    let result = resp
+        .get("result")
+        .unwrap_or_else(|| panic!("MCP tools/call for `{verb}` returned no `result`: {resp:?}"));
+    let is_error = result.get("isError").and_then(Value::as_bool).unwrap_or(false);
+    assert!(
+        is_error,
+        "MCP tools/call for `{verb}` returned isError=false — parity-helper \
+         assumption violated; flip `assert_parity` to spec-shaped strict \
+         byte-equal. result: {result:?}"
+    );
+    let body_text =
+        result.pointer("/content/0/text").and_then(Value::as_str).unwrap_or_else(|| {
+            panic!("MCP isError envelope for `{verb}` lacks content[0].text: {result:?}")
+        });
+    let envelope: Value = serde_json::from_str(body_text)
+        .unwrap_or_else(|e| panic!("MCP `{verb}` envelope is not JSON: {e}; body: {body_text:?}"));
+    let kind = envelope
+        .pointer("/data/kind")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("MCP `{verb}` envelope missing data.kind: {envelope:?}"));
+
+    match kind {
+        "not_implemented" => ParitySignal::Unimplemented,
+        "pack_op" => ParitySignal::PackOpError,
+        other => panic!(
+            "MCP `{verb}` returned unknown data.kind={other:?} — parity-helper \
+             assumption violated; extend `ParitySignal`. envelope: {envelope:?}"
+        ),
+    }
+}
+
+/// Drive both surfaces for `verb` and assert they signal the same
+/// parity outcome.
+///
+/// **Today (m7-2)**: asserts both surfaces produce the same
+/// [`ParitySignal`] (`Unimplemented` for 10 stubs, `PackOpError` for
+/// `sync` against a missing pack root). This is the strongest contract
+/// reachable without CLI `--json` wiring (see spec §"Known limitations"
+/// entry 5 for the gap).
+///
+/// **Tomorrow (post-m7-4)**: flip the assertion to
+/// `assert_eq!(normalize(cli_json), normalize(mcp_json))` per spec §L3.
+/// Call sites in `tests/parity.rs` stay unchanged.
+///
+/// Owns the per-test [`TestFixture`] for the call's lifetime so the
+/// `sync` case (which needs an absolute path inside the fixture
+/// tempdir) cannot leak the workspace root past the assertion.
+pub async fn assert_parity(verb: &str) {
+    let fixture = TestFixture::new();
+    let args = default_args_for(verb, &fixture);
+    let mcp_params = default_mcp_params_for(verb, &fixture);
+    let cli_signal = drive_cli(verb, &args).await;
+    let mcp_signal = drive_mcp(verb, &fixture, mcp_params).await;
+    assert_eq!(
+        cli_signal, mcp_signal,
+        "CLI and MCP surfaces disagree on `{verb}` outcome — \
+         CLI: {cli_signal:?}, MCP: {mcp_signal:?}"
+    );
+}
+
+#[cfg(test)]
+mod parity_helper_tests {
+    use super::*;
+
+    /// `default_args_for` returns args every CLI verb's clap parser
+    /// will accept. Catches a future contributor who renames
+    /// `RmArgs::path` → `RmArgs::pack_path` etc. without updating the
+    /// fixture map.
+    #[test]
+    fn default_args_cover_required_positionals() {
+        let fixture = TestFixture::new();
+        for verb in grex_mcp::VERBS_EXPOSED {
+            // Every verb in VERBS_EXPOSED gets an entry — `_` arm is
+            // empty, which is correct for verbs with no required
+            // positionals. Probe for the five verbs with required
+            // positionals (add, rm, run, exec, sync) to lock the contract.
+            let args = default_args_for(verb, &fixture);
+            if matches!(*verb, "add" | "rm" | "run" | "exec" | "sync") {
+                assert!(
+                    !args.is_empty(),
+                    "verb `{verb}` requires a positional but default_args_for returned empty",
+                );
+            }
+        }
+    }
+
+    /// `default_mcp_params_for` returns params every MCP `Params`
+    /// struct will deserialise. `deny_unknown_fields` plus
+    /// missing-required-field both yield `-32602`; this test pins the
+    /// contract at compile-test time — but since we don't `use` the
+    /// `Params` types here, the actual deser check happens at the
+    /// per-verb `parity_*` integration tests in `tests/parity.rs`.
+    #[test]
+    fn default_mcp_params_cover_all_verbs() {
+        let fixture = TestFixture::new();
+        for verb in grex_mcp::VERBS_EXPOSED {
+            let _ = default_mcp_params_for(verb, &fixture);
+        }
+    }
+}
