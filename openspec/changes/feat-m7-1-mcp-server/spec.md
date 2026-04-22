@@ -304,6 +304,8 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
 ## Known limitations
 
 - Batched JSON-RPC requests (`[req,req]`) are silent-dropped by rmcp 1.5.0 rather than rejected with -32600. Acceptable for MCP 2025-06-18 (no batch support); upstream rmcp follow-up tracked separately. Stage 5 test `batch_request_array_is_silently_dropped_no_dispatch` enforces the safety contract (no dispatch, no crash); supersedes acceptance criterion #8.
+- **Pre-init request gate missing**: rmcp 1.5.0 closes the transport on a non-`initialize` first frame instead of emitting `-32002 init_state`. m7-2 L2.2 asserts the close behavior. Follow-up: wire `init_state_error()` (`crates/grex-mcp/src/error.rs:93`, unused) at the dispatch layer.
+- **Double-init gate missing**: rmcp 1.5.0 returns a fresh `InitializeResult` for a second `initialize` instead of rejecting. m7-2 L2.3 asserts protocol-version invariance only. Follow-up: same `init_state_error()` plumbing as above.
 
 ## rmcp 1.5.0 wiring notes
 

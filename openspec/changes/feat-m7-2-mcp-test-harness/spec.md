@@ -224,6 +224,14 @@ One `#[tokio::test]` **per verb** (11 tests), parametric over `VERBS_EXPOSED`. E
 6. `cargo clippy --all-targets --workspace -- -D warnings` clean.
 7. Wall-clock budget recalibrated from first CI run p99 × 1.5 and committed; flakiness triaged to root cause, not retried.
 
+## Known limitations
+
+Discovered during Stage 2 implementation; affect L2 envelope-layer assertions.
+
+1. **L2.2 `request_before_init_rejected`** asserts transport-close (server EOF), NOT a `-32002 init_state` envelope. rmcp 1.5.0's `ServerInitializeError::ExpectedInitializeRequest` gate (see `serve_directly_with_ct` ~L170-203) closes the transport rather than returning a structured error. The test still proves the safety contract (no method dispatch happens pre-init), and EOF is a strictly stronger signal than `-32002`. Wiring `init_state_error()` (defined at `crates/grex-mcp/src/error.rs:93`, currently unused at the dispatch layer) is tracked as an m7-1 follow-up.
+
+2. **L2.3 `double_init_rejected`** asserts only protocol-version invariance across a second `initialize` call, NOT rejection. rmcp 1.5.0 dispatches the second `initialize` through the regular request handler returning a fresh `InitializeResult` (no "already initialized" gate). Materially weaker than spec line 57. Wire `init_state_error()` when m7-1 adds a layered request-router; tracked as an m7-1 follow-up.
+
 ## Source-of-truth links
 
 - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — tool catalog, cancellation, session model, stdio discipline.

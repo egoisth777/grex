@@ -1,9 +1,9 @@
 //! Shared fixtures + helpers for `grex-mcp` integration tests (L2 – L5).
 //!
-//! Owned by `feat-m7-2-mcp-test-harness`. **Stage 1 = scaffolding only** —
-//! every public symbol here is intentionally `unimplemented!()` so the
-//! L2 handshake tests in `tests/handshake.rs` go RED in a useful way
-//! (compile-clean, panic at the helper boundary, not in the test body).
+//! Owned by `feat-m7-2-mcp-test-harness`. Stage 2 lands the real
+//! [`new_duplex_server`] + [`Client`] impl driving a duplex `GrexMcpServer`
+//! over the same newline-delimited JSON-RPC framer production uses
+//! (`rmcp` `transport-io`, see `rmcp::transport::async_rw::JsonRpcMessageCodec`).
 //!
 //! Layer ownership map:
 //! - L2 duplex E2E         → `tests/handshake.rs`
@@ -12,9 +12,8 @@
 //! - L4 concurrent stress  → `tests/stress.rs`
 //! - L5 cancellation chaos → `tests/cancel.rs`
 //!
-//! Stage 2 lands the real `new_duplex_server` + `Client` impl; Stage 4
-//! lands `normalize`, `run_cli_json`, `run_mcp_tool`. Stage 1 only proves
-//! the API shape compiles against the rest of the harness.
+//! Stage 4 lands `normalize`, `run_cli_json`, `run_mcp_tool`. Stage 1 / 2
+//! cover the duplex transport + JSON-RPC line client only.
 //!
 //! Cross-test dead-code is expected during stage progression: each new
 //! test file (handshake → parity → stress → cancel) brings additional
@@ -24,7 +23,24 @@
 
 #![allow(dead_code)]
 
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Duration;
+
+use grex_mcp::{GrexMcpServer, ServerState};
+use serde_json::{json, Value};
 use tempfile::TempDir;
+use tokio::io::{
+    AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf,
+};
+use tokio::task::JoinHandle;
+
+/// MCP protocol version pinned at the wire boundary (matches
+/// `.omne/cfg/mcp.md` §"Protocol version" and `feat-m7-1` Stage 5).
+const PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Per-call response timeout. Kept low so the L2 suite fails fast under
+/// regression rather than hanging the runner for the default 60 s.
+const RECV_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A scratch workspace + manifest path pair, isolated per-test so destructive
 /// verbs (`rm`, `run`, `exec`) cannot collide across parallel cargo-test
@@ -55,66 +71,209 @@ impl Default for TestFixture {
     }
 }
 
-/// Construct a client/server duplex pair driven by the same `rmcp`
-/// `transport-io` framer production uses, returning a [`Client`] handle
-/// the test owns end-to-end.
+/// Construct a client/server duplex pair driven by the same newline-delimited
+/// JSON-RPC framer production uses (`rmcp` `transport-io`), returning a
+/// [`Client`] handle the test owns end-to-end.
 ///
-/// **Stage 1 stub.** Stage 2 (per `tasks.md` §2.1) replaces this with
-/// the real implementation that:
+/// Implementation notes:
 ///
-/// 1. Pairs `tokio::io::duplex(4096)` into `(server_io, client_io)`.
-/// 2. Spawns `GrexMcpServer::new(ServerState::for_tests()).run(server_io)`
-///    on the current Tokio runtime.
-/// 3. Wraps `client_io` in a thin JSON-RPC line writer/reader exposed
-///    via [`Client`].
-///
-/// The intentional `unimplemented!()` is what drives the 5 L2 handshake
-/// tests RED in Stage 1; Stage 2 closing the implementation flips them
-/// GREEN with no test-body churn.
+/// 1. `tokio::io::duplex(4096)` hands back a pair of in-memory pipes; one
+///    half (`server_io`) is fed straight into `GrexMcpServer::run` via the
+///    blanket `IntoTransport for AsyncRead+AsyncWrite` impl in
+///    `rmcp::transport::async_rw`. The other half (`client_io`) is split
+///    into `(read, write)` so the [`Client`] can drive the JSON-RPC line
+///    protocol directly without pulling in the rmcp typed-message types
+///    (the L3 / L4 / L5 suites assert on raw envelopes).
+/// 2. `ServerState::for_tests()` reuses the m7-1 helper that produces a
+///    workspace-rooted `Scheduler::new(1)` + empty `Registry`. Stage 4
+///    will swap in a fixture-aware constructor when parity tests need
+///    real pack data; Stage 2's handshake suite never reaches handler
+///    bodies so the default suffices.
+/// 3. The server `JoinHandle` is captured inside [`Client`] so the test
+///    can `await` it on `shutdown()` and surface any panic.
 pub fn new_duplex_server(_fixture: &TestFixture) -> Client {
-    unimplemented!(
-        "stage-1 stub — `new_duplex_server` lands in feat-m7-2 stage 2 \
-         (see openspec/changes/feat-m7-2-mcp-test-harness/tasks.md §2.1)"
-    )
+    let (server_io, client_io) = tokio::io::duplex(4096);
+    let server = GrexMcpServer::new(ServerState::for_tests());
+    let server_task = tokio::spawn(async move {
+        // Discard the rmcp `ServerInitializeError` — the L2 tests
+        // assert on transport-close behaviour via `JoinHandle`, not on
+        // the rmcp error variant. m7-1 Stage 5 already covers panic-free
+        // close at the typed-layer.
+        let _ = server.run(server_io).await;
+    });
+
+    let (read, write) = tokio::io::split(client_io);
+    Client {
+        reader: BufReader::new(read),
+        writer: write,
+        next_id: AtomicI64::new(1),
+        server_task: Some(server_task),
+    }
 }
 
-/// Thin JSON-RPC line writer/reader over a duplex transport half.
+/// Thin newline-delimited JSON-RPC line writer/reader over a duplex
+/// transport half.
 ///
-/// **Stage 1 stub.** Stage 2 (per `tasks.md` §2.2) implements
-/// `initialize`, `notify`, `call`, `shutdown` against `serde_json::Value`
-/// payloads. The struct stays empty here so the L2 handshake tests can
-/// reference the type without dragging in the rmcp wire types directly.
+/// The duplex framer used by `rmcp` `transport-io` is
+/// `JsonRpcMessageCodec`: each frame is one JSON object terminated by
+/// `\n` (with an optional `\r` stripped on decode). This client
+/// mirrors that exactly — `serde_json::to_string` + `\n`, line-buffered
+/// reader on the way back. No length prefix, no Content-Length header.
+///
+/// Held opaque so test files only see the high-level methods; the L3
+/// stress + L5 cancel suites will reuse this without leaking transport
+/// internals into their assertions.
 pub struct Client {
-    // Stage 2 fields land here: a duplex half + a request-id counter.
-    // Kept opaque so test files only see the high-level methods.
-    _stage_2_placeholder: (),
+    reader: BufReader<ReadHalf<DuplexStream>>,
+    writer: WriteHalf<DuplexStream>,
+    next_id: AtomicI64,
+    /// Server task — captured so [`Client::shutdown`] can join it after
+    /// dropping the writer half (transport close = MCP shutdown signal).
+    server_task: Option<JoinHandle<()>>,
 }
 
 impl Client {
+    /// Allocate a fresh JSON-RPC request id. Monotonic, never wraps in
+    /// any sane test horizon (we'd need 2^63 calls in one suite).
+    fn next_request_id(&self) -> i64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Send `initialize` carrying the MCP `2025-06-18` protocol version
-    /// and return the framework's `result` payload (the inner JSON-RPC
-    /// `result` object, not the envelope).
-    pub async fn initialize(&mut self) -> serde_json::Value {
-        unimplemented!("stage-1 stub — `Client::initialize` lands in stage 2 §2.2")
+    /// and return the JSON-RPC envelope (so tests can assert on either
+    /// `result.protocolVersion` or `error.code`).
+    pub async fn initialize(&mut self) -> Value {
+        let id = self.next_request_id();
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": { "name": "grex-mcp-l2-harness", "version": "0.0.1" }
+            }
+        });
+        self.send_frame(&req).await;
+        self.recv_frame_for_id(id).await
     }
 
     /// Send a `notifications/<method>` JSON-RPC notification (no id, no
     /// reply expected).
-    pub async fn notify(&mut self, _method: &str, _params: serde_json::Value) {
-        unimplemented!("stage-1 stub — `Client::notify` lands in stage 2 §2.2")
+    ///
+    /// `method` is the bare suffix (`"initialized"`, `"cancelled"`); the
+    /// `notifications/` prefix is added here so tests can stay terse and
+    /// match the spec's verb-only naming.
+    pub async fn notify(&mut self, method: &str, params: Value) {
+        debug_assert!(
+            !method.starts_with("notifications/"),
+            "pass bare method name (e.g. \"initialized\"); notify() prepends notifications/ — passed: {method}",
+        );
+        let req = json!({
+            "jsonrpc": "2.0",
+            "method": format!("notifications/{method}"),
+            "params": params,
+        });
+        self.send_frame(&req).await;
     }
 
-    /// Send a `tools/call` (or arbitrary `method`) request and await the
-    /// JSON-RPC envelope. Returns the full envelope so tests can inspect
-    /// either `result` (success) or `error` (cancellation, invalid params).
-    pub async fn call(&mut self, _method: &str, _params: serde_json::Value) -> serde_json::Value {
-        unimplemented!("stage-1 stub — `Client::call` lands in stage 2 §2.2")
+    /// Send a request and await the JSON-RPC envelope. Returns the full
+    /// envelope so tests can inspect either `result` (success) or
+    /// `error` (cancellation, init-state violation, invalid params).
+    ///
+    /// `method` is the JSON-RPC method as-is (`"tools/list"`,
+    /// `"initialize"`, `"tools/call"`); no prefix munging.
+    pub async fn call(&mut self, method: &str, params: Value) -> Value {
+        let id = self.next_request_id();
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        self.send_frame(&req).await;
+        self.recv_frame_for_id(id).await
     }
 
-    /// Drop the client end of the duplex transport. MCP 2025-06-18 has
-    /// no explicit `shutdown` JSON-RPC method; transport close IS the
-    /// shutdown signal (see `tests/handshake.rs` Stage 5 m7-1 docs).
-    pub async fn shutdown(self) {
-        unimplemented!("stage-1 stub — `Client::shutdown` lands in stage 2 §2.2")
+    /// Drop the client end of the duplex transport and wait for the
+    /// server task to finish. MCP 2025-06-18 has no explicit `shutdown`
+    /// JSON-RPC method; transport close IS the shutdown signal (see
+    /// m7-1 `tests/handshake.rs::shutdown_returns_then_closes`).
+    pub async fn shutdown(mut self) {
+        // Flush any pending writes before tearing down. Best-effort —
+        // a closed writer just means the test already drove cleanup.
+        let _ = self.writer.shutdown().await;
+        // Drop both halves so the server's framed reader sees EOF and
+        // unwinds its serve loop.
+        drop(self.writer);
+        drop(self.reader);
+
+        if let Some(task) = self.server_task.take() {
+            // 2 s budget mirrors m7-1 Stage 5's `shutdown_returns_then_closes`
+            // (which uses 500 ms); we widen to 2 s here because L2 cases
+            // may have an in-flight handler draining (graceful_shutdown_drains).
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+        }
+    }
+
+    /// Encode `frame` as one newline-terminated JSON line and write it
+    /// to the duplex transport. Any I/O error panics — the L2 suite
+    /// treats a closed transport as a test failure.
+    async fn send_frame(&mut self, frame: &Value) {
+        let mut buf = serde_json::to_vec(frame).expect("serialise JSON-RPC frame");
+        buf.push(b'\n');
+        self.writer
+            .write_all(&buf)
+            .await
+            .expect("write JSON-RPC frame to duplex");
+        self.writer
+            .flush()
+            .await
+            .expect("flush JSON-RPC frame to duplex");
+    }
+
+    /// Read frames until one whose `id` matches `expected_id` is found.
+    /// Server-initiated requests / unrelated notifications are skipped
+    /// (the L2 cases do not assert on them). Times out per
+    /// [`RECV_TIMEOUT`].
+    async fn recv_frame_for_id(&mut self, expected_id: i64) -> Value {
+        let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let frame = tokio::time::timeout(remaining, self.recv_frame())
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "timed out after {:?} waiting for JSON-RPC response id={expected_id}",
+                        RECV_TIMEOUT
+                    )
+                });
+            // Match either the success envelope (`{result, id}`) or the
+            // error envelope (`{error, id}`). Server requests / notifications
+            // (no `id` or non-matching `id`) are dropped.
+            if let Some(id) = frame.get("id").and_then(Value::as_i64) {
+                if id == expected_id {
+                    return frame;
+                }
+            }
+        }
+    }
+
+    /// Read one newline-delimited JSON frame from the duplex reader.
+    /// EOF on a closed transport yields a panic — tests close the
+    /// transport via [`shutdown`], which never expects another reply.
+    async fn recv_frame(&mut self) -> Value {
+        let mut line = String::new();
+        let n = self
+            .reader
+            .read_line(&mut line)
+            .await
+            .expect("read JSON-RPC line from duplex");
+        assert!(n > 0, "duplex EOF before JSON-RPC reply arrived");
+        // `read_line` retains the trailing `\n`; rmcp's encoder also
+        // emits `\n` only (no `\r\n`). Trim either to be defensive.
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        serde_json::from_str(trimmed)
+            .unwrap_or_else(|e| panic!("malformed JSON-RPC frame {trimmed:?}: {e}"))
     }
 }
