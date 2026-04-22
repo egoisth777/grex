@@ -25,6 +25,24 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 grex-core = { workspace = true }
 
+[features]
+# Enables the `__test_set_block_until_cancelled` hook + the in-handler
+# `block_until_cancelled` short-circuit in `tools/sync.rs`. Used by the
+# integration test in `tests/cancellation.rs::notifications_cancelled_aborts_inflight_sync`
+# to deterministically race `notifications/cancelled` against an in-flight
+# `tools/call sync`. NOT enabled by default — production `grex serve`
+# binaries compile this branch out entirely (one fewer atomic load per call,
+# zero exposed test-surface symbols).
+#
+# The `tests/cancellation.rs` integration test is gated behind this feature
+# at the file level (`#![cfg(feature = "test-hooks")]`) so a plain
+# `cargo test -p grex-mcp` skips it; CI and local devs run
+# `cargo test -p grex-mcp --features test-hooks` (or `--all-features`).
+# This avoids the cargo-feature-unification footgun that a self-edge
+# dev-dependency would create (which silently turns on `test-hooks` for
+# every `cargo build -p grex-mcp` invocation, defeating the gate).
+test-hooks = []
+
 [dev-dependencies]
 tokio = { workspace = true }
 serde_json = { workspace = true }

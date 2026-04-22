@@ -4,8 +4,8 @@
 //! that has a real core implementation today. Bridges
 //! [`grex_core::sync::run`] (synchronous, blocking) onto the async
 //! rmcp dispatch via [`tokio::task::spawn_blocking`]. Cancellation token
-//! is captured from the request context (Stage 7 wires it through;
-//! Stage 6 plumbs the call site).
+//! comes from the per-request `RequestContext::ct` plumbed in Stage 7
+//! and threaded through `tool_router`'s `&self` shim.
 
 use crate::error::{CancelledExt, packop_error};
 use grex_core::sync::{self, SyncOptions};
@@ -52,13 +52,10 @@ pub struct SyncParams {
 
 pub(crate) async fn handle(
     state: &crate::ServerState,
-    Parameters(p): Parameters<SyncParams>,
+    p: Parameters<SyncParams>,
+    cancel: CancellationToken,
 ) -> Result<CallToolResult, McpError> {
-    // Stage 7 will replace this fresh token with the per-request token from
-    // `RequestContext::ct`. Stage 6's contract is "tool body runs to completion
-    // and maps result"; cancellation plumbing is deferred per Stage 7.1.
-    let cancel = CancellationToken::new();
-    run_with_cancel(state, p, cancel).await
+    run_with_cancel(state, p.0, cancel).await
 }
 
 async fn run_with_cancel(
@@ -66,6 +63,21 @@ async fn run_with_cancel(
     p: SyncParams,
     cancel: CancellationToken,
 ) -> Result<CallToolResult, McpError> {
+    // Test-only block-until-cancelled hook — gated behind the `test-hooks`
+    // cargo feature so it compiles out of release `grex serve` binaries
+    // entirely (no exposed test surface, no runtime atomic load). The
+    // cancellation integration test
+    // (`crates/grex-mcp/tests/cancellation.rs::notifications_cancelled_aborts_inflight_sync`)
+    // enables `test-hooks` via the dev-dep self-edge in `Cargo.toml`, then
+    // flips the toggle on so the in-flight handler awaits its per-request
+    // `CancellationToken` instead of running the (microseconds-fast)
+    // `sync::run` and losing the race against `notifications/cancelled`.
+    #[cfg(any(test, feature = "test-hooks"))]
+    if test_hooks::block_until_cancelled() {
+        cancel.cancelled().await;
+        return Err(McpError::from(CancelledExt));
+    }
+
     let opts = build_opts(&p);
     let pack_root = p.pack_root.clone();
 
@@ -90,6 +102,39 @@ async fn run_with_cancel(
         Ok(Err(err)) => Ok(packop_error(&format!("{err}"))),
         Err(join_err) => Ok(packop_error(&format!("internal: blocking task failed: {join_err}"))),
     }
+}
+
+/// Test-only knobs. `block_until_cancelled` is consulted by
+/// `run_with_cancel` at the top of every call when compiled with the
+/// `test-hooks` cargo feature; flipping it on turns the handler into
+/// "await cancel; return -32800". This is the deterministic substitute
+/// for a slow git fetch that the Stage 7 task description anticipated.
+/// The whole module is gated behind `cfg(any(test, feature = "test-hooks"))`
+/// so neither the atomic nor the setter ships in default-feature release
+/// builds.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+mod test_hooks {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static BLOCK: AtomicBool = AtomicBool::new(false);
+
+    pub fn block_until_cancelled() -> bool {
+        BLOCK.load(Ordering::SeqCst)
+    }
+
+    pub fn set_block_until_cancelled(v: bool) {
+        BLOCK.store(v, Ordering::SeqCst);
+    }
+}
+
+/// Test-only setter for the block-until-cancelled hook. See
+/// [`test_hooks`] for rationale. Hidden from rustdoc and compiled out
+/// unless the `test-hooks` cargo feature is enabled.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn __test_set_block_until_cancelled(v: bool) {
+    test_hooks::set_block_until_cancelled(v);
 }
 
 fn build_opts(p: &SyncParams) -> SyncOptions {
@@ -139,7 +184,7 @@ mod tests {
             force: false,
             parallel: None,
         };
-        let r = handle(&s, Parameters(p)).await.unwrap();
+        let r = handle(&s, Parameters(p), CancellationToken::new()).await.unwrap();
         // We expect failure — pack root does not exist. Either way the
         // tool MUST return Ok(envelope), not a JSON-RPC -32xxx.
         assert!(r.is_error.is_some(), "must set isError flag");

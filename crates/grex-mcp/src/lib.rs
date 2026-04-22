@@ -121,6 +121,11 @@ impl GrexMcpServer {
         E: std::error::Error + Send + Sync + 'static,
     {
         init_stderr_tracing();
+        // Per-request cancellation is handled by rmcp's internal local_ct_pool
+        // (see service.rs:766 / :948 / :989-991) — surfaced to handlers via
+        // FromContextPart<CancellationToken>. We do NOT need serve_with_ct here;
+        // that's a server-shutdown surface, not per-request. Stage 5 wiring note
+        // #4 conflated the two — this comment supersedes that note for Stage 7.
         let running = self.serve(transport).await?;
         // Wait for transport close. `waiting()` returns once the service loop
         // exits cleanly (drop of peer / EOF on transport).

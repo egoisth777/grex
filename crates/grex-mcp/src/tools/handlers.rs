@@ -22,6 +22,7 @@ use rmcp::{
     ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult, tool,
     tool_router,
 };
+use tokio_util::sync::CancellationToken;
 
 use super::{
     add::AddParams, doctor::DoctorParams, exec::ExecParams, import::ImportParams,
@@ -92,6 +93,14 @@ impl GrexMcpServer {
     }
 
     /// Sync all packs recursively.
+    ///
+    /// `cancel` is a `tokio_util::sync::CancellationToken` injected by
+    /// rmcp's `#[tool]` machinery (see `FromContextPart for
+    /// CancellationToken` in rmcp 1.5.0). It is the per-request
+    /// `RequestContext::ct` clone, automatically fired by rmcp's service
+    /// loop when a `notifications/cancelled` for this request id arrives
+    /// (see `crates/grex-mcp/tests/cancellation.rs` and Stage 7 of
+    /// `openspec/changes/feat-m7-1-mcp-server/tasks.md`).
     #[tool(
         name = "sync",
         description = "Sync all packs recursively.",
@@ -100,8 +109,9 @@ impl GrexMcpServer {
     async fn tool_sync(
         &self,
         params: Parameters<SyncParams>,
+        cancel: CancellationToken,
     ) -> Result<CallToolResult, McpError> {
-        super::sync::handle(&self.state, params).await
+        super::sync::handle(&self.state, params, cancel).await
     }
 
     /// Update one or more packs (re-resolve refs, reinstall).

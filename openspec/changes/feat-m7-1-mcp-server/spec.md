@@ -18,7 +18,7 @@ The server is load-bearing for `openspec/feat-grex/spec.md` success criterion #2
 2. `grex serve` launches the server on stdio; no `--mcp` flag (the command *is* the server).
 3. All 11 user-facing verbs (`init`, `add`, `rm`, `ls`, `status`, `sync`, `update`, `doctor`, `import`, `run`, `exec`) reachable via `tools/call`. `serve` is the server itself, not a tool; `teardown` is a plugin lifecycle hook of `rm`, not a verb.
 4. MCP tool handlers share one `Arc<Scheduler>` and obey the M6 5-tier lock ordering verbatim: workspace-sync → semaphore → pack-lock → backend → manifest.
-5. `notifications/cancelled` threads a `tokio_util::sync::CancellationToken` into the acquire path of both `Scheduler` and `PackLock`; in-flight blocking `fd-lock` writes are cancelled by dropping their `spawn_blocking` join handle. Client-side cancellation is emitted via rmcp's MCP-native API (`peer().send_request().cancel(reason)` on `rmcp 1.5.0`); see §Cancellation for the verified-at-Stage-1 fallback path if that helper is not published.
+5. `notifications/cancelled` threads a `tokio_util::sync::CancellationToken` into the acquire path of both `Scheduler` and `PackLock`; in-flight blocking `fd-lock` writes are cancelled by dropping their `spawn_blocking` join handle. Client-side cancellation is emitted via rmcp's MCP-native API (`peer().send_cancellable_request(...).cancel(reason)` on `rmcp 1.5.0`, where `send_cancellable_request` returns a `RequestHandle` whose `cancel(reason)` method ships the `notifications/cancelled` over the wire); see §Cancellation for the verified-at-Stage-1 fallback path if that helper is not published.
 6. `exec --shell` is **absent** from the MCP param schema. CLI keeps it; agent surface refuses it.
 
 ## Design
