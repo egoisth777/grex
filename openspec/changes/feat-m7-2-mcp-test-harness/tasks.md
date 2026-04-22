@@ -22,6 +22,11 @@
 
 ## Stage 3 — L2 real-pipe per-OS guard
 
+> **Note:** Stage 3 tests went GREEN on first run because m7-1's server contract
+> already satisfies the back-pressure + stderr-null invariants. Tests are real
+> (would fail on regression — strict JSON parsing, monotonic IDs, cumulative
+> >64 KiB threshold, post-init liveness). RED-first discipline N/A here.
+
 - [ ] 3.1 Write `crates/grex-mcp/tests/real_pipe_linux.rs` (`#[cfg(target_os = "linux")]`) with 2 failing cases — `large_response_crosses_pipe_buffer`, `client_stderr_close_does_not_panic_server`.
 - [ ] 3.2 Write `crates/grex-mcp/tests/real_pipe_macos.rs` (`#[cfg(target_os = "macos")]`) with the same 2 cases.
 - [ ] 3.3 Write `crates/grex-mcp/tests/real_pipe_windows.rs` (`#[cfg(target_os = "windows")]`) with the same 2 cases.

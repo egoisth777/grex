@@ -55,6 +55,12 @@ tokio-util = { workspace = true }
 # helper API surface; stage-2 wires the actual `anyhow::Result` returns
 # in `Client::*` impls.
 anyhow = { workspace = true }
+# `assert_cmd` added by feat-m7-2 stage 3 for the L2 real-pipe per-OS
+# guards in `tests/real_pipe_{linux,macos,windows}.rs`. Mirrors the
+# m7-1 Stage 8 usage in `crates/grex/tests/serve_smoke.rs`; required to
+# locate the freshly-built `grex` binary via `Command::cargo_bin("grex")`
+# without relying on `target/` path heuristics.
+assert_cmd = { workspace = true }
 
 [lints]
 workspace = true

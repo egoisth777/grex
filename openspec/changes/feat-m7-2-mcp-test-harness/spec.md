@@ -232,6 +232,10 @@ Discovered during Stage 2 implementation; affect L2 envelope-layer assertions.
 
 2. **L2.3 `double_init_rejected`** asserts only protocol-version invariance across a second `initialize` call, NOT rejection. rmcp 1.5.0 dispatches the second `initialize` through the regular request handler returning a fresh `InitializeResult` (no "already initialized" gate). Materially weaker than spec line 57. Wire `init_state_error()` when m7-1 adds a layered request-router; tracked as an m7-1 follow-up.
 
+3. **L2 real-pipe `large_response_crosses_pipe_buffer`** substitutes a 32-frame `tools/list` burst (cumulative >64 KiB) for the spec's single >64 KiB `tools/call{name:"ls"}` response. Reason: m7-1 ships `ls` as `not_implemented_result()` (-32601), so single-frame >64 KiB is unreachable today. The contract under test (rmcp framer drains under pipe back-pressure without dropping or reordering bytes) is preserved by the burst form. Switch to single-frame when m7-3 lands the real `ls` impl. Inline TODO in all 3 real-pipe files points at this.
+
+4. **L2 real-pipe `client_stderr_close_does_not_panic_server`** implements "close client stderr" as `Stdio::null()` at child-spawn time, NOT a mid-session `CloseHandle`/`dup2`. Reason: closing stderr after the child starts races the `tracing_subscriber::fmt().with_writer(stderr).init()` call inside `grex serve`, producing flaky tests. Both forms exercise the same invariant from `.omne/cfg/mcp.md` §Stdio discipline ("server tolerates an unreadable stderr").
+
 ## Source-of-truth links
 
 - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — tool catalog, cancellation, session model, stdio discipline.
