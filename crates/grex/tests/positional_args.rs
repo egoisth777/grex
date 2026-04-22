@@ -204,17 +204,9 @@ fn sync_recursive_explicit_true_succeeds() {
 }
 
 // ---------- serve ----------
-
-#[test]
-fn serve_without_mcp_succeeds() {
-    grex().arg("serve").assert().success().stdout(predicate::str::contains("unimplemented"));
-}
-
-#[test]
-fn serve_with_mcp_succeeds() {
-    grex()
-        .args(["serve", "--mcp"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
-}
+//
+// `serve` is a real long-running stdio MCP loop as of feat-m7-1 stage 8;
+// the prior "unimplemented" stub assertions no longer apply. Argument
+// parsing is exercised via `cli::args::tests::serve_mcp_flag_parses` (in
+// the binary crate), and full handshake coverage lives in
+// `crates/grex/tests/serve_smoke.rs`.

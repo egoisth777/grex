@@ -3,14 +3,14 @@
 
 mod common;
 
-use common::{grex, required_args_for, VERBS};
+use common::{grex, required_args_for, STUB_VERBS, VERBS};
 use predicates::prelude::*;
 
-/// Each verb, invoked with its minimal required args, exits 0 and prints the
-/// M1 stub marker.
+/// Each stub verb, invoked with its minimal required args, exits 0 and
+/// prints the M1 stub marker. `serve` is excluded — see `STUB_VERBS` doc.
 #[test]
 fn every_verb_stub_runs_and_prints_unimplemented() {
-    for verb in VERBS {
+    for verb in STUB_VERBS {
         let mut cmd = grex();
         cmd.arg(verb);
         cmd.args(required_args_for(verb));

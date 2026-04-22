@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true }
 comfy-table = { workspace = true }
 owo-colors = { workspace = true }
 grex-core = { workspace = true }
+grex-mcp = { path = "../grex-mcp" }
 grex-plugins-builtin = { workspace = true }
 # feat-m7-1 stage 2: CLI constructs a never-cancelled sentinel
 # (`CancellationToken::new()`) and threads it into every core verb so
@@ -32,6 +33,10 @@ grex-plugins-builtin = { workspace = true }
 # same shared signature. Workspace-pinned to keep the version aligned
 # with `grex-core` and `grex-mcp`.
 tokio-util = { workspace = true }
+# feat-m7-1 stage 8: `verbs/serve.rs` constructs the stdio transport
+# directly via `rmcp::transport::stdio()`. The `transport-io` feature is
+# already pulled by `grex-mcp` so the unification is free.
+rmcp = { workspace = true, features = ["transport-io"] }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

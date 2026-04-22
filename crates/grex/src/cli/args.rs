@@ -174,9 +174,26 @@ pub struct DoctorArgs {}
 
 #[derive(Args, Debug)]
 pub struct ServeArgs {
-    /// Start the MCP stdio JSON-RPC server.
-    #[arg(long)]
-    pub mcp: bool,
+    /// Path to the `grex.jsonl` event-log manifest. Captured at server
+    /// launch and immutable for the session (per spec §"Manifest binding").
+    /// Defaults to `<cwd>/grex.jsonl` when omitted.
+    #[arg(long, value_name = "PATH")]
+    pub manifest: Option<std::path::PathBuf>,
+
+    /// Workspace root the MCP server resolves relative paths against.
+    /// Defaults to the current working directory when omitted.
+    #[arg(long, value_name = "PATH")]
+    pub workspace: Option<std::path::PathBuf>,
+
+    /// Harness-level worker cap inherited by the MCP server's
+    /// `Scheduler` (feat-m7-1 stage 8.3). `1` = serial; range `1..=1024`.
+    /// Defaults to `std::thread::available_parallelism()` when omitted.
+    /// Distinct from `sync --parallel` which uses `0` = unbounded.
+    #[arg(
+        long = "parallel",
+        value_parser = clap::value_parser!(u32).range(1..=1024),
+    )]
+    pub parallel: Option<u32>,
 }
 
 #[derive(Args, Debug)]
@@ -275,15 +292,6 @@ mod tests {
         match cli.verb {
             Verb::Sync(a) => assert!(a.recursive, "sync should default to recursive=true"),
             _ => panic!("expected Sync variant"),
-        }
-    }
-
-    #[test]
-    fn serve_mcp_flag_parses() {
-        let cli = parse(&["serve", "--mcp"]).expect("serve --mcp parses");
-        match cli.verb {
-            Verb::Serve(a) => assert!(a.mcp),
-            _ => panic!("expected Serve variant"),
         }
     }
 
