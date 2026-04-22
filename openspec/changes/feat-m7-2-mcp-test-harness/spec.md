@@ -224,6 +224,22 @@ One `#[tokio::test]` **per verb** (11 tests), parametric over `VERBS_EXPOSED`. E
 6. `cargo clippy --all-targets --workspace -- -D warnings` clean.
 7. Wall-clock budget recalibrated from first CI run p99 × 1.5 and committed; flakiness triaged to root cause, not retried.
 
+## Known limitations
+
+Discovered during Stage 2 implementation; affect L2 envelope-layer assertions.
+
+1. **L2.2 `request_before_init_rejected`** asserts transport-close (server EOF), NOT a `-32002 init_state` envelope. rmcp 1.5.0's `ServerInitializeError::ExpectedInitializeRequest` gate (see `serve_directly_with_ct` ~L170-203) closes the transport rather than returning a structured error. The test still proves the safety contract (no method dispatch happens pre-init), and EOF is a strictly stronger signal than `-32002`. Wiring `init_state_error()` (defined at `crates/grex-mcp/src/error.rs:93`, currently unused at the dispatch layer) is tracked as an m7-1 follow-up.
+
+2. **L2.3 `double_init_rejected`** asserts only protocol-version invariance across a second `initialize` call, NOT rejection. rmcp 1.5.0 dispatches the second `initialize` through the regular request handler returning a fresh `InitializeResult` (no "already initialized" gate). Materially weaker than spec line 57. Wire `init_state_error()` when m7-1 adds a layered request-router; tracked as an m7-1 follow-up.
+
+3. **L2 real-pipe `large_response_crosses_pipe_buffer`** substitutes a 32-frame `tools/list` burst (cumulative >64 KiB) for the spec's single >64 KiB `tools/call{name:"ls"}` response. Reason: m7-1 ships `ls` as `not_implemented_result()` (-32601), so single-frame >64 KiB is unreachable today. The contract under test (rmcp framer drains under pipe back-pressure without dropping or reordering bytes) is preserved by the burst form. Switch to single-frame when m7-3 lands the real `ls` impl. Inline TODO in all 3 real-pipe files points at this.
+
+4. **L2 real-pipe `client_stderr_close_does_not_panic_server`** implements "close client stderr" as `Stdio::null()` at child-spawn time, NOT a mid-session `CloseHandle`/`dup2`. Reason: closing stderr after the child starts races the `tracing_subscriber::fmt().with_writer(stderr).init()` call inside `grex serve`, producing flaky tests. Both forms exercise the same invariant from `.omne/cfg/mcp.md` §Stdio discipline ("server tolerates an unreadable stderr").
+
+5. **L3 parity** asserts shape-equal `ParitySignal` (`Unimplemented` | `PackOpError`) rather than the spec's byte-equal `normalize(cli_json) == normalize(mcp_json)`. Reason: m7-1 ships `--json` parsed on `GlobalFlags` (`crates/grex/src/cli/args.rs:16`) but unwired into any verb (`crates/grex/src/cli/verbs/sync.rs:30` ignores `global.json`; 9 stub verbs print `"grex <verb>: unimplemented (M1 scaffold)"`). The current contract proves both surfaces agree on outcome class for every verb in `VERBS_EXPOSED` (10 stubs → `Unimplemented`, `sync` against a missing pack root → `PackOpError`). Flip to byte-equal once CLI `--json` wiring lands (m7-4 scope alongside real verb impls); call sites in `crates/grex-mcp/tests/parity.rs` stay unchanged.
+
+6. **L4 `stress_same_pack_serialises`** asserts no-deadlock + bounded latency under same-pack contention (8 concurrent `tools/call sync` against pack `p1` complete within `SAME_PACK_BUDGET=10s`, each returning a structured envelope). It does NOT assert the spec's strict `ActionStarted(p1, i+1)` strictly-follows `ActionCompleted(p1, i)` ordering. Reason: the per-pack `PackLock` that enforces serialisation lives inside `grex_core::sync::run` (see `crates/grex-core/src/pack_lock.rs::PackLock::acquire_async`); observing the critical-section ordering from the MCP edge would only see the scheduler permit-gate ordering, which is upstream of the lock. Strict observation requires a `core::sync` instrumentation hook (event-emitter on `ActionStarted`/`ActionCompleted` boundaries) and is deferred to feat-m7-3+. The current contract still proves the hard safety property — same-pack contention does not deadlock and resolves under budget — which is the operationally critical invariant.
+
 ## Source-of-truth links
 
 - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — tool catalog, cancellation, session model, stdio discipline.

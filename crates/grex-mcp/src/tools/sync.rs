@@ -59,7 +59,7 @@ pub(crate) async fn handle(
 }
 
 async fn run_with_cancel(
-    _state: &crate::ServerState,
+    state: &crate::ServerState,
     p: SyncParams,
     cancel: CancellationToken,
 ) -> Result<CallToolResult, McpError> {
@@ -77,6 +77,40 @@ async fn run_with_cancel(
         cancel.cancelled().await;
         return Err(McpError::from(CancelledExt));
     }
+
+    // feat-m7-2 Stage 7 — bound the MCP edge by the shared
+    // `Scheduler` so concurrent `tools/call sync` invocations never
+    // over-subscribe past `--parallel N`. This is the FIRST production
+    // consumer of `Scheduler::acquire_cancellable` (m7-1 Stage 3 added
+    // the method; m7-1 Stage 5 wired the scheduler into `ServerState`).
+    // Holding the permit through the full handler — including the
+    // `spawn_blocking(sync::run)` body — means the bound is observable
+    // from the outside as the in-flight `tools/call` count, not just
+    // the queued-into-spawn_blocking count. Permit drops at end-of-
+    // function so the next queued caller can proceed. Cancellation
+    // before a permit is granted maps to `-32800 RequestCancelled` via
+    // the existing `CancelledExt` envelope.
+    let _permit = state
+        .scheduler
+        .acquire_cancellable(&cancel)
+        .await
+        .map_err(|_| McpError::from(CancelledExt))?;
+
+    // Test-only stress-barrier hook (feat-m7-2 Stage 6). When a
+    // `tokio::sync::Barrier` has been installed via
+    // `__test_set_stress_barrier`, every handler invocation increments
+    // a shared in-flight counter, awaits the barrier (which releases
+    // simultaneously across all parked handlers + the test thread),
+    // then decrements the counter on its way out. The L4 stress harness
+    // (`crates/grex-mcp/tests/stress.rs`) uses this to pin the in-flight
+    // population at exactly PARALLEL handlers and assert the scheduler
+    // never over-subscribes. Same `cfg(any(test, feature = "test-hooks"))`
+    // gate as the cancellation hook above — zero footprint in release
+    // `grex serve`. Stage 7: now sits AFTER the permit-acquire so only
+    // PARALLEL handlers ever park here; the rest queue at the
+    // semaphore.
+    #[cfg(any(test, feature = "test-hooks"))]
+    let _stress_guard = test_hooks::stress_barrier_enter().await;
 
     let opts = build_opts(&p);
     let pack_root = p.pack_root.clone();
@@ -113,7 +147,9 @@ async fn run_with_cancel(
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 mod test_hooks {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::Barrier;
 
     static BLOCK: AtomicBool = AtomicBool::new(false);
 
@@ -124,6 +160,70 @@ mod test_hooks {
     pub fn set_block_until_cancelled(v: bool) {
         BLOCK.store(v, Ordering::SeqCst);
     }
+
+    // ---- Stress barrier hook (feat-m7-2 Stage 6) ----
+    //
+    // Holds an optional `Arc<Barrier>` plus an `AtomicUsize` recording
+    // the high-water in-flight count observed across all handler
+    // invocations. The test installs the barrier (sized N+1 so the test
+    // thread is the +1 releaser), then drives N concurrent `tools/call
+    // sync` requests; each handler hits `stress_barrier_enter`, bumps
+    // the in-flight counter, awaits the barrier, and on guard-drop
+    // decrements. When the post-`Barrier::wait()` snapshot equals
+    // PARALLEL exactly, the contract holds.
+
+    static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+    static HIGH_WATER: AtomicUsize = AtomicUsize::new(0);
+
+    fn barrier_slot() -> &'static Mutex<Option<Arc<Barrier>>> {
+        static SLOT: Mutex<Option<Arc<Barrier>>> = Mutex::new(None);
+        &SLOT
+    }
+
+    pub fn set_stress_barrier(b: Option<Arc<Barrier>>) {
+        *barrier_slot().lock().expect("stress barrier slot poisoned") = b;
+    }
+
+    pub fn reset_stress_metrics() {
+        IN_FLIGHT.store(0, Ordering::SeqCst);
+        HIGH_WATER.store(0, Ordering::SeqCst);
+    }
+
+    pub fn stress_high_water() -> usize {
+        HIGH_WATER.load(Ordering::SeqCst)
+    }
+
+    /// RAII guard returned by [`stress_barrier_enter`]. Decrements
+    /// `IN_FLIGHT` when dropped so the counter reflects live handlers
+    /// only. The high-water mark is monotone — never decremented.
+    pub struct StressGuard {
+        _private: (),
+    }
+
+    impl Drop for StressGuard {
+        fn drop(&mut self) {
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Increment the in-flight counter, refresh the high-water mark,
+    /// and (if a barrier is installed) await it. Returns a guard whose
+    /// `Drop` decrements the in-flight counter. Cheap no-op when no
+    /// barrier is installed (the common case — only the L4 stress
+    /// harness installs one).
+    pub async fn stress_barrier_enter() -> StressGuard {
+        let prev = IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        let now = prev + 1;
+        // Atomic max via CAS loop. `fetch_max` is stable on AtomicUsize
+        // since 1.45 so a single call suffices.
+        HIGH_WATER.fetch_max(now, Ordering::SeqCst);
+
+        let barrier = barrier_slot().lock().expect("stress barrier slot poisoned").clone();
+        if let Some(b) = barrier {
+            b.wait().await;
+        }
+        StressGuard { _private: () }
+    }
 }
 
 /// Test-only setter for the block-until-cancelled hook. See
@@ -133,6 +233,33 @@ mod test_hooks {
 #[doc(hidden)]
 pub fn __test_set_block_until_cancelled(v: bool) {
     test_hooks::set_block_until_cancelled(v);
+}
+
+/// Test-only setter for the L4 stress barrier (feat-m7-2 Stage 6).
+/// Pass `Some(barrier)` to install; pass `None` to clear after the
+/// stress test releases. Sized at `Barrier::new(PARALLEL + 1)` — N
+/// handlers + the test thread.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn __test_set_stress_barrier(b: Option<std::sync::Arc<tokio::sync::Barrier>>) {
+    test_hooks::set_stress_barrier(b);
+}
+
+/// Test-only reset for the stress in-flight + high-water counters.
+/// Call once at the top of every stress case so a previous run's
+/// state does not bleed into the next.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn __test_reset_stress_metrics() {
+    test_hooks::reset_stress_metrics();
+}
+
+/// Test-only accessor for the high-water in-flight count observed by
+/// the stress barrier. Monotone — never decremented across calls.
+#[cfg(any(test, feature = "test-hooks"))]
+#[doc(hidden)]
+pub fn __test_stress_high_water() -> usize {
+    test_hooks::stress_high_water()
 }
 
 fn build_opts(p: &SyncParams) -> SyncOptions {

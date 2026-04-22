@@ -37,7 +37,7 @@ pub use error::{CancelledExt, REQUEST_CANCELLED};
 
 /// Re-export the registered-tool name list so `serve` smoke tests +
 /// downstream crates have a stable handle on the surface.
-pub use tools::VERBS_11_EXPOSED_AS_TOOLS;
+pub use tools::VERBS_EXPOSED;
 
 /// Shared, immutable-after-build state every tool handler reads.
 ///

@@ -50,6 +50,23 @@ tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 tokio-util = { workspace = true }
+# `anyhow` added by feat-m7-2 stage 1 for the L2 – L5 integration-test
+# harness in `tests/common/mod.rs`. Stage-1 lands the dep alongside the
+# helper API surface; stage-2 wires the actual `anyhow::Result` returns
+# in `Client::*` impls.
+anyhow = { workspace = true }
+# `assert_cmd` added by feat-m7-2 stage 3 for the L2 real-pipe per-OS
+# guards in `tests/real_pipe_{linux,macos,windows}.rs`. Mirrors the
+# m7-1 Stage 8 usage in `crates/grex/tests/serve_smoke.rs`; required to
+# locate the freshly-built `grex` binary via `Command::cargo_bin("grex")`
+# without relying on `target/` path heuristics.
+assert_cmd = { workspace = true }
+# `chrono` added by feat-m7-2 stage 4 for the L3 normaliser in
+# `tests/common/mod.rs` — used solely to detect RFC3339-shaped
+# timestamp strings via `DateTime::parse_from_rfc3339`. Workspace
+# already pins `chrono = "0.4"` (with serde feature) for grex-core;
+# we re-pin via `workspace = true` to inherit that version.
+chrono = { workspace = true }
 
 [lints]
 workspace = true
