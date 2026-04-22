@@ -19,7 +19,17 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use grex_core::sync::{run, SyncOptions};
+use grex_core::sync::{self, SyncError, SyncOptions};
+use tokio_util::sync::CancellationToken;
+
+/// feat-m7-1 stage 2: never-cancelled sentinel wrapper so the existing
+/// `run(&root, &options(..))` call sites stay untouched.
+fn run(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::run(pack_root, opts, &CancellationToken::new())
+}
 use grex_core::ExecResult;
 use tempfile::TempDir;
 

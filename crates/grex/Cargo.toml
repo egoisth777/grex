@@ -26,6 +26,12 @@ comfy-table = { workspace = true }
 owo-colors = { workspace = true }
 grex-core = { workspace = true }
 grex-plugins-builtin = { workspace = true }
+# feat-m7-1 stage 2: CLI constructs a never-cancelled sentinel
+# (`CancellationToken::new()`) and threads it into every core verb so
+# the MCP server (stages 3+) can pass a real cancel handle through the
+# same shared signature. Workspace-pinned to keep the version aligned
+# with `grex-core` and `grex-mcp`.
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

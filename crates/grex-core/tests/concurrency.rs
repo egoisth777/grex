@@ -24,7 +24,19 @@ use std::thread;
 
 use grex_core::execute::StepKind;
 use grex_core::git::gix_backend::file_url_from_path;
-use grex_core::sync::{run as sync_run, SyncError, SyncOptions};
+use grex_core::sync::{self, SyncError, SyncOptions};
+use tokio_util::sync::CancellationToken;
+
+/// feat-m7-1 stage 2: thin wrapper that mints a never-cancelled
+/// sentinel per call so the existing test bodies need not be touched.
+/// CLI behaviour (no out-of-band cancel channel) is what these tests
+/// already exercise — the sentinel preserves it verbatim.
+fn sync_run(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::run(pack_root, opts, &CancellationToken::new())
+}
 use grex_core::{GitBackend, GixBackend};
 use tempfile::TempDir;
 

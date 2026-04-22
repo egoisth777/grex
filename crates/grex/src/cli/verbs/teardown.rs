@@ -12,6 +12,7 @@
 use crate::cli::args::{GlobalFlags, TeardownArgs};
 use anyhow::Result;
 use grex_core::sync::{self, HaltedContext, SyncError, SyncOptions, SyncReport, SyncStep};
+use tokio_util::sync::CancellationToken;
 
 /// Entry point for the `teardown` verb.
 ///
@@ -20,7 +21,11 @@ use grex_core::sync::{self, HaltedContext, SyncError, SyncOptions, SyncReport, S
 /// Surfaces `anyhow::Result` so `main` can render the orchestrator's
 /// output; exit codes are set via `std::process::exit` on halt paths
 /// (same pattern as `sync` since `anyhow::Error` does not carry them).
-pub fn run(args: TeardownArgs, global: &GlobalFlags) -> Result<()> {
+pub fn run(
+    args: TeardownArgs,
+    global: &GlobalFlags,
+    cancel: &CancellationToken,
+) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
         println!("grex teardown: requires <pack_root>");
         return Ok(());
@@ -29,7 +34,7 @@ pub fn run(args: TeardownArgs, global: &GlobalFlags) -> Result<()> {
         .with_dry_run(global.dry_run)
         .with_validate(!args.no_validate)
         .with_workspace(args.workspace.clone());
-    match run_impl(&pack_root, &opts, args.quiet) {
+    match run_impl(&pack_root, &opts, args.quiet, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::Validation => std::process::exit(1),
         RunOutcome::Exec => std::process::exit(2),
@@ -44,8 +49,13 @@ enum RunOutcome {
     Tree,
 }
 
-fn run_impl(pack_root: &std::path::Path, opts: &SyncOptions, quiet: bool) -> RunOutcome {
-    match sync::teardown(pack_root, opts) {
+fn run_impl(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+    quiet: bool,
+    cancel: &CancellationToken,
+) -> RunOutcome {
+    match sync::teardown(pack_root, opts, cancel) {
         Ok(report) => {
             render_report(&report, quiet);
             if report.halted.is_some() {
