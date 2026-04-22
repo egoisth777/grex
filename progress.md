@@ -1,7 +1,7 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 open vs main)** (branch `feat-m7`, HEAD `19ca7c4`). **M7-1 SHIPPED (2026-04-22)**: 8-stage TDD impl landed on `feat-m7` (8 commits, tip `19ca7c4`), PR #25 open, hygiene fix-up `19ca7c4` pushed (typos + cargo-deny wildcard + cargo fmt 39 files). Next: **merge PR #25 then resume M7-2** on `feat-m7-2`.
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 squash-merged to main)** + **M7-2 stages 1-3 in flight** (branch `feat-m7-2`, rebased onto new `main` `0b80a63`). **M7-1 SHIPPED & MERGED (2026-04-22)**: PR #25 squash-merged into `main` as `0b80a63`. **M7-2 IN PROGRESS (2026-04-22)**: rebased onto post-merge `main`; L2 dup-handshake harness + L2 real-pipe per-OS smoke landed; L3 parity normaliser next.
 
 ## Last endpoint (2026-04-22, feat-m7 — M7-1 shipped, PR #25 open)
 - Branch: `feat-m7` (HEAD `19ca7c4`), pushed to origin, PR #25 open vs `main`.
@@ -16,14 +16,27 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M
   - Stage 7 `spec.md:21` surface fix patched (`send_request().cancel` → `send_cancellable_request`).
 - **Workspace state**:
   - Test count: **553** with `--features grex-mcp/test-hooks` (m7-1 baseline); **555** default.
+
+## Sub-endpoint (2026-04-22, feat-m7-2 — M7-2 stages 1-3 in flight, rebased onto new main)
+- Branch: `feat-m7-2`, rebased onto post-merge `main` (`0b80a63`, the squash of PR #25).
+- **M7-2 (test-harness L2-L5) — IN PROGRESS on `feat-m7-2`**:
+  - 4 commits replayed on top of new `main` (Stage 1 RED scaffold → Stage 2 L2 GREEN + Client + duplex harness → progress doc → Stage 3 L2 real-pipe per-OS smoke).
+  - Spec contract: 8 stages total. L2 dup handshake (Stages 1-2) ✓; L2 real-pipe per-OS Linux+macOS+Windows (Stage 3) ✓; L3 parity normaliser, L4 stress, L5 cancel still pending.
+  - Stages 4-8 not started.
+- **Spec drift documented (m7-2)**:
+  - m7-2 `spec.md` `## Known limitations`: L2.2 + L2.3 deviations from spec mirrored in m7-1 follow-ups.
+- **Workspace state (m7-2 sub-branch)**:
+  - Test count: ~564 with all-features post m7-2 Stage 3.
   - Clippy `--workspace --all-targets -D warnings` clean.
   - schemars 0.8 → 1.0 workspace bump (rmcp 1.5 transitive constraint — `#[tool]` macro derives JsonSchema against schemars 1.x; mismatched majors hit orphan-rule errors at the tools/* boundary).
   - New crate `grex-mcp` (license `MIT OR Apache-2.0` inline pending m7-4 workspace migration).
 - **Carry-forwards**:
   - **M6 (still open per m6_scope.md)**: delete unused `PackLock::acquire` (sync), delete `Scheduler::permits()`, inline single-element const, rename `OwnCycleGuard` → `VisitedInsertGuard`. Stage 7 H2/H8 verification debt. M5 declarative install path.
   - **M7-1 Stage 2 reviewer flag**: re-export `CancellationToken` from `grex-core` to drop CLI direct `tokio-util` dep (DEFERRED — 16+ file edit).
+  - **M7-2 Stage 5 (upcoming)**: rename `VERBS_11_EXPOSED_AS_TOOLS` → `VERBS_EXPOSED` (Flag 3 from m7-2 discovery).
+  - **M7-2 Stage 6 (upcoming)**: use `feature = "test-hooks"` gate for barrier hook in `handlers/mod.rs`, NOT `#[cfg(test)]`.
   - **m7-1 follow-up**: wire `init_state_error()` (defined `error.rs:93`, unused) at dispatch layer for both pre-init + double-init gates.
-- **Next action**: merge PR #25 then resume M7-2 on `feat-m7-2` (Stage 3 — L2 real-pipe per-OS).
+- **Next action**: Resume M7-2 Stage 4 (L3 normaliser).
 
 ## Prior endpoint (2026-04-21, feat-m7 — M7 openspec drafts complete)
 - Branch: `feat-m7` (not yet pushed to origin — pushing at session end).
