@@ -170,7 +170,17 @@ pub struct UpdateArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct DoctorArgs {}
+pub struct DoctorArgs {
+    /// Heal gitignore drift by re-emitting the managed block. Safety:
+    /// NEVER touches the manifest or the filesystem on other checks.
+    #[arg(long)]
+    pub fix: bool,
+
+    /// Run the opt-in config-lint check (`openspec/config.yaml` +
+    /// `.omne/cfg/*.md`). Skipped by default.
+    #[arg(long = "lint-config")]
+    pub lint_config: bool,
+}
 
 #[derive(Args, Debug)]
 pub struct ServeArgs {
