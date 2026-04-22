@@ -97,7 +97,14 @@ async fn parity_update() {
     assert_parity("update").await;
 }
 
+// feat-m7-4b landed real `grex doctor` CLI wiring: the CLI now runs
+// checks and exits with a severity-derived code, while the MCP
+// `doctor` tool remains an M7-1 `not_implemented` stub. The two
+// surfaces therefore DELIBERATELY diverge until a follow-up sub-scope
+// lifts MCP up to CLI parity. The test is kept in the file as a
+// breadcrumb; flip `#[ignore]` off once MCP doctor ships real impl.
 #[tokio::test]
+#[ignore = "m7-4b: CLI doctor implemented, MCP doctor still stub — parity gap tracked for follow-up"]
 async fn parity_doctor() {
     assert_parity("doctor").await;
 }
