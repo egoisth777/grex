@@ -1,9 +1,29 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 squash-merged to main)** + **M7-2 COMPLETE on `feat-m7-2`** (PR #26 open vs `main`, 12/12 hard CI gates green, awaiting squash-merge). **M7-1 SHIPPED & MERGED (2026-04-22)**: PR #25 squash-merged into `main` as `0b80a63`. **M7-2 COMPLETE (2026-04-22)**: all 8 stages (L2-L5 test harness) shipped on `feat-m7-2`; 10 commits ahead of `main` (8 stages + hygiene + progress doc); PR #26 12/12 hard CI gates green; ready to merge.
+M7-1 + M7-2 both squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) pending on fresh branches.
 
-## Last endpoint (2026-04-22, feat-m7 — M7-1 shipped, PR #25 open)
+## Last endpoint (2026-04-22, main, post-M7-2 squash-merge)
+- Branch: `main` (HEAD `e98af8c`); no active feature branch.
+- **M7-1 (mcp-server) — SHIPPED & MERGED**: PR #25 squash-merged into `main` as `0b80a63`.
+- **M7-2 (test-harness L2-L5) — SHIPPED & MERGED**: PR #26 squash-merged into `main` as `e98af8c`. Stage 7 wired `Scheduler::acquire_cancellable` at the MCP edge (resolves m7-1 PR #25 reviewer flag).
+- **Workspace state on main**: test count expectation ~570+ with `--features grex-mcp/test-hooks` (m7-1 baseline 553 + m7-2 L3/L4/L5 layer additions); clippy `--workspace --all-targets -D warnings` clean; schemars 0.8 → 1.0 workspace bump landed via m7-2; `grex-mcp` crate in workspace (license `MIT OR Apache-2.0` inline pending m7-4 workspace migration).
+- **Carry-forwards owed to m7-3+**:
+  - Wire `PackLock::acquire_cancellable` in production (closes m7-2 spec entry 6 / "L4 same-pack relaxed"; defined but unused on the hot path).
+  - Wire `init_state_error()` (defined `error.rs:93`, unused) at the rmcp dispatch layer — closes m7-1 spec entries on pre-init + double-init gates.
+- **Carry-forwards owed to m7-4**:
+  - Wire CLI `--json` per verb (flips m7-2 ParitySignal from semantic-equiv to byte-equal).
+  - Workspace license migration to `MIT OR Apache-2.0` dual (drops the `grex-mcp` inline license override).
+  - Full `grex import --from-repos-json` impl + `grex doctor` (3 default checks + `--lint-config` opt-in).
+  - The 9 stub MCP verbs swap from `-32601` to real impls.
+- **Spec drift documented**:
+  - m7-2 `spec.md` `## Known limitations`: 6 entries (L2.2 transport-close, L2.3 protocol-version-only, L2 burst substitute, L2 stderr-null substitute, L3 ParitySignal, L4 same-pack relaxed).
+  - m7-1 `spec.md` `## Known limitations`: 3 entries (rmcp 1.5 batch-drop, pre-init gate, double-init gate).
+  - m7-1 `spec.md` `## rmcp 1.5.0 wiring notes`: 7 surface quirks captured.
+- **Active branch**: `main` (no active feature branch).
+- **Next action**: start `feat-m7-3` from `main` head; spec lives at `openspec/changes/feat-m7-3-mcp-ci-conformance/`. (Or `feat-m7-4` first if user prefers — both are ready.)
+
+## Prior endpoint (2026-04-22, feat-m7 — M7-1 shipped, PR #25 open)
 - Branch: `feat-m7` (HEAD `19ca7c4`), pushed to origin, PR #25 open vs `main`.
 - **M7-1 (mcp-server) — SHIPPED, PR #25 open vs main**:
   - 8 commits on `feat-m7` (chain tip prior to hygiene fix-up), PR: https://github.com/egoisth777/grex/pull/25.
@@ -17,7 +37,7 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M
 - **Workspace state**:
   - Test count: **553** with `--features grex-mcp/test-hooks` (m7-1 baseline); **555** default.
 
-## Sub-endpoint (2026-04-22, feat-m7-2 — M7-2 COMPLETE, PR #26 open vs main)
+## Prior sub-endpoint (2026-04-22, feat-m7-2 — M7-2 COMPLETE, PR #26 open vs main)
 - Branch: `feat-m7-2` (HEAD `8474c00`), rebased onto post-merge `main` (`0b80a63`, the squash of PR #25). Pushed to origin; PR #26 open vs `main`.
 - **M7-2 (test-harness L2-L5) — COMPLETE on `feat-m7-2`, awaiting merge**:
   - 10 commits ahead of `main`: 8 stages + hygiene + progress doc; chain tip `8474c00` (full SHA list available via `git log --oneline main..feat-m7-2`).
@@ -374,7 +394,7 @@ Supplementary:
 5. `.omne/cfg/README.md`
 
 ## Next action
-**M7 specs committed on `feat-m7` (2026-04-21), awaiting impl.** Start Stage 1 of `feat-m7-1` — workspace deps + `crates/grex-mcp` crate scaffold + rmcp 1.5.0 surface verification gate (confirm `#[tool]` macro, `Parameters<T: JsonSchema>`, `peer().send_request().cancel()` all exposed as documented). Then chain through Stage 2+ per `openspec/changes/feat-m7-1-mcp-server/tasks.md`. Non-blocking M6 carry-forwards (picked up as maint in M7 window) tracked in `memory/m6_scope.md` and `memory/m7_scope.md`.
+**M7-1 + M7-2 shipped (2026-04-22).** Start `feat-m7-3` from `main` head — spec at `openspec/changes/feat-m7-3-mcp-ci-conformance/` (mcp-validator==0.3.1 SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2`, self-contained release build, PR-blocking required check). Or `feat-m7-4` first if preferred — spec at `openspec/changes/feat-m7-4-import-doctor-license/` (import + doctor + workspace license dual + 9 stub-verb fills). Carry-forwards owed to m7-3+: wire `PackLock::acquire_cancellable` in production; wire `init_state_error()` at rmcp dispatch layer. Non-blocking M6 carry-forwards still tracked in `memory/m6_scope.md`.
 
 M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓ complete.
 - A: `ActionPlugin` trait + `Registry` struct + `register_builtins()`; 7 built-ins behind trait; re-exports; plugin-layer unit tests. Dispatch unchanged. [PR #20, `2175a09`]
