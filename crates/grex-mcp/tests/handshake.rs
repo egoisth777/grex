@@ -199,17 +199,10 @@ async fn handshake_ok() {
     let mut client = common::new_duplex_server(&fixture);
 
     let _init = client.initialize().await;
-    client
-        .notify("initialized", serde_json::json!({}))
-        .await;
-    let tools = client
-        .call("tools/list", serde_json::json!({}))
-        .await;
+    client.notify("initialized", serde_json::json!({})).await;
+    let tools = client.call("tools/list", serde_json::json!({})).await;
 
-    let len = tools["result"]["tools"]
-        .as_array()
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let len = tools["result"]["tools"].as_array().map(|a| a.len()).unwrap_or(0);
     assert!(
         len >= grex_mcp::VERBS_11_EXPOSED_AS_TOOLS.len(),
         "tools/list must expose at least {} tools, got {}",
@@ -238,7 +231,7 @@ async fn handshake_ok() {
 /// guard; that belongs to the m7-1 server layer (file an `init_state`
 /// gate follow-up under feat-m7-1 once a layered request-router lands).
 /// The assertion is therefore: **the server actively rejects** the
-/// pre-init request — proven by the duplex EOFing inside
+/// pre-init request — proven by the duplex EOF-ing inside
 /// `Client::call` rather than handing back a `result` envelope.
 #[tokio::test]
 async fn request_before_init_rejected() {
@@ -313,10 +306,7 @@ async fn double_init_rejected() {
             "double-init returned -32002 but wrong data.kind: {err:?}"
         );
     } else {
-        let pv = resp
-            .pointer("/result/protocolVersion")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let pv = resp.pointer("/result/protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(
             pv, "2025-06-18",
             "double-init returned a result envelope (rmcp 1.5.0 has no \
@@ -339,9 +329,7 @@ async fn graceful_shutdown_drains() {
     let fixture = common::TestFixture::new();
     let mut client = common::new_duplex_server(&fixture);
     let _ = client.initialize().await;
-    client
-        .notify("initialized", serde_json::json!({}))
-        .await;
+    client.notify("initialized", serde_json::json!({})).await;
 
     // Stage 2: launch a long-running tool here, then `client.shutdown()`
     // and assert the response arrives before the transport closes.

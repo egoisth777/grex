@@ -86,9 +86,7 @@ fn drive_init(stdin: &mut std::process::ChildStdin, id: u32) {
 
 fn drive_initialized(stdin: &mut std::process::ChildStdin) {
     let initialized = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    stdin
-        .write_all(frame(initialized).as_bytes())
-        .expect("write initialized");
+    stdin.write_all(frame(initialized).as_bytes()).expect("write initialized");
     stdin.flush().expect("flush initialized");
 }
 
@@ -207,9 +205,7 @@ fn large_response_crosses_pipe_buffer() {
 
     for id in 2..(2 + BURST) {
         let frame_str = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/list"}}"#);
-        stdin
-            .write_all(frame(&frame_str).as_bytes())
-            .expect("write tools/list burst frame");
+        stdin.write_all(frame(&frame_str).as_bytes()).expect("write tools/list burst frame");
     }
     stdin.flush().expect("flush burst");
 
@@ -258,9 +254,7 @@ fn client_stderr_close_does_not_panic_server() {
     drive_initialized(&mut stdin);
 
     let req1 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
-    stdin
-        .write_all(frame(req1).as_bytes())
-        .expect("write first tools/list");
+    stdin.write_all(frame(req1).as_bytes()).expect("write first tools/list");
     stdin.flush().expect("flush first");
     let resp1_deadline = Instant::now() + RESPONSE_DEADLINE;
     let resp1 = read_until_id(&mut reader, "\"id\":2", resp1_deadline)
@@ -269,9 +263,7 @@ fn client_stderr_close_does_not_panic_server() {
         serde_json::from_str(resp1.trim()).expect("first response is valid JSON");
 
     let req2 = r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#;
-    stdin
-        .write_all(frame(req2).as_bytes())
-        .expect("write second tools/list");
+    stdin.write_all(frame(req2).as_bytes()).expect("write second tools/list");
     stdin.flush().expect("flush second");
     let resp2_deadline = Instant::now() + RESPONSE_DEADLINE;
     let resp2 = read_until_id(&mut reader, "\"id\":3", resp2_deadline)
@@ -294,10 +286,7 @@ fn client_stderr_close_does_not_panic_server() {
             }
         }
     };
-    assert!(
-        status.success(),
-        "server exited non-zero after stderr-null'd run: {status:?}",
-    );
+    assert!(status.success(), "server exited non-zero after stderr-null'd run: {status:?}",);
 
     let mut tail = String::new();
     let _ = reader.read_to_string(&mut tail);

@@ -29,9 +29,7 @@ use std::time::Duration;
 use grex_mcp::{GrexMcpServer, ServerState};
 use serde_json::{json, Value};
 use tempfile::TempDir;
-use tokio::io::{
-    AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf,
-};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf};
 use tokio::task::JoinHandle;
 
 /// MCP protocol version pinned at the wire boundary (matches
@@ -222,14 +220,8 @@ impl Client {
     async fn send_frame(&mut self, frame: &Value) {
         let mut buf = serde_json::to_vec(frame).expect("serialise JSON-RPC frame");
         buf.push(b'\n');
-        self.writer
-            .write_all(&buf)
-            .await
-            .expect("write JSON-RPC frame to duplex");
-        self.writer
-            .flush()
-            .await
-            .expect("flush JSON-RPC frame to duplex");
+        self.writer.write_all(&buf).await.expect("write JSON-RPC frame to duplex");
+        self.writer.flush().await.expect("flush JSON-RPC frame to duplex");
     }
 
     /// Read frames until one whose `id` matches `expected_id` is found.
@@ -240,9 +232,8 @@ impl Client {
         let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let frame = tokio::time::timeout(remaining, self.recv_frame())
-                .await
-                .unwrap_or_else(|_| {
+            let frame =
+                tokio::time::timeout(remaining, self.recv_frame()).await.unwrap_or_else(|_| {
                     panic!(
                         "timed out after {:?} waiting for JSON-RPC response id={expected_id}",
                         RECV_TIMEOUT
@@ -264,11 +255,7 @@ impl Client {
     /// transport via [`shutdown`], which never expects another reply.
     async fn recv_frame(&mut self) -> Value {
         let mut line = String::new();
-        let n = self
-            .reader
-            .read_line(&mut line)
-            .await
-            .expect("read JSON-RPC line from duplex");
+        let n = self.reader.read_line(&mut line).await.expect("read JSON-RPC line from duplex");
         assert!(n > 0, "duplex EOF before JSON-RPC reply arrived");
         // `read_line` retains the trailing `\n`; rmcp's encoder also
         // emits `\n` only (no `\r\n`). Trim either to be defensive.
