@@ -154,6 +154,66 @@ jobs:
         with:
           lake-package-directory: lean
 
+  # Gate: MCP protocol conformance (L6) — external-oracle gate.
+  # Runs `mcp-validator` (Janix-ai) against a release build of `grex serve`
+  # at protocol `2025-06-18`. See `docs/ci/mcp-conformance.md` for pin
+  # rationale, bypass procedure, and local repro steps.
+  #
+  # Self-contained job — owns its own `cargo build --release` so `needs:` is
+  # deliberately OMITTED (see `openspec/changes/feat-m7-3-mcp-ci-conformance/proposal.md`
+  # §Design Notes). A `needs: [build]` dependency would stall on the
+  # 3-OS debug matrix (~5 min p95) with zero artefact payoff. Budget:
+  # ~3.5 min cold / ~1.5 min warm.
+  #
+  # Validator pin: `github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2`
+  # (tag `v0.3.1`, published 2025-07-08T13:55:45Z). PyPI publication of
+  # `mcp-validator==0.3.1` is NOT available (PyPI only lists `0.1.1` as of
+  # the 2026-04-22 lookup), so the git+SHA install path is the canonical
+  # pin and the only reliable install route. Any bump MUST update the tag
+  # AND SHA together — re-run
+  # `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW>` for the new SHA.
+  mcp-conformance:
+    name: MCP protocol conformance (2025-06-18)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Distinct key from the debug `build` job so the release target
+          # does not thrash the debug cache.
+          key: release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build release grex (self-contained; ~3 min cold, < 1 min warm)
+        run: cargo build --release -p grex
+      - name: Install mcp-validator (pinned to SHA d766d3e / tag v0.3.1)
+        # Canonical pin is git+SHA (PyPI distribution not published for
+        # 0.3.1). Installs the `mcp_testing` package + its deps.
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'git+https://github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2'
+      - name: Run conformance suite (protocol 2025-06-18)
+        # Invocation mirrors upstream `ref_gh_actions/stdio-validation.yml`
+        # at tag v0.3.1: `python -m mcp_testing.stdio.cli "<server-cmd>"
+        # --protocol-version <ver> --output-dir reports --timeout <secs>`.
+        # Server command is POSITIONAL (not `--server-command`).
+        run: |
+          mkdir -p reports
+          python -m mcp_testing.stdio.cli \
+            "$GITHUB_WORKSPACE/target/release/grex serve" \
+            --protocol-version 2025-06-18 \
+            --output-dir reports \
+            --timeout 30
+      - name: Upload validator reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcp-conformance-reports
+          path: reports/
+          retention-days: 14
+
   # Housekeeping: cargo-audit (redundant with cargo-deny advisories, kept for standalone signal).
   cargo-audit:
     name: cargo-audit
