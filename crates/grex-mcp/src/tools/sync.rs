@@ -59,7 +59,7 @@ pub(crate) async fn handle(
 }
 
 async fn run_with_cancel(
-    _state: &crate::ServerState,
+    state: &crate::ServerState,
     p: SyncParams,
     cancel: CancellationToken,
 ) -> Result<CallToolResult, McpError> {
@@ -78,6 +78,24 @@ async fn run_with_cancel(
         return Err(McpError::from(CancelledExt));
     }
 
+    // feat-m7-2 Stage 7 — bound the MCP edge by the shared
+    // `Scheduler` so concurrent `tools/call sync` invocations never
+    // over-subscribe past `--parallel N`. This is the FIRST production
+    // consumer of `Scheduler::acquire_cancellable` (m7-1 Stage 3 added
+    // the method; m7-1 Stage 5 wired the scheduler into `ServerState`).
+    // Holding the permit through the full handler — including the
+    // `spawn_blocking(sync::run)` body — means the bound is observable
+    // from the outside as the in-flight `tools/call` count, not just
+    // the queued-into-spawn_blocking count. Permit drops at end-of-
+    // function so the next queued caller can proceed. Cancellation
+    // before a permit is granted maps to `-32800 RequestCancelled` via
+    // the existing `CancelledExt` envelope.
+    let _permit = state
+        .scheduler
+        .acquire_cancellable(&cancel)
+        .await
+        .map_err(|_| McpError::from(CancelledExt))?;
+
     // Test-only stress-barrier hook (feat-m7-2 Stage 6). When a
     // `tokio::sync::Barrier` has been installed via
     // `__test_set_stress_barrier`, every handler invocation increments
@@ -88,7 +106,9 @@ async fn run_with_cancel(
     // population at exactly PARALLEL handlers and assert the scheduler
     // never over-subscribes. Same `cfg(any(test, feature = "test-hooks"))`
     // gate as the cancellation hook above — zero footprint in release
-    // `grex serve`.
+    // `grex serve`. Stage 7: now sits AFTER the permit-acquire so only
+    // PARALLEL handlers ever park here; the rest queue at the
+    // semaphore.
     #[cfg(any(test, feature = "test-hooks"))]
     let _stress_guard = test_hooks::stress_barrier_enter().await;
 
