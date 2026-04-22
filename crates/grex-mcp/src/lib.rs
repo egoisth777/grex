@@ -41,10 +41,10 @@ pub use tools::VERBS_11_EXPOSED_AS_TOOLS;
 
 /// Shared, immutable-after-build state every tool handler reads.
 ///
-/// Stage-5 surface only — Stages 6/7 will widen the type to hold the
-/// in-flight cancellation token map (`DashMap<RequestId, CancellationToken>`)
-/// and any `ExecCtx` plumbing the verbs require. Fields are `Arc`-wrapped so
-/// `ServerHandler::call_tool` can clone cheaply onto each spawn.
+/// Per-request cancellation is routed through rmcp's built-in `local_ct_pool`
+/// (`FromContextPart<CancellationToken>` injected on each `tools/call`); no
+/// custom in-flight token map lives on `ServerState`. Fields are `Arc`-wrapped
+/// so `ServerHandler::call_tool` can clone cheaply onto each spawn.
 #[derive(Clone)]
 pub struct ServerState {
     /// Bounded permit pool the verbs use for `--parallel N` semantics.

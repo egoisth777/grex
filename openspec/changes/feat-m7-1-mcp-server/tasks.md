@@ -155,9 +155,9 @@ Each tool is its own file under `crates/grex-mcp/src/tools/`. Tests first per to
 
 ## Stage 7 — `notifications/cancelled` handler wired to `CancellationToken`
 
-- [ ] 7.1 In `GrexMcpServer`, maintain a `DashMap<RequestId, CancellationToken>` of in-flight tool calls.
-- [ ] 7.2 On each `tools/call` entry: insert token; on exit: remove.
-- [ ] 7.3 `notifications/cancelled` handler: look up `requestId`, call `token.cancel()`.
+- [ ] 7.1 Use rmcp's built-in `local_ct_pool` (HashMap<RequestId, CancellationToken> in rmcp `service.rs:766`); inject per-request via `FromContextPart<CancellationToken>` on each `tools/call` — no custom DashMap layer needed.
+- [ ] 7.2 rmcp manages insert-on-entry / remove-on-exit lifecycle inside `local_ct_pool`.
+- [ ] 7.3 rmcp's built-in `notifications/cancelled` handler routes to the pool's `token.cancel()` automatically.
 - [ ] 7.4 Tool bodies already receive `cancel: &CancellationToken` (Stage 2); confirm every acquire site in core uses `acquire_cancellable` for the handlers that reach scheduler / pack-lock (primarily `sync`, `update`, `run`, `exec`).
 
 **Tests**:

@@ -1,9 +1,31 @@
 # progress — grex
 
 ## Where we are
-M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7 openspec drafts complete, IMPL NOT STARTED** (branch `feat-m7`, 4 chained changes, 3 review cycles done). **M7 SPECS DRAFTED (2026-04-21)**: 4 openspec changes drafted on `feat-m7` → 3 review cycles (R1 REJECT 2/10 → Path B rewrite, R2 REVISE 7.3/10 → 13 findings patched, R3 SHIP with codex residuals patched). Deliverables locked: `feat-m7-1` MCP server (rmcp 1.5, 11 tools, stdio), `feat-m7-2` test harness (nested in `crates/grex-mcp/tests/`), `feat-m7-3` CI conformance (`mcp-validator==0.3.1`, SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2`), `feat-m7-4` import/doctor/license (`MIT OR Apache-2.0` dual). Next: **M7 impl Stage 1 of feat-m7-1** (workspace deps + crate scaffold + rmcp surface verification).
+M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M5-1 + M5-2 + M6 complete + **M7-1 shipped (PR #25 open vs main)** (branch `feat-m7`, HEAD `19ca7c4`). **M7-1 SHIPPED (2026-04-22)**: 8-stage TDD impl landed on `feat-m7` (8 commits, tip `19ca7c4`), PR #25 open, hygiene fix-up `19ca7c4` pushed (typos + cargo-deny wildcard + cargo fmt 39 files). Next: **merge PR #25 then resume M7-2** on `feat-m7-2`.
 
-## Last endpoint (2026-04-21, feat-m7 — M7 openspec drafts complete, IMPL NOT STARTED)
+## Last endpoint (2026-04-22, feat-m7 — M7-1 shipped, PR #25 open)
+- Branch: `feat-m7` (HEAD `19ca7c4`), pushed to origin, PR #25 open vs `main`.
+- **M7-1 (mcp-server) — SHIPPED, PR #25 open vs main**:
+  - 8 commits on `feat-m7` (chain tip prior to hygiene fix-up), PR: https://github.com/egoisth777/grex/pull/25.
+  - Hygiene fix-up commit `19ca7c4` pushed (typos + cargo-deny wildcard + cargo fmt across 39 files).
+  - All 8 stages: TDD red→green per stage, independent reviewer per stage, 1-2 fix loops per stage, fix-and-finalize.
+  - Stages: 1 deps+scaffold | 2 cancel plumbing | 3 `Scheduler::acquire_cancellable` | 4 `PackLock::acquire_cancellable` | 5 server skeleton + handshake | 6 11 `#[tool]` handlers | 7 `notifications/cancelled` (rmcp built-in) | 8 `grex serve` CLI + smoke.
+- **Spec drift documented**:
+  - m7-1 `spec.md` `## Known limitations`: rmcp 1.5 batch-drop + pre-init gate + double-init gate (3 entries).
+  - m7-1 `spec.md` `## rmcp 1.5.0 wiring notes`: 7 surface quirks captured.
+  - Stage 7 `spec.md:21` surface fix patched (`send_request().cancel` → `send_cancellable_request`).
+- **Workspace state**:
+  - Test count: **553** with `--features grex-mcp/test-hooks` (m7-1 baseline); **555** default.
+  - Clippy `--workspace --all-targets -D warnings` clean.
+  - schemars 0.8 → 1.0 workspace bump (rmcp 1.5 transitive constraint — `#[tool]` macro derives JsonSchema against schemars 1.x; mismatched majors hit orphan-rule errors at the tools/* boundary).
+  - New crate `grex-mcp` (license `MIT OR Apache-2.0` inline pending m7-4 workspace migration).
+- **Carry-forwards**:
+  - **M6 (still open per m6_scope.md)**: delete unused `PackLock::acquire` (sync), delete `Scheduler::permits()`, inline single-element const, rename `OwnCycleGuard` → `VisitedInsertGuard`. Stage 7 H2/H8 verification debt. M5 declarative install path.
+  - **M7-1 Stage 2 reviewer flag**: re-export `CancellationToken` from `grex-core` to drop CLI direct `tokio-util` dep (DEFERRED — 16+ file edit).
+  - **m7-1 follow-up**: wire `init_state_error()` (defined `error.rs:93`, unused) at dispatch layer for both pre-init + double-init gates.
+- **Next action**: merge PR #25 then resume M7-2 on `feat-m7-2` (Stage 3 — L2 real-pipe per-OS).
+
+## Prior endpoint (2026-04-21, feat-m7 — M7 openspec drafts complete)
 - Branch: `feat-m7` (not yet pushed to origin — pushing at session end).
 - Commits on branch (chain tip → base): `da2d60c docs(openspec): round-3 revisions — align M7 specs post-review` → `c151e6c docs(openspec): draft M7 change proposals (feat-m7-1/2/3/4)`. (Task note flagged `cf78b16` as a tip SHA, but that commit is an older M6 draft on `feat-m6` — the actual `feat-m7` chain is the two SHAs above.)
 - **M7 scope — MCP server + import + doctor + license** — 4 chained openspec changes drafted, NO code written yet.
@@ -19,7 +41,6 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M
   - **SSOT update**: `.omne/cfg/mcp.md` rewritten to Path B MCP-native (rmcp, tools/list, tools/call, notifications/cancelled, protocol 2025-06-18).
   - **Workspace dep drift (M7-1 Stage 6)**: schemars 0.8 → 1.0 workspace bump (rmcp 1.5 transitive constraint — `#[tool]` macro derives JsonSchema against schemars 1.x; mismatched majors hit orphan-rule errors at the tools/* boundary). Spec.md patched in lockstep.
   - **Carry-forward from M6** (still open, picked up in M7 impl window as maintenance): MED maint — unused `PackLock::acquire` sync variant, `Scheduler::permits()`; MED perf — top-level `sync::run` still sequential outside meta recursion, needs `FuturesUnordered` dispatch; verification debt — H2 `register_self_in_visited` ordering, H8 panic-safety test for `PackLockHold`.
-  - **Next action**: M7 impl start — Stage 1 of feat-m7-1 (workspace deps + crate scaffold + rmcp surface verification: confirm `rmcp 1.5.0` exposes `#[tool]` macro, `Parameters<T: JsonSchema>`, `peer().send_request().cancel()`).
 
 ## Prior endpoint (2026-04-21, main — M6 closed via PR #24)
 - Main head: PR #24 squash-merged 2026-04-21T22:27Z. CI all green including `lake build`.
