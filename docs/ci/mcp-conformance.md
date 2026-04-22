@@ -18,8 +18,9 @@ rmcp-typed client, this job checks a third-party one.
 | Tag | `v0.3.1` |
 | Commit SHA | `d766d3ee94076b13d0b73253e5221bbc76b9edb2` |
 | Released | 2025-07-08T13:55:45Z |
-| Install path | `pip install 'git+https://github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2'` |
-| PyPI status | `mcp-validator==0.3.1` is **NOT** published on PyPI (only `0.1.1` is). The git+SHA install is the canonical and only reliable pin. |
+| Install path | `actions/checkout` the pinned SHA into `.mcp-validator/`, then `pip install -r .mcp-validator/requirements.txt`, then run `python -m mcp_testing.stdio.cli` with `PYTHONPATH=.mcp-validator`. |
+| PyPI status | `mcp-validator==0.3.1` is **NOT** published on PyPI (only `0.1.1` is). |
+| `pip install git+URL` | **NOT** supported at this SHA. The upstream repo at tag `v0.3.1` ships neither `setup.py` nor `pyproject.toml`, so pip refuses with `does not appear to be a Python project`. Clone-and-run is the only supported path until upstream adds a packaging file. |
 | Protocol | `2025-06-18` (matches `.omne/cfg/mcp.md` SSOT) |
 | Pin verified | 2026-04-22 via `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v0.3.1` |
 
@@ -36,11 +37,12 @@ Drift between the two is a merge blocker.
 
 ## CLI invocation
 
-The PyPI name `mcp-validator` does not ship a `mcp-validator` console entry
-point at this version. The canonical invocation (matches upstream
-`ref_gh_actions/stdio-validation.yml` at tag `v0.3.1`) is:
+There is no `mcp-validator` console entry point at this SHA. The canonical
+invocation (matches upstream `ref_gh_actions/stdio-validation.yml` at tag
+`v0.3.1`) is a `python -m` call against the checked-out module:
 
 ```bash
+PYTHONPATH=/abs/path/to/mcp-validator-checkout \
 python -m mcp_testing.stdio.cli \
   "$GITHUB_WORKSPACE/target/release/grex serve" \
   --protocol-version 2025-06-18 \
@@ -54,18 +56,23 @@ Notes:
   spec draft had this wrong; corrected here and in `ci.yml`).
 - `--protocol-version` is passed to the validator, NOT to `grex serve`
   (which does not accept that flag).
+- `PYTHONPATH` is required because the upstream repo at this SHA is not
+  pip-installable (no `setup.py` / `pyproject.toml`).
 - The job uploads `reports/` as a workflow artefact (`mcp-conformance-reports`,
   14-day retention) regardless of pass/fail so failed runs are debuggable.
 
 ## Local repro
 
-From repo root on any supported OS (validator install requires Python 3.12):
+From repo root on any supported OS (Python 3.12):
 
 ```bash
 cargo build --release -p grex
+git clone https://github.com/Janix-ai/mcp-validator .mcp-validator
+git -C .mcp-validator checkout d766d3ee94076b13d0b73253e5221bbc76b9edb2
 python -m pip install --upgrade pip
-pip install 'git+https://github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2'
+pip install -r .mcp-validator/requirements.txt
 mkdir -p reports
+PYTHONPATH="$(pwd)/.mcp-validator" \
 python -m mcp_testing.stdio.cli \
   "$(pwd)/target/release/grex serve" \
   --protocol-version 2025-06-18 \

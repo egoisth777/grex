@@ -188,17 +188,35 @@ jobs:
           python-version: "3.12"
       - name: Build release grex (self-contained; ~3 min cold, < 1 min warm)
         run: cargo build --release -p grex
-      - name: Install mcp-validator (pinned to SHA d766d3e / tag v0.3.1)
-        # Canonical pin is git+SHA (PyPI distribution not published for
-        # 0.3.1). Installs the `mcp_testing` package + its deps.
+      - name: Check out mcp-validator (pinned to SHA d766d3e / tag v0.3.1)
+        # Upstream at tag v0.3.1 ships NEITHER `setup.py` NOR
+        # `pyproject.toml`, so `pip install git+URL` is NOT supported —
+        # pip refuses with "does not appear to be a Python project".
+        # Upstream's own `ref_gh_actions/stdio-validation.yml@v0.3.1`
+        # template suggests `pip install git+…` but that is aspirational;
+        # the repo at this SHA is checkout-and-run only. We clone the pin,
+        # install `requirements.txt`, and put the checkout on `PYTHONPATH`
+        # so `python -m mcp_testing.*` resolves. Bump policy: re-check
+        # upstream for a pip-installable release before switching to
+        # `pip install`.
+        uses: actions/checkout@v6
+        with:
+          repository: Janix-ai/mcp-validator
+          ref: d766d3ee94076b13d0b73253e5221bbc76b9edb2
+          path: .mcp-validator
+      - name: Install mcp-validator deps
         run: |
           python -m pip install --upgrade pip
-          pip install 'git+https://github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2'
+          pip install -r .mcp-validator/requirements.txt
       - name: Run conformance suite (protocol 2025-06-18)
         # Invocation mirrors upstream `ref_gh_actions/stdio-validation.yml`
         # at tag v0.3.1: `python -m mcp_testing.stdio.cli "<server-cmd>"
         # --protocol-version <ver> --output-dir reports --timeout <secs>`.
-        # Server command is POSITIONAL (not `--server-command`).
+        # Server command is POSITIONAL (not `--server-command`). The
+        # `PYTHONPATH` hop is needed because the upstream repo at this SHA
+        # is not a pip-installable project (no setup.py / pyproject.toml).
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.mcp-validator
         run: |
           mkdir -p reports
           python -m mcp_testing.stdio.cli \
