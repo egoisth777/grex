@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/grex",
     "crates/grex-core",
+    "crates/grex-mcp",
     "crates/grex-plugins-builtin",
 ]
 
@@ -22,6 +23,11 @@ clap = { version = "4.5", features = ["derive", "env"] }
 
 # async runtime
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# MCP server framework (M7)
+rmcp = "1.5.0"
+schemars = "0.8"
 
 # serde
 serde = { version = "1", features = ["derive"] }

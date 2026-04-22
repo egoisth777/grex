@@ -1,0 +1,22 @@
+[package]
+name = "grex-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# License diverges from workspace MIT default until feat-m7-4 migrates the workspace to dual.
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+authors.workspace = true
+description = "MCP-native server for grex (M7): exposes the 11 core verbs as MCP tools."
+
+[dependencies]
+rmcp = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+grex-core = { workspace = true }
+
+[lints]
+workspace = true
