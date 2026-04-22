@@ -264,3 +264,184 @@ impl Client {
             .unwrap_or_else(|e| panic!("malformed JSON-RPC frame {trimmed:?}: {e}"))
     }
 }
+
+// ============================================================================
+// L3 normaliser — Stage 4 of feat-m7-2
+// ============================================================================
+
+/// Recursively rewrite a JSON value, substituting volatile string scalars
+/// with stable placeholder tokens so two structurally-equivalent payloads
+/// (one from `grex --json`, one from `tools/call`) compare byte-equal.
+///
+/// Substitutions performed (string scalars only):
+///
+/// - **`<TS>`** — any string parseable as RFC3339
+///   (`chrono::DateTime::parse_from_rfc3339`).
+/// - **`<PATH>`** — any string shaped like an absolute filesystem path:
+///     - Unix: leading `/` followed by a non-whitespace remainder.
+///     - Windows: drive letter + colon + `/` or `\` followed by a
+///       non-whitespace remainder.
+///
+/// Recurses through objects (preserving keys, normalising values) and
+/// arrays (normalising elements). Non-string scalars (`Number`, `Bool`,
+/// `Null`) pass through unchanged. Numeric timestamps are intentionally
+/// NOT rewritten — the leaf-level normaliser cannot see field-key
+/// context, and MCP envelope shapes carry timestamps as RFC3339 strings.
+///
+/// **Lossy by design**: distinct absolute paths collapse to the single
+/// `<PATH>` token. Acceptable for parity assertions where the *shape*
+/// of the response, not the literal path, is what matters. If Stage 5
+/// parity tests need fixture-root-relative paths, extend with a
+/// `normalize_with_root(value, root)` companion — do NOT widen this
+/// helper's semantics.
+///
+/// Per spec §L3 (`openspec/changes/feat-m7-2-mcp-test-harness/spec.md`)
+/// the placeholder set is deliberately minimal: `<TS>` + `<PATH>` only.
+/// `<ID>`, `<PID>`, `<SHA>` are explicitly out-of-scope until a concrete
+/// failing parity test proves the need.
+pub fn normalize(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(normalize_string(&s)),
+        Value::Array(items) => Value::Array(items.into_iter().map(normalize).collect()),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                out.insert(k, normalize(v));
+            }
+            Value::Object(out)
+        }
+        // Numbers, bools, null: pass-through. See doc-comment rationale.
+        other => other,
+    }
+}
+
+/// Classify a string scalar and return the rewritten form. Order matters:
+/// timestamp check first (RFC3339 strings never look like absolute paths),
+/// then absolute-path shape check, then identity.
+fn normalize_string(s: &str) -> String {
+    if chrono::DateTime::parse_from_rfc3339(s).is_ok() {
+        return "<TS>".to_string();
+    }
+    if is_absolute_path_shaped(s) {
+        return "<PATH>".to_string();
+    }
+    s.to_string()
+}
+
+/// True if `s` looks like an absolute filesystem path. Checks Unix-style
+/// (`/...`) and Windows-style (`C:\...` / `c:/...`). Requires at least
+/// one non-whitespace character after the prefix to avoid matching bare
+/// separators or short fragments like `/` or `C:\`.
+fn is_absolute_path_shaped(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    // Unix: starts with `/`, has more non-whitespace content after.
+    if bytes.first() == Some(&b'/') && bytes.len() > 1 && !bytes[1].is_ascii_whitespace() {
+        return true;
+    }
+    // Windows: `[A-Za-z]:[/\\]<non-ws>...`
+    if bytes.len() >= 4
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+        && !bytes[3].is_ascii_whitespace()
+    {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize;
+    use serde_json::json;
+
+    #[test]
+    fn timestamp_rewrite() {
+        let input = json!("2026-04-21T12:34:56Z");
+        assert_eq!(normalize(input), json!("<TS>"));
+
+        let with_offset = json!("2026-04-21T12:34:56.789+02:00");
+        assert_eq!(normalize(with_offset), json!("<TS>"));
+    }
+
+    #[test]
+    fn absolute_path_rewrite() {
+        assert_eq!(normalize(json!("/home/user/grex/pack.toml")), json!("<PATH>"));
+        assert_eq!(normalize(json!("C:\\Users\\egois\\grex\\pack.toml")), json!("<PATH>"));
+        assert_eq!(normalize(json!("D:/repos/grex/pack.toml")), json!("<PATH>"));
+    }
+
+    #[test]
+    fn nested_object_rewrite() {
+        let input = json!({
+            "pack": {
+                "path": "/var/lib/grex/p1",
+                "last_sync": "2026-04-21T10:00:00Z",
+                "name": "p1",
+            },
+            "count": 3,
+        });
+        let expected = json!({
+            "pack": {
+                "path": "<PATH>",
+                "last_sync": "<TS>",
+                "name": "p1",
+            },
+            "count": 3,
+        });
+        assert_eq!(normalize(input), expected);
+    }
+
+    #[test]
+    fn no_op_on_scalars() {
+        assert_eq!(normalize(json!("plain string")), json!("plain string"));
+        assert_eq!(normalize(json!(42)), json!(42));
+        assert_eq!(normalize(json!(2.5)), json!(2.5));
+        assert_eq!(normalize(json!(true)), json!(true));
+        assert_eq!(normalize(json!(null)), json!(null));
+        // Numeric epoch-shaped values are intentionally NOT rewritten —
+        // see `normalize` doc-comment (no leaf-level field-key context).
+        assert_eq!(normalize(json!(1_745_236_496_u64)), json!(1_745_236_496_u64));
+    }
+
+    #[test]
+    fn mixed_content() {
+        let input = json!({
+            "results": [
+                { "path": "/tmp/a", "ts": "2026-04-21T00:00:00Z", "ok": true },
+                { "path": "C:\\tmp\\b", "ts": "2026-04-21T00:00:01Z", "ok": false },
+                { "path": "relative/path.toml", "ts": "not-a-timestamp", "ok": true },
+            ],
+            "version": "1.2.3",
+        });
+        let expected = json!({
+            "results": [
+                { "path": "<PATH>", "ts": "<TS>", "ok": true },
+                { "path": "<PATH>", "ts": "<TS>", "ok": false },
+                { "path": "relative/path.toml", "ts": "not-a-timestamp", "ok": true },
+            ],
+            "version": "1.2.3",
+        });
+        assert_eq!(normalize(input), expected);
+    }
+
+    #[test]
+    fn idempotent() {
+        // normalize(normalize(x)) == normalize(x). Critical because
+        // parity tests will repeatedly compare already-normalised values;
+        // any second-pass drift would mask regressions.
+        let input = json!({
+            "a": "/usr/bin/grex",
+            "b": "2026-01-01T00:00:00Z",
+            "c": [
+                "<PATH>",
+                "<TS>",
+                { "nested": "/etc/hosts", "when": "2026-04-21T00:00:00Z" },
+            ],
+            "d": "literal",
+        });
+        let once = normalize(input);
+        let twice = normalize(once.clone());
+        assert_eq!(once, twice);
+    }
+}
