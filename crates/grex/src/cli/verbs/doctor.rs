@@ -24,7 +24,7 @@ pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
 
 /// Render the report as a table. One row per finding.
 fn print_table(report: &DoctorReport) {
-    println!("{:<18} {:<8} {}", "CHECK", "STATUS", "DETAIL");
+    println!("{:<18} {:<8} DETAIL", "CHECK", "STATUS");
     for f in &report.findings {
         let status = match f.severity {
             Severity::Ok => "OK",

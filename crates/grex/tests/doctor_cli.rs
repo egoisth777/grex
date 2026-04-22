@@ -37,10 +37,7 @@ fn seed_clean_gitignore(workspace: &Path, pack_id: &str) {
 /// Write a drifted managed block (unexpected pattern line).
 fn seed_drifted_gitignore(workspace: &Path, pack_id: &str) {
     let gi = workspace.join(pack_id).join(".gitignore");
-    let body = format!(
-        "# >>> grex:{id} >>>\ndrifted-pattern\n# <<< grex:{id} <<<\n",
-        id = pack_id
-    );
+    let body = format!("# >>> grex:{id} >>>\ndrifted-pattern\n# <<< grex:{id} <<<\n", id = pack_id);
     fs::write(gi, body).unwrap();
 }
 
@@ -64,11 +61,7 @@ fn doctor_gitignore_drift_exits_one() {
     seed_manifest(dir.path(), "a");
     seed_drifted_gitignore(dir.path(), "a");
 
-    bin()
-        .current_dir(dir.path())
-        .arg("doctor")
-        .assert()
-        .code(1);
+    bin().current_dir(dir.path()).arg("doctor").assert().code(1);
 }
 
 #[test]
@@ -77,11 +70,7 @@ fn doctor_missing_pack_exits_two() {
     seed_manifest(dir.path(), "a");
     fs::remove_dir_all(dir.path().join("a")).unwrap();
 
-    bin()
-        .current_dir(dir.path())
-        .arg("doctor")
-        .assert()
-        .code(2);
+    bin().current_dir(dir.path()).arg("doctor").assert().code(2);
 }
 
 #[test]
@@ -91,18 +80,10 @@ fn doctor_fix_heals_gitignore_drift() {
     seed_drifted_gitignore(dir.path(), "a");
 
     // --fix → exit 0 (drift healed post-fix).
-    bin()
-        .current_dir(dir.path())
-        .args(["doctor", "--fix"])
-        .assert()
-        .success();
+    bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().success();
 
     // Re-run without --fix → still exit 0 (idempotent).
-    bin()
-        .current_dir(dir.path())
-        .arg("doctor")
-        .assert()
-        .success();
+    bin().current_dir(dir.path()).arg("doctor").assert().success();
 }
 
 #[test]
@@ -111,11 +92,7 @@ fn doctor_fix_does_not_touch_missing_pack_dir() {
     seed_manifest(dir.path(), "a");
     fs::remove_dir_all(dir.path().join("a")).unwrap();
 
-    bin()
-        .current_dir(dir.path())
-        .args(["doctor", "--fix"])
-        .assert()
-        .code(2);
+    bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().code(2);
 
     // SAFETY CRITICAL: --fix must NOT create the missing dir.
     assert!(!dir.path().join("a").exists());
@@ -134,11 +111,7 @@ fn doctor_fix_does_not_touch_manifest_on_corruption() {
     fs::create_dir_all(dir.path().join("x")).unwrap();
     let before = fs::read(&manifest).unwrap();
 
-    bin()
-        .current_dir(dir.path())
-        .args(["doctor", "--fix"])
-        .assert()
-        .code(2);
+    bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().code(2);
 
     let after = fs::read(&manifest).unwrap();
     assert_eq!(before, after, "manifest bytes must be unchanged by --fix on schema error");
@@ -153,16 +126,9 @@ fn doctor_lint_config_skipped_by_default() {
     fs::create_dir_all(dir.path().join("openspec")).unwrap();
     fs::write(dir.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
 
-    let out = bin()
-        .current_dir(dir.path())
-        .arg("doctor")
-        .assert()
-        .success();
+    let out = bin().current_dir(dir.path()).arg("doctor").assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
-    assert!(
-        !stdout.contains("config-lint"),
-        "default run must not mention config-lint: {stdout}"
-    );
+    assert!(!stdout.contains("config-lint"), "default run must not mention config-lint: {stdout}");
 }
 
 #[test]
@@ -187,11 +153,7 @@ fn doctor_json_emits_report_shape() {
     seed_manifest(dir.path(), "a");
     seed_clean_gitignore(dir.path(), "a");
 
-    let out = bin()
-        .current_dir(dir.path())
-        .args(["doctor", "--json"])
-        .assert()
-        .success();
+    let out = bin().current_dir(dir.path()).args(["doctor", "--json"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     assert!(parsed.get("findings").is_some(), "json must have findings array");
