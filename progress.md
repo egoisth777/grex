@@ -1,7 +1,28 @@
 # progress — grex
 
 ## Where we are
-M7-1 + M7-2 both squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) pending on fresh branches.
+M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4c (dual license) shipped on `feat/m7-4c-license`; M7-4a (import) + M7-4b (doctor) in flight on sibling branches.
+
+## Last endpoint (2026-04-22, feat/m7-4c-license — M7-4c shipped, PR open)
+- Branch: `feat/m7-4c-license` (from `origin/main` head `cae9734`).
+- **M7-4c (dual-license) — SHIPPED**: workspace now `MIT OR Apache-2.0` across all 4 crates (`grex`, `grex-core`, `grex-mcp`, `grex-plugins-builtin`) via root `[workspace.package].license` + `license.workspace = true` in each crate toml. `grex-mcp`'s m7-2-era inline override (`license = "MIT OR Apache-2.0"`) is removed in favour of the workspace-inherited form, so all 4 crates go through a single source of truth.
+- **LICENSE layout at repo root**:
+  - `LICENSE-APACHE` — verbatim Apache-2.0 text (sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, 11358 bytes, fetched from apache.org canonical URL).
+  - `LICENSE-MIT` — standard MIT, Copyright (c) 2026 egoisth777.
+  - `LICENSE` — dual-license pointer notice + contribution boilerplate.
+- **README `## License`**: rewritten with the standard Rust ecosystem "Licensed under either of" block + contribution paragraph dual-licensing inbound contributions. Badge flipped from MIT-only to `MIT OR Apache-2.0`.
+- **deny.toml**: allowlist already included both MIT and Apache-2.0; only the stale `# MIT-licensed project` comment was refreshed. `cargo deny check licenses` → `licenses ok` (two informational `license-not-encountered` warnings for ISC + Unicode-DFS-2016 are unrelated to this scope).
+- **TDD trail**: Stage-1 red commit landed `crates/grex/tests/license_metadata.rs` (6 asserts) with all 6 asserts failing; Stage-2 green commit flipped all 6 to passing. Red-then-green ordering visible in `git log feat/m7-4c-license`.
+- **Verification gates (all GREEN on Windows)**:
+  - `cargo test --workspace --all-features` → 615 passed (56 suites, 42.23s).
+  - `cargo clippy --workspace --all-targets -D warnings` → No issues found.
+  - `cargo fmt --check` → clean.
+  - `cargo deny check licenses` → licenses ok.
+  - `cargo metadata --format-version=1 --no-deps` shows `"MIT OR Apache-2.0"` for all 4 workspace crates.
+- **Scope discipline**: zero edits under `crates/*/src/` — license sub-scope is metadata-only by design. Sibling M7-4a (import) + M7-4b (doctor) branches are untouched.
+- **Next action**: push `feat/m7-4c-license`, open PR `feat(m7-4c): adopt MIT OR Apache-2.0 dual license` vs main, watch checks green.
+
+
 
 ## Last endpoint (2026-04-22, main, post-M7-2 squash-merge)
 - Branch: `main` (HEAD `e98af8c`); no active feature branch.
