@@ -24,7 +24,9 @@ fn raw(s: &str) -> ClientJsonRpcMessage {
 }
 
 fn init() -> ClientJsonRpcMessage {
-    raw(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent-safety-test","version":"0.0.1"}}}"#)
+    raw(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"agent-safety-test","version":"0.0.1"}}}"#,
+    )
 }
 fn initialized() -> ClientJsonRpcMessage {
     raw(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
@@ -34,8 +36,7 @@ fn initialized() -> ClientJsonRpcMessage {
 /// server MUST reject at the JSON-RPC envelope layer (`-32602`), not
 /// dispatch into the tool body.
 fn exec_call_with_shell() -> ClientJsonRpcMessage {
-    raw(
-        r#"{
+    raw(r#"{
         "jsonrpc": "2.0",
         "id": 42,
         "method": "tools/call",
@@ -46,8 +47,7 @@ fn exec_call_with_shell() -> ClientJsonRpcMessage {
                 "shell": "bash -c 'rm -rf /'"
             }
         }
-    }"#,
-    )
+    }"#)
 }
 
 #[tokio::test]

@@ -71,6 +71,7 @@ owo-colors = "4"
 
 # internal workspace crates
 grex-core = { path = "crates/grex-core", version = "0.0.1" }
+grex-mcp = { path = "crates/grex-mcp", version = "0.0.1" }
 grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "0.0.1" }
 
 # dev-dependencies (shared via workspace)

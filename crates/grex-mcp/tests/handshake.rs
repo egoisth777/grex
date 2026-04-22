@@ -108,7 +108,8 @@ async fn batch_request_array_is_silently_dropped_no_dispatch() {
         _ => 0,
     };
     assert_eq!(
-        bytes_emitted, 0,
+        bytes_emitted,
+        0,
         "server dispatched a batch — wrote {bytes_emitted} bytes: {:?}",
         String::from_utf8_lossy(&buf[..bytes_emitted])
     );
@@ -153,8 +154,5 @@ async fn shutdown_returns_then_closes() {
         .expect("server task joins within 500 ms after transport close")
         .expect("server task panics-free");
 
-    assert!(
-        outcome.is_ok(),
-        "server.run returned Err on clean transport close: {outcome:?}"
-    );
+    assert!(outcome.is_ok(), "server.run returned Err on clean transport close: {outcome:?}");
 }

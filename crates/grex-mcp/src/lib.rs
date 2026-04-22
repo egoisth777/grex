@@ -21,13 +21,13 @@ use std::{future::Future, sync::Arc};
 
 use grex_core::{Registry, Scheduler};
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::IntoTransport,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 
 pub mod error;
@@ -81,12 +81,7 @@ impl ServerState {
     /// actually runs.
     pub fn for_tests() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        Self::new(
-            Scheduler::new(1),
-            Registry::default(),
-            cwd.join("grex.jsonl"),
-            cwd,
-        )
+        Self::new(Scheduler::new(1), Registry::default(), cwd.join("grex.jsonl"), cwd)
     }
 }
 
@@ -115,7 +110,10 @@ impl GrexMcpServer {
     ///
     /// # Errors
     /// Surfaces any `ServerInitializeError` from rmcp during the handshake.
-    pub async fn run<T, E, A>(self, transport: T) -> Result<(), rmcp::service::ServerInitializeError>
+    pub async fn run<T, E, A>(
+        self,
+        transport: T,
+    ) -> Result<(), rmcp::service::ServerInitializeError>
     where
         T: IntoTransport<RoleServer, E, A>,
         E: std::error::Error + Send + Sync + 'static,
@@ -139,13 +137,10 @@ impl GrexMcpServer {
 /// with "already set" (test re-entry, daemon restart, embedded use).
 fn init_stderr_tracing() {
     use tracing::subscriber::set_global_default;
-    use tracing_subscriber::{EnvFilter, fmt};
+    use tracing_subscriber::{fmt, EnvFilter};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(filter)
-        .finish();
+    let subscriber = fmt().with_writer(std::io::stderr).with_env_filter(filter).finish();
 
     // Ignore "already set" — tests + repeat invocations both reach here.
     let _ = set_global_default(subscriber);
@@ -179,11 +174,7 @@ impl ServerHandler for GrexMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
         let tools = Self::tool_router().list_all();
-        std::future::ready(Ok(ListToolsResult {
-            tools,
-            next_cursor: None,
-            meta: None,
-        }))
+        std::future::ready(Ok(ListToolsResult { tools, next_cursor: None, meta: None }))
     }
 
     /// Stage 6: dispatch `tools/call` into the per-verb handler matching

@@ -30,10 +30,7 @@ fn main() -> anyhow::Result<()> {
         // `set_global_default` is a no-op once we've set one here.
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("grex=info,rmcp=warn"));
-        tracing_subscriber::fmt()
-            .with_writer(std::io::stderr)
-            .with_env_filter(filter)
-            .init();
+        tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter(filter).init();
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(

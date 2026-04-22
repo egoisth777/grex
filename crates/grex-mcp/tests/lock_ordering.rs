@@ -17,8 +17,8 @@
 //!         and assert the spans nest in that order. Spec-mandated lock
 //!         ordering invariant from `.omne/cfg/concurrency.md` (5-tier).
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use grex_core::{PackLock, Registry, Scheduler};
@@ -34,7 +34,9 @@ fn raw(s: &str) -> ClientJsonRpcMessage {
 }
 
 fn init_msg() -> ClientJsonRpcMessage {
-    raw(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"lock-ordering-test","version":"0.0.1"}}}"#)
+    raw(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"lock-ordering-test","version":"0.0.1"}}}"#,
+    )
 }
 fn initialized_msg() -> ClientJsonRpcMessage {
     raw(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
@@ -90,10 +92,7 @@ async fn concurrent_tool_calls_share_arc_scheduler() {
     };
     // strong_count BEFORE move-into-server: this Arc + the one inside `state` ⇒ 2.
     let pre = Arc::strong_count(&scheduler_arc);
-    assert!(
-        pre >= 2,
-        "expected scheduler Arc shared with ServerState; got strong_count={pre}"
-    );
+    assert!(pre >= 2, "expected scheduler Arc shared with ServerState; got strong_count={pre}");
 
     let (server_io, client_io) = tokio::io::duplex(16384);
     let server = GrexMcpServer::new(state);
@@ -177,8 +176,8 @@ async fn scheduler_primitive_invariant_under_8_concurrent_acquires() {
 // ────────────────── 6.T10 ──────────────────
 
 use std::sync::Mutex;
-use tracing::{Subscriber, info_span};
-use tracing_subscriber::{Layer, layer::Context, prelude::*, registry::Registry as TRegistry};
+use tracing::{info_span, Subscriber};
+use tracing_subscriber::{layer::Context, prelude::*, registry::Registry as TRegistry, Layer};
 
 /// Local layer struct so the orphan rule lets us implement
 /// `tracing_subscriber::Layer` for it.
@@ -229,18 +228,13 @@ fn pack_lock_acquired_after_permit_not_before() {
     let pack_root = dir.path().to_path_buf();
 
     tracing::subscriber::with_default(subscriber, || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("nested rt");
+        let rt =
+            tokio::runtime::Builder::new_current_thread().enable_all().build().expect("nested rt");
         rt.block_on(permit_then_pack_lock(scheduler.clone(), pack_root.clone()));
     });
 
     let events = events.lock().unwrap().clone();
     let pos_permit = events.iter().position(|e| e == "enter:permit").expect("saw enter:permit");
-    let pos_pack = events
-        .iter()
-        .position(|e| e == "enter:pack_lock")
-        .expect("saw enter:pack_lock");
+    let pos_pack = events.iter().position(|e| e == "enter:pack_lock").expect("saw enter:pack_lock");
     assert!(pos_permit < pos_pack, "permit must enter BEFORE pack_lock; events = {events:?}");
 }

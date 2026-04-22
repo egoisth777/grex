@@ -1,7 +1,7 @@
 //! `ls` tool — list registered packs.
 
 use crate::error::not_implemented_result;
-use rmcp::{ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult};
+use rmcp::{handler::server::wrapper::Parameters, model::CallToolResult, ErrorData as McpError};
 use schemars::JsonSchema;
 use serde::Deserialize;
 

@@ -26,9 +26,8 @@ pub const VERBS: &[&str] = &[
 /// `crates/grex/tests/serve_smoke.rs`. Use this slice for parametric tests
 /// that actually *run* the verb; use `VERBS` for tests that only inspect
 /// help text or the verb-name surface.
-pub const STUB_VERBS: &[&str] = &[
-    "init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec",
-];
+pub const STUB_VERBS: &[&str] =
+    &["init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.

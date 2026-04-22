@@ -6,7 +6,7 @@
 //! exactly the spec-mandated 11 verbs with the correct annotation set.
 //!
 //! File name preserved (avoids a churny `git mv`); this file is now
-//! mis-named and will be renamed in a Stage 8 cleanup commit.
+//! misnamed and will be renamed in a Stage 8 cleanup commit.
 
 use std::time::Duration;
 
@@ -21,7 +21,9 @@ fn raw(s: &str) -> ClientJsonRpcMessage {
 }
 
 fn init() -> ClientJsonRpcMessage {
-    raw(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"0.0.1"}}}"#)
+    raw(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"x","version":"0.0.1"}}}"#,
+    )
 }
 
 fn list_tools() -> ClientJsonRpcMessage {

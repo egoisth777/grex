@@ -24,11 +24,7 @@ use tokio_util::sync::CancellationToken;
 // `cli::run` is plumbed for future global-shutdown wiring (Stage 8+). Per-request
 // cancellation is handled by rmcp's internal local_ct_pool (see grex-mcp Stage 7
 // commit and lib.rs comment block above serve()).
-pub fn run(
-    args: ServeArgs,
-    _global: &GlobalFlags,
-    _cancel: &CancellationToken,
-) -> Result<()> {
+pub fn run(args: ServeArgs, _global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let workspace = match args.workspace {
         Some(p) => p,
         None => std::env::current_dir().context("resolve cwd for --workspace default")?,
@@ -63,10 +59,7 @@ pub fn run(
             parallel,
             "grex serve: MCP stdio transport ready",
         );
-        server
-            .run(transport)
-            .await
-            .context("grex-mcp server exited with error")
+        server.run(transport).await.context("grex-mcp server exited with error")
     })
 }
 
@@ -78,8 +71,6 @@ pub fn run(
 fn resolve_parallel(opt: Option<u32>) -> usize {
     match opt {
         Some(n) => n as usize,
-        None => std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1),
+        None => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
     }
 }

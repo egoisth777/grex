@@ -103,18 +103,12 @@ where
     let _ = tokio::time::timeout(Duration::from_secs(2), client.receive())
         .await
         .expect("init response within 2s");
-    client
-        .send(initialized_notification())
-        .await
-        .expect("send initialized");
+    client.send(initialized_notification()).await.expect("send initialized");
 }
 
 /// Drain server messages until a -32800 cancellation envelope arrives
 /// or `deadline` elapses. Returns `(saw_cancelled, saw_other_response)`.
-async fn drain_for_cancel<T>(
-    client: &mut T,
-    deadline: tokio::time::Instant,
-) -> (bool, bool)
+async fn drain_for_cancel<T>(client: &mut T, deadline: tokio::time::Instant) -> (bool, bool)
 where
     T: rmcp::transport::Transport<rmcp::RoleClient> + Unpin,
 {
@@ -169,21 +163,13 @@ async fn notifications_cancelled_aborts_inflight_sync() {
 
     use rmcp::transport::Transport as _;
     let req_id: u64 = 42;
-    let pack_root = std::env::temp_dir()
-        .join("grex-mcp-cancel-7t1-nonexistent")
-        .to_string_lossy()
-        .into_owned();
-    client
-        .send(sync_call(req_id, &pack_root))
-        .await
-        .expect("send sync call");
+    let pack_root =
+        std::env::temp_dir().join("grex-mcp-cancel-7t1-nonexistent").to_string_lossy().into_owned();
+    client.send(sync_call(req_id, &pack_root)).await.expect("send sync call");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     let cancel_sent_at = tokio::time::Instant::now();
-    client
-        .send(cancelled_notification(req_id))
-        .await
-        .expect("send cancellation");
+    client.send(cancelled_notification(req_id)).await.expect("send cancellation");
 
     let deadline = cancel_sent_at + Duration::from_millis(200);
     let (saw_cancelled, saw_other_response) = drain_for_cancel(&mut client, deadline).await;
@@ -213,9 +199,7 @@ async fn cancel_after_result_is_ignored() {
     // synchronously and frees its id from the pool.
     let req_id: u64 = 7;
     client
-        .send(raw(&format!(
-            r#"{{"jsonrpc":"2.0","id":{req_id},"method":"tools/list"}}"#
-        )))
+        .send(raw(&format!(r#"{{"jsonrpc":"2.0","id":{req_id},"method":"tools/list"}}"#)))
         .await
         .expect("send tools/list");
 
@@ -224,18 +208,13 @@ async fn cancel_after_result_is_ignored() {
         .expect("tools/list response within 1s");
 
     // Late cancel — rmcp must drop it silently.
-    client
-        .send(cancelled_notification(req_id))
-        .await
-        .expect("send late cancellation");
+    client.send(cancelled_notification(req_id)).await.expect("send late cancellation");
 
     // Server must still be running after a brief settle window. We
     // probe by issuing another tools/list and expecting a response.
     let probe_id: u64 = 8;
     client
-        .send(raw(&format!(
-            r#"{{"jsonrpc":"2.0","id":{probe_id},"method":"tools/list"}}"#
-        )))
+        .send(raw(&format!(r#"{{"jsonrpc":"2.0","id":{probe_id},"method":"tools/list"}}"#)))
         .await
         .expect("send probe tools/list");
     let probe = tokio::time::timeout(Duration::from_secs(1), client.receive())
@@ -263,10 +242,7 @@ async fn cancel_unknown_request_id_is_ignored() {
     use rmcp::transport::Transport as _;
     // Cancel an id we never issued. MUST NOT crash, MUST NOT emit
     // anything on the wire (allow 100 ms to settle).
-    client
-        .send(cancelled_notification(9_999))
-        .await
-        .expect("send unknown-id cancellation");
+    client.send(cancelled_notification(9_999)).await.expect("send unknown-id cancellation");
 
     let probe = tokio::time::timeout(Duration::from_millis(100), client.receive()).await;
     assert!(
@@ -277,9 +253,7 @@ async fn cancel_unknown_request_id_is_ignored() {
     // Sanity: server still answers requests.
     let probe_id: u64 = 11;
     client
-        .send(raw(&format!(
-            r#"{{"jsonrpc":"2.0","id":{probe_id},"method":"tools/list"}}"#
-        )))
+        .send(raw(&format!(r#"{{"jsonrpc":"2.0","id":{probe_id},"method":"tools/list"}}"#)))
         .await
         .expect("send probe tools/list");
     let _ = tokio::time::timeout(Duration::from_secs(1), client.receive())
@@ -287,8 +261,5 @@ async fn cancel_unknown_request_id_is_ignored() {
         .expect("probe response within 1s")
         .expect("probe response not None");
 
-    assert!(
-        !server_task.is_finished(),
-        "server crashed after unknown-id cancel"
-    );
+    assert!(!server_task.is_finished(), "server crashed after unknown-id cancel");
 }

@@ -19,15 +19,15 @@
 //! against `Self::tool_router()` from the trait impl.
 
 use rmcp::{
-    ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult, tool,
-    tool_router,
+    handler::server::wrapper::Parameters, model::CallToolResult, tool, tool_router,
+    ErrorData as McpError,
 };
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    add::AddParams, doctor::DoctorParams, exec::ExecParams, import::ImportParams,
-    init::InitParams, ls::LsParams, rm::RmParams, run::RunParams, status::StatusParams,
-    sync::SyncParams, update::UpdateParams,
+    add::AddParams, doctor::DoctorParams, exec::ExecParams, import::ImportParams, init::InitParams,
+    ls::LsParams, rm::RmParams, run::RunParams, status::StatusParams, sync::SyncParams,
+    update::UpdateParams,
 };
 use crate::GrexMcpServer;
 
@@ -39,10 +39,7 @@ impl GrexMcpServer {
         description = "Initialise a grex workspace.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
-    async fn tool_init(
-        &self,
-        params: Parameters<InitParams>,
-    ) -> Result<CallToolResult, McpError> {
+    async fn tool_init(&self, params: Parameters<InitParams>) -> Result<CallToolResult, McpError> {
         super::init::handle(&self.state, params).await
     }
 
@@ -52,10 +49,7 @@ impl GrexMcpServer {
         description = "Register and clone a pack.",
         annotations(read_only_hint = false, destructive_hint = false)
     )]
-    async fn tool_add(
-        &self,
-        params: Parameters<AddParams>,
-    ) -> Result<CallToolResult, McpError> {
+    async fn tool_add(&self, params: Parameters<AddParams>) -> Result<CallToolResult, McpError> {
         super::add::handle(&self.state, params).await
     }
 
@@ -170,10 +164,7 @@ impl GrexMcpServer {
         description = "Execute a command across matching packs (no shell).",
         annotations(read_only_hint = false, destructive_hint = true)
     )]
-    async fn tool_exec(
-        &self,
-        params: Parameters<ExecParams>,
-    ) -> Result<CallToolResult, McpError> {
+    async fn tool_exec(&self, params: Parameters<ExecParams>) -> Result<CallToolResult, McpError> {
         super::exec::handle(&self.state, params).await
     }
 }

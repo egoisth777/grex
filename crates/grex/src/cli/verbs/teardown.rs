@@ -21,11 +21,7 @@ use tokio_util::sync::CancellationToken;
 /// Surfaces `anyhow::Result` so `main` can render the orchestrator's
 /// output; exit codes are set via `std::process::exit` on halt paths
 /// (same pattern as `sync` since `anyhow::Error` does not carry them).
-pub fn run(
-    args: TeardownArgs,
-    global: &GlobalFlags,
-    cancel: &CancellationToken,
-) -> Result<()> {
+pub fn run(args: TeardownArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
         println!("grex teardown: requires <pack_root>");
         return Ok(());

@@ -354,10 +354,9 @@ impl PackLock {
                     .write()
                     .map_err(|source| PackLockError::Io { path: boxed.path.clone(), source })?;
                 let guard_static: RwLockWriteGuard<'static, File> = unsafe {
-                    std::mem::transmute::<
-                        RwLockWriteGuard<'_, File>,
-                        RwLockWriteGuard<'static, File>,
-                    >(guard_ref)
+                    std::mem::transmute::<RwLockWriteGuard<'_, File>, RwLockWriteGuard<'static, File>>(
+                        guard_ref,
+                    )
                 };
                 Ok((boxed, guard_static))
             },
@@ -849,12 +848,10 @@ mod tests {
 
         let started = Instant::now();
         let lock_b = PackLock::open(&path_b).unwrap();
-        let result = tokio::time::timeout(
-            Duration::from_millis(50),
-            lock_b.acquire_cancellable(&token),
-        )
-        .await
-        .expect("acquire_cancellable must return within 50 ms after cancel");
+        let result =
+            tokio::time::timeout(Duration::from_millis(50), lock_b.acquire_cancellable(&token))
+                .await
+                .expect("acquire_cancellable must return within 50 ms after cancel");
 
         let waited = started.elapsed();
         assert!(
@@ -875,11 +872,7 @@ mod tests {
     /// `release` when ready to let the holder drop its guard.
     fn spawn_holder(
         path: PathBuf,
-    ) -> (
-        tokio::task::JoinHandle<()>,
-        Arc<tokio::sync::Notify>,
-        Arc<tokio::sync::Notify>,
-    ) {
+    ) -> (tokio::task::JoinHandle<()>, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
         let started = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let started_c = Arc::clone(&started);
@@ -974,12 +967,10 @@ mod tests {
         });
 
         let lock_b = PackLock::open(&path).unwrap();
-        let result = tokio::time::timeout(
-            Duration::from_millis(50),
-            lock_b.acquire_cancellable(&token),
-        )
-        .await
-        .expect("acquire_cancellable must return within 50 ms after cancel");
+        let result =
+            tokio::time::timeout(Duration::from_millis(50), lock_b.acquire_cancellable(&token))
+                .await
+                .expect("acquire_cancellable must return within 50 ms after cancel");
 
         assert!(
             matches!(result, Err(PackLockErrorOrCancelled::Cancelled)),

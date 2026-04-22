@@ -26,11 +26,7 @@ use tokio_util::sync::CancellationToken;
 /// Surface the `anyhow::Result` so `main` can render whatever the
 /// orchestrator layer emitted; exit codes are set via `std::process::exit`
 /// on the halt paths since `anyhow::Error` does not carry them.
-pub fn run(
-    args: SyncArgs,
-    global: &GlobalFlags,
-    cancel: &CancellationToken,
-) -> Result<()> {
+pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
         println!("grex sync: unimplemented (M1 scaffold)");
         return Ok(());

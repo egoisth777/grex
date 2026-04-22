@@ -7,7 +7,7 @@
 //! introduction is gated on a future per-session capability opt-in.
 
 use crate::error::not_implemented_result;
-use rmcp::{ErrorData as McpError, handler::server::wrapper::Parameters, model::CallToolResult};
+use rmcp::{handler::server::wrapper::Parameters, model::CallToolResult, ErrorData as McpError};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -67,9 +67,7 @@ mod tests {
     #[tokio::test]
     async fn exec_happy_path_stub() {
         let s = crate::ServerState::for_tests();
-        let r = handle(&s, Parameters(ExecParams { cmd: vec!["echo".into()] }))
-            .await
-            .unwrap();
+        let r = handle(&s, Parameters(ExecParams { cmd: vec!["echo".into()] })).await.unwrap();
         assert_eq!(r.is_error, Some(true));
     }
 }

@@ -19,10 +19,10 @@
 
 use grex_core::Cancelled;
 use rmcp::{
-    ErrorData,
     model::{CallToolResult, Content, ErrorCode},
+    ErrorData,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 // ── JSON-RPC reserved codes ─────────────────────────────────────────────
 

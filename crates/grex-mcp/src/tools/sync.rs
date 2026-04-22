@@ -7,12 +7,12 @@
 //! comes from the per-request `RequestContext::ct` plumbed in Stage 7
 //! and threaded through `tool_router`'s `&self` shim.
 
-use crate::error::{CancelledExt, packop_error};
+use crate::error::{packop_error, CancelledExt};
 use grex_core::sync::{self, SyncOptions};
 use rmcp::{
-    ErrorData as McpError,
     handler::server::wrapper::Parameters,
     model::{CallToolResult, Content},
+    ErrorData as McpError,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -87,9 +87,7 @@ async fn run_with_cancel(
     // can return -32800 promptly (the OS thread continues briefly per the
     // documented leak window in `pack_lock::acquire_cancellable`).
     let cancel_clone = cancel.clone();
-    let handle = tokio::task::spawn_blocking(move || {
-        sync::run(&pack_root, &opts, &cancel_clone)
-    });
+    let handle = tokio::task::spawn_blocking(move || sync::run(&pack_root, &opts, &cancel_clone));
 
     let outcome = tokio::select! {
         biased;
@@ -149,11 +147,8 @@ fn build_opts(p: &SyncParams) -> SyncOptions {
 }
 
 fn success_envelope(report: &grex_core::sync::SyncReport) -> CallToolResult {
-    let body = format!(
-        "sync ok: {} step(s); halted={}",
-        report.steps.len(),
-        report.halted.is_some()
-    );
+    let body =
+        format!("sync ok: {} step(s); halted={}", report.steps.len(), report.halted.is_some());
     CallToolResult::success(vec![Content::text(body)])
 }
 

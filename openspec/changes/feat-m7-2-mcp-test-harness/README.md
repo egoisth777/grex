@@ -22,7 +22,7 @@ Shared fixtures + `normalize()` live in `crates/grex-mcp/tests/common/mod.rs`.
 ## Key design calls
 
 - **Duplex-first.** L2 uses `tokio::io::duplex(4096)` paired halves so the bulk of E2E coverage runs in-process. Real OS pipes get exactly one guard test per OS — enough to catch kernel-buffer / stderr-closure regressions `duplex` cannot reproduce.
-- **11 tools, not 12.** `serve` is the server, not a tool; `teardown` is a plugin lifecycle hook of `rm`, not a user-invokable verb. `VERBS_EXPOSED` is the single const that drives every `len()` assertion.
+- **11 tools, not 12.** `serve` is the server, not a tool; `teardown` is a plugin lifecycle hook of `rm`, not a user-invocable verb. `VERBS_EXPOSED` is the single const that drives every `len()` assertion.
 - **Inequality, not equality, for `tools/list.len()`.** `>= VERBS_EXPOSED.len()` so future MCP-only tools don't retrip the check.
 - **Helper function, not a macro, for parity.** An earlier draft floated `parity_test!`; review rejected it — opaque error spans, harder IDE nav, over-abstract for 11 cases.
 - **Normaliser surface: 2 tokens only.** `<TS>` + `<PATH>`. `<ID>`, `<PID>`, `<SHA>` are opt-in, each requires a linked failing test to justify. Minimum surface keeps false-positives low.

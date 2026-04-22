@@ -177,12 +177,9 @@ mod tests {
             cancel_handle.cancel();
         });
 
-        let result = tokio::time::timeout(
-            Duration::from_millis(30),
-            s.acquire_cancellable(&token),
-        )
-        .await
-        .expect("acquire_cancellable must resolve within 30 ms after cancel");
+        let result = tokio::time::timeout(Duration::from_millis(30), s.acquire_cancellable(&token))
+            .await
+            .expect("acquire_cancellable must resolve within 30 ms after cancel");
 
         assert!(matches!(result, Err(Cancelled)), "expected Err(Cancelled)");
     }
@@ -228,11 +225,7 @@ mod tests {
         drop(_h3);
         drop(_h4);
 
-        assert_eq!(
-            s.permits.available_permits(),
-            4,
-            "cancelled waiters must not leak permits"
-        );
+        assert_eq!(s.permits.available_permits(), 4, "cancelled waiters must not leak permits");
     }
 
     /// 3.T4 — cancelling after a successful acquire is a no-op; the

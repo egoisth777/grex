@@ -43,9 +43,8 @@ pub mod update;
 /// The 11 CLI verbs surfaced as MCP tools. Order is the spec's
 /// documentation order — keep stable so doc-string snapshots remain
 /// meaningful.
-pub const VERBS_11_EXPOSED_AS_TOOLS: &[&str] = &[
-    "init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec",
-];
+pub const VERBS_11_EXPOSED_AS_TOOLS: &[&str] =
+    &["init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec"];
 
 // Compile-time invariant: spec mandates exactly 11 tools.
 const _: () = assert!(VERBS_11_EXPOSED_AS_TOOLS.len() == 11);
@@ -55,17 +54,17 @@ const _: () = assert!(VERBS_11_EXPOSED_AS_TOOLS.len() == 11);
 /// and reorderings show up in code-review diffs verbatim.
 pub const ANNOTATIONS: &[(&str, bool, bool)] = &[
     // (verb,    read_only_hint, destructive_hint)
-    ("init",   false, false),
-    ("add",    false, false),
-    ("rm",     false, true),
-    ("ls",     true,  false),
-    ("status", true,  false),
-    ("sync",   false, false),
+    ("init", false, false),
+    ("add", false, false),
+    ("rm", false, true),
+    ("ls", true, false),
+    ("status", true, false),
+    ("sync", false, false),
     ("update", false, false),
-    ("doctor", true,  false),
+    ("doctor", true, false),
     ("import", false, false),
-    ("run",    false, true),
-    ("exec",   false, true),
+    ("run", false, true),
+    ("exec", false, true),
 ];
 
 const _: () = assert!(ANNOTATIONS.len() == 11);
@@ -121,12 +120,7 @@ mod tests {
     fn destructive_tools_are_rm_run_exec_only() {
         let mut destructive: Vec<String> = list_all()
             .iter()
-            .filter(|t| {
-                t.annotations
-                    .as_ref()
-                    .and_then(|a| a.destructive_hint)
-                    .unwrap_or(false)
-            })
+            .filter(|t| t.annotations.as_ref().and_then(|a| a.destructive_hint).unwrap_or(false))
             .map(|t| t.name.to_string())
             .collect();
         destructive.sort();
@@ -142,10 +136,7 @@ mod tests {
             .into_iter()
             .map(|t| {
                 let a = t.annotations.expect("annotations present");
-                (
-                    t.name.to_string(),
-                    (a.read_only_hint.unwrap(), a.destructive_hint.unwrap()),
-                )
+                (t.name.to_string(), (a.read_only_hint.unwrap(), a.destructive_hint.unwrap()))
             })
             .collect();
         for (verb, ro, de) in ANNOTATIONS {

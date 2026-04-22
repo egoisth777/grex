@@ -86,9 +86,7 @@ fn drive_init(stdin: &mut std::process::ChildStdin, client_name: &str) {
 
 fn drive_initialized(stdin: &mut std::process::ChildStdin) {
     let initialized = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-    stdin
-        .write_all(frame(initialized).as_bytes())
-        .expect("write initialized");
+    stdin.write_all(frame(initialized).as_bytes()).expect("write initialized");
 }
 
 fn wait_for_exit(child: &mut std::process::Child, timeout: Duration, label: &str) {
@@ -120,10 +118,8 @@ fn grex_serve_subprocess_responds_to_tools_list() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let init_resp = read_until_contains(&mut reader, "\"id\":1", deadline)
         .expect("initialize response within 10s");
-    let init_line = init_resp
-        .lines()
-        .find(|l| l.contains("\"id\":1"))
-        .expect("init id=1 line present");
+    let init_line =
+        init_resp.lines().find(|l| l.contains("\"id\":1")).expect("init id=1 line present");
     let _: serde_json::Value =
         serde_json::from_str(init_line).expect("init response is valid JSON");
 
@@ -134,10 +130,8 @@ fn grex_serve_subprocess_responds_to_tools_list() {
 
     let list_resp = read_until_contains(&mut reader, "\"id\":2", deadline)
         .expect("tools/list response within 10s");
-    let list_line = list_resp
-        .lines()
-        .find(|l| l.contains("\"id\":2"))
-        .expect("tools/list id=2 line present");
+    let list_line =
+        list_resp.lines().find(|l| l.contains("\"id\":2")).expect("tools/list id=2 line present");
     let parsed: serde_json::Value =
         serde_json::from_str(list_line).expect("tools/list response is valid JSON");
     let tools = parsed
@@ -186,10 +180,7 @@ fn grex_serve_shutdown_exits_cleanly() {
             }
         }
     };
-    assert!(
-        status.success(),
-        "grex serve exited non-zero on clean shutdown: {status:?}",
-    );
+    assert!(status.success(), "grex serve exited non-zero on clean shutdown: {status:?}",);
 }
 
 /// 8.T3 — `tracing` output lands on stderr; stdout carries only
@@ -217,9 +208,7 @@ fn grex_serve_stderr_carries_tracing() {
 
     let _ = child.wait().expect("child waits");
     let mut stderr_buf = String::new();
-    stderr
-        .read_to_string(&mut stderr_buf)
-        .expect("read stderr");
+    stderr.read_to_string(&mut stderr_buf).expect("read stderr");
 
     // stdout: every non-empty line must parse as JSON.
     for (i, line) in full_stdout.lines().enumerate() {
@@ -228,14 +217,15 @@ fn grex_serve_stderr_carries_tracing() {
             continue;
         }
         serde_json::from_str::<serde_json::Value>(trimmed).unwrap_or_else(|e| {
-            panic!("stdout line {i} is not valid JSON ({e}): {trimmed}\nfull stdout:\n{full_stdout}")
+            panic!(
+                "stdout line {i} is not valid JSON ({e}): {trimmed}\nfull stdout:\n{full_stdout}"
+            )
         });
     }
 
     // stderr: must contain at least one tracing-format line.
-    let has_tracing = stderr_buf.contains("INFO")
-        || stderr_buf.contains("WARN")
-        || stderr_buf.contains("DEBUG");
+    let has_tracing =
+        stderr_buf.contains("INFO") || stderr_buf.contains("WARN") || stderr_buf.contains("DEBUG");
     assert!(
         has_tracing,
         "stderr lacks any tracing level marker (INFO/WARN/DEBUG); got:\n{stderr_buf}",
