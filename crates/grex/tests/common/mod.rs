@@ -11,11 +11,23 @@ pub fn grex() -> Command {
     Command::cargo_bin("grex").expect("grex binary available")
 }
 
-/// The canonical list of M1 verbs. Keep in lockstep with `cli::args::Verb`.
+/// The canonical list of CLI verbs. Keep in lockstep with `cli::args::Verb`.
+/// Used by tests that need to enumerate every verb (e.g. help-output checks).
 pub const VERBS: &[&str] = &[
     "init", "add", "rm", "ls", "status", "sync", "update", "doctor", "serve", "import", "run",
     "exec",
 ];
+
+/// Verbs whose stub still exits 0 with "unimplemented" stdout when invoked.
+///
+/// `serve` is excluded as of feat-m7-1 stage 8: it is now a real long-running
+/// stdio MCP loop (no "unimplemented" message, exits non-zero on closed
+/// stdin without a handshake). Its dedicated coverage lives in
+/// `crates/grex/tests/serve_smoke.rs`. Use this slice for parametric tests
+/// that actually *run* the verb; use `VERBS` for tests that only inspect
+/// help text or the verb-name surface.
+pub const STUB_VERBS: &[&str] =
+    &["init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.

@@ -76,9 +76,16 @@ proptest! {
 
 /// A non-property sanity test: every verb accepts its required args —
 /// catches bitrot in `required_args` when verbs shift.
+///
+/// `serve` is excluded as of feat-m7-1 stage 8 — it is now a real
+/// long-running stdio MCP loop that needs a JSON-RPC handshake to exit
+/// cleanly. Coverage in `crates/grex/tests/serve_smoke.rs`.
 #[test]
 fn each_verb_accepts_required_args() {
     for verb in VERBS {
+        if *verb == "serve" {
+            continue;
+        }
         let mut cmd = grex();
         cmd.arg(verb);
         cmd.args(required_args(verb));

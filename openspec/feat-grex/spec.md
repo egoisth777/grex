@@ -20,7 +20,7 @@ Ship a Rust CLI `grex` that orchestrates **packs** — git repos bearing a `.gre
 ## Success criteria
 
 1. `grex init`, `add`, `rm`, `sync`, `update`, `doctor`, `import` produce expected manifest + lockfile + on-disk state across Windows, Linux, and macOS (CI matrix integration tests).
-2. `grex serve --mcp` responds to JSON-RPC `grex.init`, `grex.add`, `grex.sync`, `grex.status`, `grex.ls`, `grex.rm`, `grex.update`, `grex.doctor`, `grex.import`, `grex.run`, `grex.exec` methods 1:1.
+2. `grex serve` speaks MCP protocol version `2025-06-18` natively (stdio, newline-delimited JSON). Every CLI verb except `serve` itself is exposed as an MCP tool invoked via `tools/call` — 11 tools total: `init`, `add`, `rm`, `ls`, `status`, `sync`, `update`, `doctor`, `import`, `run`, `exec`. Tracing routes to stderr only; stdout carries only the JSON-RPC wire. The M6 5-tier lock ordering (workspace-sync → scheduler → pack-lock → backend → manifest) is preserved by every tool handler.
 3. A `declarative` pack exercising all 7 action types installs correctly on each of the three OSes.
 4. A `scripted` pack runs `.grex/hooks/setup.{sh,ps1}` on the matching OS and no-ops on the others.
 5. A `meta` pack with nested children syncs the tree recursively in parallel under the `--parallel N` bound.
