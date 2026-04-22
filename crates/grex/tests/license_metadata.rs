@@ -21,7 +21,7 @@ fn workspace_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("workspace root two levels above crates/grex")
         .to_path_buf()
-    }
+}
 
 #[test]
 fn license_files_exist_at_repo_root() {
@@ -49,10 +49,7 @@ fn apache_license_is_standard_text() {
         txt.contains("Apache License"),
         "LICENSE-APACHE must contain the literal 'Apache License' title"
     );
-    assert!(
-        txt.contains("Version 2.0, January 2004"),
-        "LICENSE-APACHE must declare Version 2.0"
-    );
+    assert!(txt.contains("Version 2.0, January 2004"), "LICENSE-APACHE must declare Version 2.0");
     assert!(
         txt.contains("http://www.apache.org/licenses/"),
         "LICENSE-APACHE must reference the canonical URL"
@@ -82,10 +79,7 @@ fn mit_license_is_standard_text() {
 fn readme_has_license_section() {
     let root = workspace_root();
     let txt = std::fs::read_to_string(root.join("README.md")).expect("read README.md");
-    assert!(
-        txt.contains("## License"),
-        "README.md must contain a `## License` section"
-    );
+    assert!(txt.contains("## License"), "README.md must contain a `## License` section");
     assert!(
         txt.contains("MIT") && txt.contains("Apache"),
         "README.md License section must reference both MIT and Apache"
