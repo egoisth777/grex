@@ -47,7 +47,7 @@ Root `Cargo.toml`:
 [workspace.dependencies]
 rmcp       = "1.5"                                        # official MCP SDK
 tokio-util = { version = "0.7", features = ["rt"] }       # CancellationToken
-schemars   = "0.8"                                        # already present; reconfirm
+schemars   = "1.0"                                        # bumped from 0.8 in Stage 6 — rmcp 1.5 emits derives against schemars 1.x; mismatched majors hit `JsonSchema` orphan-rule errors at the tools/* boundary
 ```
 
 `crates/grex-mcp/Cargo.toml` consumes all three via `workspace = true`.

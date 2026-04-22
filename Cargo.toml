@@ -27,7 +27,10 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 # MCP server framework (M7)
 rmcp = "1.5.0"
-schemars = "0.8"
+# rmcp 1.5 transitively requires schemars 1.x and emits its `#[derive(JsonSchema)]`
+# expansions against schemars 1.x's trait — see Stage 6 spec drift note. Workspace
+# pin matches what rmcp pulls in to avoid duplicate-version compile errors.
+schemars = "1.0"
 
 # serde
 serde = { version = "1", features = ["derive"] }

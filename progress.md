@@ -17,6 +17,7 @@ M0/M1/M2/M2-hardening/M3 Stage A + Stage B + **M3 review series** + M4 A–E + M
     - **feat-m7-3 CI conformance** — `mcp-validator==0.3.1` + SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2` + repo `Janix-ai/mcp-validator`; self-contained release build (no `needs: [build]`); PR-blocking required check.
     - **feat-m7-4 import/doctor/license** — `grex import --from-repos-json`; `grex doctor` with 3 default checks + `--lint-config` opt-in; license `MIT OR Apache-2.0` dual.
   - **SSOT update**: `.omne/cfg/mcp.md` rewritten to Path B MCP-native (rmcp, tools/list, tools/call, notifications/cancelled, protocol 2025-06-18).
+  - **Workspace dep drift (M7-1 Stage 6)**: schemars 0.8 → 1.0 workspace bump (rmcp 1.5 transitive constraint — `#[tool]` macro derives JsonSchema against schemars 1.x; mismatched majors hit orphan-rule errors at the tools/* boundary). Spec.md patched in lockstep.
   - **Carry-forward from M6** (still open, picked up in M7 impl window as maintenance): MED maint — unused `PackLock::acquire` sync variant, `Scheduler::permits()`; MED perf — top-level `sync::run` still sequential outside meta recursion, needs `FuturesUnordered` dispatch; verification debt — H2 `register_self_in_visited` ordering, H8 panic-safety test for `PackLockHold`.
   - **Next action**: M7 impl start — Stage 1 of feat-m7-1 (workspace deps + crate scaffold + rmcp surface verification: confirm `rmcp 1.5.0` exposes `#[tool]` macro, `Parameters<T: JsonSchema>`, `peer().send_request().cancel()`).
 

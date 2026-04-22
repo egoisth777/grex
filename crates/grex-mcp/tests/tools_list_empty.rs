@@ -1,10 +1,16 @@
-//! Stage 5 test #5.T6 — `tools/list` returns an empty array. Sanity check that
-//! the framework wiring routes the request to our handler at all; will be
-//! replaced in Stage 6 once the 11 tools land.
+//! Stage 6 replacement for the Stage 5 sanity test.
+//!
+//! Stage 5's `tools_list_returns_empty_in_stage_5` asserted the registry
+//! was empty pending Stage 6. Stage 6 lights up the 11-tool registry, so
+//! this file flips the assertion: `tools/list` over the wire returns
+//! exactly the spec-mandated 11 verbs with the correct annotation set.
+//!
+//! File name preserved (avoids a churny `git mv`); this file is now
+//! mis-named and will be renamed in a Stage 8 cleanup commit.
 
 use std::time::Duration;
 
-use grex_mcp::{GrexMcpServer, ServerState};
+use grex_mcp::{GrexMcpServer, ServerState, VERBS_11_EXPOSED_AS_TOOLS};
 use rmcp::{
     model::{ClientJsonRpcMessage, ServerJsonRpcMessage, ServerResult},
     transport::IntoTransport,
@@ -27,45 +33,51 @@ fn initialized() -> ClientJsonRpcMessage {
 }
 
 #[tokio::test]
-async fn tools_list_returns_empty_in_stage_5() {
-    let (server_io, client_io) = tokio::io::duplex(4096);
+async fn tools_list_returns_eleven_with_annotations() {
+    let list = drive_list_tools().await;
+    assert_count_and_annotations(list);
+}
+
+async fn drive_list_tools() -> rmcp::model::ListToolsResult {
+    let (server_io, client_io) = tokio::io::duplex(8192);
     let server = GrexMcpServer::new(ServerState::for_tests());
     let _server = tokio::spawn(async move { server.run(server_io).await });
 
     let mut client = IntoTransport::<rmcp::RoleClient, _, _>::into_transport(client_io);
-
     use rmcp::transport::Transport;
     client.send(init()).await.unwrap();
-    let _ = tokio::time::timeout(Duration::from_secs(2), client.receive())
-        .await
-        .unwrap()
-        .unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(2), client.receive()).await.unwrap().unwrap();
     client.send(initialized()).await.unwrap();
     client.send(list_tools()).await.unwrap();
 
-    // Skip past any framework notifications (e.g. logging) until we see a
-    // response to id=2.
-    let response = loop {
+    loop {
         let msg = tokio::time::timeout(Duration::from_secs(2), client.receive())
             .await
             .expect("response within 2s")
             .expect("response not None");
-        if matches!(&msg, ServerJsonRpcMessage::Response(r) if matches!(r.result, ServerResult::ListToolsResult(_)))
-        {
-            break msg;
+        if let ServerJsonRpcMessage::Response(r) = msg {
+            if let ServerResult::ListToolsResult(list) = r.result {
+                return list;
+            }
         }
-    };
+    }
+}
 
-    let ServerJsonRpcMessage::Response(r) = response else {
-        panic!("not a response")
-    };
-    let ServerResult::ListToolsResult(list) = r.result else {
-        panic!("not ListToolsResult")
-    };
-    assert!(
-        list.tools.is_empty(),
-        "Stage 5 must advertise zero tools; got {} ({:?})",
+fn assert_count_and_annotations(list: rmcp::model::ListToolsResult) {
+    assert_eq!(
         list.tools.len(),
-        list.tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+        VERBS_11_EXPOSED_AS_TOOLS.len(),
+        "tools/list must advertise exactly {} tools, got {} ({:?})",
+        VERBS_11_EXPOSED_AS_TOOLS.len(),
+        list.tools.len(),
+        list.tools.iter().map(|t| &t.name).collect::<Vec<_>>(),
     );
+    for t in &list.tools {
+        let a = t
+            .annotations
+            .as_ref()
+            .unwrap_or_else(|| panic!("tool `{}` over the wire missing annotations", t.name));
+        assert!(a.read_only_hint.is_some(), "wire: `{}` lacks read_only_hint", t.name);
+        assert!(a.destructive_hint.is_some(), "wire: `{}` lacks destructive_hint", t.name);
+    }
 }

@@ -23,7 +23,8 @@ use grex_core::{Registry, Scheduler};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     model::{
-        Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
+        CallToolRequestParams, CallToolResult, Implementation, ListToolsResult,
+        PaginatedRequestParams, ServerCapabilities, ServerInfo,
     },
     service::{MaybeSendFuture, RequestContext},
     transport::IntoTransport,
@@ -33,6 +34,10 @@ pub mod error;
 pub mod tools;
 
 pub use error::{CancelledExt, REQUEST_CANCELLED};
+
+/// Re-export the registered-tool name list so `serve` smoke tests +
+/// downstream crates have a stable handle on the surface.
+pub use tools::VERBS_11_EXPOSED_AS_TOOLS;
 
 /// Shared, immutable-after-build state every tool handler reads.
 ///
@@ -90,7 +95,7 @@ impl ServerState {
 /// `Arc` so `ServerHandler` impls can clone onto handler tasks for free.
 #[derive(Clone)]
 pub struct GrexMcpServer {
-    state: ServerState,
+    pub(crate) state: ServerState,
 }
 
 impl GrexMcpServer {
@@ -150,31 +155,45 @@ impl ServerHandler for GrexMcpServer {
         implementation.title = Some("grex MCP server".into());
         implementation.version = env!("CARGO_PKG_VERSION").into();
         info.server_info = implementation;
-        info.instructions =
-            Some("grex pack-orchestrator MCP surface. Stage 5 — handshake only.".into());
+        info.instructions = Some(
+            "grex pack-orchestrator MCP surface. 11 tools reachable via tools/call; \
+             cancellation via notifications/cancelled. See `.omne/cfg/mcp.md`."
+                .into(),
+        );
         info
     }
 
-    /// Stage 5: the registry is empty. Stage 6 replaces this body with
-    /// the populated tool array assembled from `tools/*.rs`.
+    /// Stage 6: return all 11 tools assembled from the
+    /// `#[tool_router]`-generated `Self::tool_router()` aggregator.
+    /// The router is rebuilt per-call for now (cheap — just a few
+    /// hashmap inserts of `Arc`-cloned `Tool` values); Stage 7 may
+    /// memoize it onto `ServerState` if profiling shows it matters.
     fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
-        // Touching `state` keeps clippy from complaining about an unused
-        // field once we wire real tools next stage.
-        let _ = self.state.scheduler.max_parallelism();
-        std::future::ready(Ok(ListToolsResult::default()))
+        let tools = Self::tool_router().list_all();
+        std::future::ready(Ok(ListToolsResult {
+            tools,
+            next_cursor: None,
+            meta: None,
+        }))
     }
-}
 
-// Suppress "unused field" while Stage 5 keeps the state mostly opaque to
-// the framework. Stage 6 deletes this allow.
-#[allow(dead_code)]
-fn _state_keepalive(s: &ServerState) -> usize {
-    Arc::strong_count(&s.registry) + Arc::strong_count(&s.manifest_path)
-        + Arc::strong_count(&s.workspace)
+    /// Stage 6: dispatch `tools/call` into the per-verb handler matching
+    /// `params.name` via the `#[tool_router]`-generated aggregator. Per-
+    /// tool argument deserialisation is handled by rmcp's `Parameters<P>`
+    /// extractor; bad params yield `-32602`. Unknown tool names also
+    /// yield `-32602` (rmcp's router default).
+    fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<CallToolResult, McpError>> + MaybeSendFuture + '_ {
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        async move { Self::tool_router().call(tcc).await }
+    }
 }
 
 #[cfg(test)]
