@@ -76,6 +76,21 @@ fn mit_license_is_standard_text() {
 }
 
 #[test]
+fn license_apache_byte_length_matches_canonical() {
+    // Guard against accidental tampering or wrong-source imports of the
+    // canonical Apache-2.0 text. The upstream Apache-2.0 license file
+    // distributed by the ASF is 11358 bytes; any drift means the file was
+    // edited, re-encoded (e.g. CRLF), or sourced from a non-canonical copy.
+    let root = workspace_root();
+    let bytes = std::fs::read(root.join("LICENSE-APACHE")).expect("read LICENSE-APACHE");
+    assert_eq!(
+        bytes.len(),
+        11358,
+        "LICENSE-APACHE size drift — tampering or wrong source (expected 11358 bytes)"
+    );
+}
+
+#[test]
 fn readme_has_license_section() {
     let root = workspace_root();
     let txt = std::fs::read_to_string(root.join("README.md")).expect("read README.md");
