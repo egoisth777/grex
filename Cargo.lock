@@ -1595,6 +1595,7 @@ dependencies = [
 name = "grex-mcp"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "grex-core",
  "rmcp",
  "schemars",

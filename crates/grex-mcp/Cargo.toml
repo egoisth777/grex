@@ -50,6 +50,11 @@ tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 tokio-util = { workspace = true }
+# `anyhow` added by feat-m7-2 stage 1 for the L2 – L5 integration-test
+# harness in `tests/common/mod.rs`. Stage-1 lands the dep alongside the
+# helper API surface; stage-2 wires the actual `anyhow::Result` returns
+# in `Client::*` impls.
+anyhow = { workspace = true }
 
 [lints]
 workspace = true
