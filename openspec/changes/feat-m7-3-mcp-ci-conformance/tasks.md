@@ -2,12 +2,15 @@
 
 **Convention**: bring the validator up locally first; deliberate-regression smoke proves the gate actually gates.
 
-## Stage 1 — Validator pin
+## Stage 1 — Validator pin (resolved at draft time)
 
-- [ ] Confirm correct package name on PyPI: `mcp-protocol-validator` (NOT `mcp-validator`).
-- [ ] Find latest stable release on PyPI + matching commit SHA on `github.com/Janix-AI/mcp-protocol-validator`.
-- [ ] Document the pin (version + SHA) either as a comment in `ci.yml` or in `docs/ci/mcp-conformance.md`.
-- [ ] Local bring-up: `pip install 'mcp-protocol-validator==X.Y.Z'` in a venv; run against `target/release/grex serve --protocol-version 2025-06-18`; assert exit 0.
+Pin locked to `mcp-validator==0.3.1` / SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2` (tag `v0.3.1`, published 2025-07-08 per `gh api repos/Janix-ai/mcp-validator/releases/latest` lookup on 2026-04-21). Canonical PyPI name is `mcp-validator`; repo slug is `Janix-ai/mcp-validator` (lowercase `ai`).
+
+- [ ] Verify pin is reachable: `pip install 'mcp-validator==0.3.1'` in a throwaway venv succeeds and `mcp-validator --help` prints.
+- [ ] Fallback if PyPI distribution disappears: `pip install git+https://github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2` — document in the `ci.yml` pin comment.
+- [ ] Local bring-up: `pip install 'mcp-validator==0.3.1'` in a venv; run the validator (via `mcp-validator` invocation) against `target/release/grex serve`; pass `--protocol-version 2025-06-18` to `mcp-validator`, NOT to `grex serve` (which does not accept that flag); assert exit 0.
+- [ ] Document the pin (version + SHA + lookup date + source URL) either as a comment block at the top of the `mcp-conformance` job in `ci.yml` or in `docs/ci/mcp-conformance.md`.
+- [ ] Bump policy: any bump re-runs `gh api repos/Janix-ai/mcp-validator/releases/latest` + `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW_VERSION>` (substituting the new version number; current pinned example is `v0.3.1`). Update PyPI pin + SHA together in the same PR.
 
 ## Stage 2 — Release build + cache
 
@@ -20,7 +23,7 @@
 - [ ] Append `mcp-conformance` job to `.github/workflows/ci.yml` per spec §Design.
 - [ ] Server command: `"$GITHUB_WORKSPACE/target/release/grex serve"`.
 - [ ] Protocol version: `2025-06-18`.
-- [ ] `needs: [build]` — verify this resolves against the existing matrix job name.
+- [ ] Do NOT add `needs: [build]` — the validator job is self-contained (owns its own release build) and runs in parallel with the `build` matrix per spec §Design + §Acceptance budget line.
 - [ ] Upload validator log as artefact on failure (always).
 - [ ] Push to a throwaway branch; verify job runs, is green on baseline, and fails loudly on a deliberate handshake regression → revert.
 

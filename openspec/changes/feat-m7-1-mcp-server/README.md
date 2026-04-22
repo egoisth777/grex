@@ -45,13 +45,13 @@ See [`tasks.md`](./tasks.md) for the per-stage checklist.
 5. Server skeleton: `initialize` / `tools/list` (empty) / `shutdown` + stderr-only tracing.
 6. 11 tool impls with agent-safety annotations + error-code mapping (including `-32002` `data.kind` disambiguation).
 7. `notifications/cancelled` handler wired to per-request `CancellationToken`.
-8. `grex serve` CLI wiring + subprocess smoke test + `mcp-protocol-validator` CI job.
+8. `grex serve` CLI wiring + subprocess smoke test + `mcp-validator` CI job.
 
 ## Acceptance criteria (summary)
 
 Full list in [`spec.md`](./spec.md) §Acceptance. Headline items:
 
-- `grex serve` completes a 2025-06-18 handshake with `mcp-protocol-validator`.
+- `grex serve` completes a 2025-06-18 handshake with `mcp-validator`.
 - `tools/list` returns exactly 11 tools (compile-time asserted).
 - Every tool carries both annotation hints; destructive set = `{rm, run, exec}`.
 - `exec` tool has no `shell` field; sending one returns `-32602`.

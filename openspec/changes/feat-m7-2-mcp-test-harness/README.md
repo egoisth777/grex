@@ -2,7 +2,7 @@
 
 **Status**: draft
 
-5-layer test coverage for the `grex-mcp` server (feat-m7-1). Covers layers **L2 – L5** — E2E handshake, CLI ↔ MCP parity, concurrent stress, cancellation chaos. **L1** (inline unit) belongs to feat-m7-1; **L6 – L8** (Inspector, mcp-protocol-validator, fuzz) move to feat-m7-3.
+5-layer test coverage for the `grex-mcp` server (feat-m7-1). Covers layers **L2 – L5** — E2E handshake, CLI ↔ MCP parity, concurrent stress, cancellation chaos. **L1** (inline unit) belongs to feat-m7-1; **L6 – L8** (Inspector, mcp-validator, fuzz) move to feat-m7-3.
 
 Tests nest under `crates/grex-mcp/tests/` — **no separate `grex-mcp-tests` crate**. That would violate the "sub-crates avoided" rule in `.omne/cfg/architecture.md` §Workspace.
 
@@ -12,7 +12,7 @@ Tests nest under `crates/grex-mcp/tests/` — **no separate `grex-mcp-tests` cra
 |---|---|---|
 | L1 (unit) | `crates/grex-mcp/src/**` inline `#[cfg(test)]` | owned by feat-m7-1 |
 | L2 (E2E handshake) | `crates/grex-mcp/tests/handshake.rs` | `tokio::io::duplex(4096)` — zero subprocess |
-| L2 (real-pipe) | `tests/real_pipe_linux.rs` + `tests/real_pipe_windows.rs` | one `assert_cmd`-spawned `grex serve` per OS |
+| L2 (real-pipe) | `tests/real_pipe_linux.rs` + `tests/real_pipe_macos.rs` + `tests/real_pipe_windows.rs` | one `assert_cmd`-spawned `grex serve` per OS |
 | L3 (parity) | `crates/grex-mcp/tests/parity.rs` | CLI subprocess vs in-process MCP, 11 verbs |
 | L4 (stress) | `crates/grex-mcp/tests/stress.rs` | N = 100 × 11 + `tokio::sync::Barrier` |
 | L5 (cancel) | `crates/grex-mcp/tests/cancel.rs` | `tools/call` + immediate `notifications/cancelled` |
@@ -39,7 +39,7 @@ Shared fixtures + `normalize()` live in `crates/grex-mcp/tests/common/mod.rs`.
 ## Dependencies
 
 - **Prior**: feat-m7-1 (server + cancellable tool API + `VERBS_EXPOSED`); M6 feat-m6-1 (Scheduler), feat-m6-2 (PackLock), feat-m6-3 (lock-order proof); M5 pack-type plugin system.
-- **Next**: feat-m7-3 (L6 Inspector, L7 mcp-protocol-validator, L8 fuzz).
+- **Next**: feat-m7-3 (L6 Inspector, L7 mcp-validator, L8 fuzz).
 
 ## Source-of-truth links
 

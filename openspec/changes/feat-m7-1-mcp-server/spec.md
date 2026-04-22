@@ -18,7 +18,7 @@ The server is load-bearing for `openspec/feat-grex/spec.md` success criterion #2
 2. `grex serve` launches the server on stdio; no `--mcp` flag (the command *is* the server).
 3. All 11 user-facing verbs (`init`, `add`, `rm`, `ls`, `status`, `sync`, `update`, `doctor`, `import`, `run`, `exec`) reachable via `tools/call`. `serve` is the server itself, not a tool; `teardown` is a plugin lifecycle hook of `rm`, not a verb.
 4. MCP tool handlers share one `Arc<Scheduler>` and obey the M6 5-tier lock ordering verbatim: workspace-sync → semaphore → pack-lock → backend → manifest.
-5. `notifications/cancelled` threads a `tokio_util::sync::CancellationToken` into the acquire path of both `Scheduler` and `PackLock`; in-flight blocking `fd-lock` writes are cancelled by dropping their `spawn_blocking` join handle.
+5. `notifications/cancelled` threads a `tokio_util::sync::CancellationToken` into the acquire path of both `Scheduler` and `PackLock`; in-flight blocking `fd-lock` writes are cancelled by dropping their `spawn_blocking` join handle. Client-side cancellation is emitted via rmcp's MCP-native API (`peer().send_request().cancel(reason)` on `rmcp 1.5.0`); see §Cancellation for the verified-at-Stage-1 fallback path if that helper is not published.
 6. `exec --shell` is **absent** from the MCP param schema. CLI keeps it; agent surface refuses it.
 
 ## Design
@@ -119,7 +119,7 @@ File: `crates/grex-core/src/pack_lock.rs`.
 ```rust
 impl PackLock {
     pub async fn acquire_cancellable(
-        path: &Path,
+        self,
         cancel: &CancellationToken,
     ) -> Result<PackLockHold, PackLockErrorOrCancelled>;
 }
@@ -130,7 +130,13 @@ pub enum PackLockErrorOrCancelled {
 }
 ```
 
-Implementation uses `tokio::task::spawn_blocking` to run `fd_lock::RwLock::write()` (which can block at the OS level on contended NFS / Windows handles). The outer future is a `tokio::select!` between `cancel.cancelled()` and the join handle. On cancel we **drop** the join handle — the OS thread continues to completion because `fd_lock::write()` cannot be interrupted mid-syscall; the acquired guard is dropped immediately on the blocking thread's return, releasing the fd-lock. This is the documented leak: **one OS worker thread is briefly held past cancel**; acceptable per rmcp semantics ("cancelled requests may still complete server-side"). Documented inline + in the error module.
+Ownership model matches the existing `acquire_async(self)` in `pack_lock.rs:179` — `acquire_cancellable` consumes the `PackLock`, reusing its internal boxed-fd + `transmute` lifetime dance. No second fd-open path is introduced. Implementation uses `tokio::task::spawn_blocking` to run `fd_lock::RwLock::write()` (which can block at the OS level on contended NFS / Windows handles). The outer future is a `tokio::select!` between `cancel.cancelled()` and the join handle. On cancel we **drop** the join handle — the OS thread continues to completion because `fd_lock::write()` cannot be interrupted mid-syscall; the acquired guard is dropped immediately on the blocking thread's return, releasing the fd-lock. This is the documented leak: **one OS worker thread is briefly held past cancel**; acceptable per rmcp semantics ("cancelled requests may still complete server-side"). Documented inline + in the error module.
+
+### Cancellation — client emit path + server receive path
+
+**Client emit (MCP-native).** `rmcp 1.5.0` exposes cancellation on the `Client` peer as `peer().send_request().cancel(reason)` — this is the preferred surface for integration tests that drive `notifications/cancelled` from the Rust side. **Fallback**: if Stage 1 `cargo doc -p rmcp` inspection shows that helper is absent on the 1.5.0 client builder, tests construct the `notifications/cancelled` envelope as raw JSON and write it directly to the stdio transport. Either path emits the same wire frame; the spec does not depend on which is used.
+
+**Server receive.** Tool handlers reached via rmcp's `#[tool]` macro receive a `RequestContext` whose `ct: tokio_util::sync::CancellationToken` field is the request's cancellation token. Forward that token into every core verb's `run(..., cancel: &CancellationToken)` entry; from there it reaches `Scheduler::acquire_cancellable` and `PackLock::acquire_cancellable`.
 
 ### CancellationToken threading
 
@@ -170,6 +176,8 @@ pub async fn run(ctx: ExecCtx<'_>, opts: ServeOpts) -> Result<(), ServeError> {
     Ok(())
 }
 ```
+
+**ServeArgs MUST NOT re-declare `--parallel`.** The flag is inherited from the global `GlobalArgs` scope (shared across all verbs, landed in M6). A verb-local re-declaration is a clap parse-time conflict (`ArgConflict`) and will fail startup. `ServeArgs` contains only verb-local fields (e.g. `--manifest <path>` override); parallelism reads from `ctx.parallel` populated by the global parser.
 
 ### Error-code overload (`-32002`)
 
@@ -250,7 +258,7 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
 
 ### Protocol-validator CI
 
-`.github/workflows/ci.yml` gains a `mcp-validator` job running `mcp-protocol-validator` against a release build of `grex serve`. Blocks merge on any MCP 2025-06-18 non-conformance.
+`.github/workflows/ci.yml` gains a `mcp-validator` job running `mcp-validator` against a release build of `grex serve`. Blocks merge on any MCP 2025-06-18 non-conformance.
 
 ## Non-goals
 
@@ -279,7 +287,7 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
 
 ## Acceptance
 
-1. `grex serve` launches on stdio and completes a 2025-06-18 handshake with `mcp-protocol-validator`.
+1. `grex serve` launches on stdio and completes a 2025-06-18 handshake with `mcp-validator`.
 2. `tools/list` returns exactly 11 tools; `VERBS_11_EXPOSED_AS_TOOLS.len() == 11` at compile time.
 3. Every tool in the catalog carries both `readOnlyHint` and `destructiveHint`; destructive set = `{rm, run, exec}`.
 4. `exec` tool schema contains no `shell` field; sending one yields `-32602`.

@@ -11,7 +11,9 @@
 ## Goal
 
 1. `grex import --from-repos-json <path>` parses a legacy flat `REPOS.json` (`[{url, path}]`) and emits equivalent `grex add` operations against the target workspace via the core API, with `--dry-run` + skip-on-conflict semantics.
-2. `grex doctor` runs four read-only checks (manifest schema / gitignore sync / on-disk drift / config lint), prints a tabular summary, and exits `0`/`1`/`2` by severity. `--fix` auto-heals gitignore drift only.
+2. `grex doctor` runs three read-only pack-health checks by default (manifest schema / gitignore sync / on-disk drift — the three pack-health checks from `milestone.md` §M7), prints a tabular summary, and exits `0`/`1`/`2` by severity. A fourth opt-in check (`config lint` — `.omne/cfg/*.md` frontmatter + `openspec/config.yaml` YAML parse) runs only under `--lint-config`. `--fix` auto-heals gitignore drift only.
+
+> Vocabulary note: `milestone.md` §M7 enumerates `doctor` as "manifest schema check, gitignore sync check, on-disk drift (paths in REPOS.json not on disk + vice versa), lint (pack.yaml schema validate)". M3 actually shipped `grex.jsonl` (event-log) as the manifest format — `pack.yaml` in the milestone text is stale. Our manifest-schema check operates on `grex.jsonl` and our on-disk-drift check operates on the `grex.jsonl`-tracked pack set (the post-M3 analogue of "paths in REPOS.json"). The behaviour matches milestone intent even where the vocabulary diverges.
 3. Lock the licence as dual **`MIT OR Apache-2.0`** — root `LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE` pointer; every workspace crate inherits via `[workspace.package] license = "..."`; README licence section; `deny.toml` verified.
 
 ## Design
@@ -59,10 +61,12 @@ pub struct DoctorReport { pub findings: Vec<Finding> }
 pub struct Finding { pub check: CheckKind, pub severity: Severity, pub pack: Option<PackId>, pub detail: String, pub auto_fixable: bool }
 pub enum CheckKind { ManifestSchema, GitignoreSync, OnDiskDrift, ConfigLint }
 pub enum Severity { Ok, Warning, Error }
-pub struct DoctorOpts { pub fix: bool }
+pub struct DoctorOpts { pub fix: bool, pub lint_config: bool }
 
 pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorReport, DoctorError>;
 ```
+
+By default (`lint_config = false`), `run_doctor` runs only the three pack-health checks (manifest schema, gitignore sync, on-disk drift). `CheckKind::ConfigLint` runs **only** when the caller passes `lint_config = true` (CLI: `--lint-config`). Rationale: config-lint reads workspace-meta files (`.omne/cfg/`, `openspec/config.yaml`) that most users don't own and can't fix from within a packs workspace; opting in keeps the default `doctor` run focused on pack health.
 
 **Check 1 — manifest schema**: stream `grex.jsonl` through the M3 corruption-resistant reader (`manifest::stream_rows` or equivalent). Any `Err(ManifestReadError::MalformedRow { line, .. })` becomes a `Finding { severity: Error, auto_fixable: false }`. Clean rows produce no finding.
 
@@ -70,7 +74,7 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 
 **Check 3 — on-disk drift**: for every pack in the manifest, `fs::symlink_metadata(pack_path)` and assert (a) it exists, (b) its kind matches the declared pack type (directory for declarative/scripted; directory for meta with children). Missing or wrong-kind → `Finding { severity: Error, auto_fixable: false }`.
 
-**Check 4 — config lint**: if `.omne/cfg/` exists, walk `*.md` frontmatter / `*.yaml` and `serde_yaml::from_str::<serde_yaml::Value>` them — any parse error becomes `Finding { severity: Warning }`. Same for `openspec/config.yaml` if present. Absent files are no-ops (not findings).
+**Check 4 — config lint (opt-in, `--lint-config`)**: skipped by default. When `--lint-config` is passed: if `.omne/cfg/` exists, walk `*.md` frontmatter / `*.yaml` and `serde_yaml::from_str::<serde_yaml::Value>` them — any parse error becomes `Finding { severity: Warning }`. Same for `openspec/config.yaml` if present. Absent files are no-ops (not findings). Without the flag, `CheckKind::ConfigLint` never appears in the report.
 
 **Severity roll-up for exit code**:
 - `0`: all findings are `Ok` or checks produced zero findings.
@@ -79,7 +83,7 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 
 **`--fix`**: only `CheckKind::GitignoreSync` findings with `auto_fixable = true` are healed (re-render the managed block with `DEFAULT_MANAGED_GITIGNORE_PATTERNS` + declared extras via the M5-2 writer). All other checks stay read-only. Post-fix, re-run the sync check to confirm; persisted findings after fix downgrade the exit code only if they flip severity tier.
 
-**CLI wiring**: `crates/grex/src/cli/verbs/doctor.rs` — human output is a four-row table (`CHECK | STATUS | DETAIL`); `--json` emits the `DoctorReport` directly.
+**CLI wiring**: `crates/grex/src/cli/verbs/doctor.rs` — human output is a three-row table by default (`CHECK | STATUS | DETAIL`) covering the three pack-health checks; a fourth `ConfigLint` row appears only when `--lint-config` is passed. `--json` emits the `DoctorReport` directly (report shape is identical; findings list is simply shorter without `--lint-config`). New flag: `--lint-config` (bool).
 
 ### Sub-scope 3 — Licence decision
 
@@ -132,7 +136,6 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 - `doctor_gitignore_check_detects_drift` — mutate a managed block body; assert `Warning` finding with `auto_fixable: true`.
 - `doctor_gitignore_check_clean_block_zero_findings`
 - `doctor_on_disk_check_missing_pack_dir_is_error`
-- `doctor_on_disk_check_symlink_pack_is_ok_when_declared_symlink` — future-proofs M8 symlink pack type; for M7 just assert dir-vs-file mismatch errors.
 - `doctor_config_lint_invalid_yaml_is_warning`
 - `doctor_config_lint_absent_dir_is_noop` — no `.omne/cfg/` → no findings.
 - `doctor_exit_code_roll_up` — table-test: `[Ok]→0`, `[Warn]→1`, `[Err]→2`, `[Warn,Err]→2`.
@@ -147,7 +150,8 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 - `import_skips_path_collision_and_exits_zero` — pre-seed manifest; assert skip-count in stdout; exit code `0`.
 
 `crates/grex/tests/doctor_cli.rs` (new):
-- `doctor_clean_workspace_exits_zero_and_prints_ok_rows` — four `OK` table rows.
+- `doctor_clean_workspace_exits_zero_and_prints_ok_rows` — three `OK` table rows by default (manifest schema / gitignore sync / on-disk drift).
+- `doctor_lint_config_flag_adds_config_row` — pass `--lint-config` on a clean workspace; assert a fourth `ConfigLint` row appears and is `OK`.
 - `doctor_warn_drift_exits_one` — drift one gitignore block; assert exit `1`; assert `GitignoreSync` row is `WARNING`.
 - `doctor_err_missing_pack_exits_two` — delete one pack dir; assert exit `2`.
 - `doctor_fix_heals_gitignore_and_exits_zero_on_retry` — drift → `--fix` → re-run without `--fix` → exit `0`.
@@ -170,6 +174,7 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 - **No on-disk backup before `--fix`** — gitignore drift is recoverable from git history; keep the flag surgical.
 - **No licence compliance scanning of dependencies in this change** — `cargo-deny` already covers it in a separate pipeline; we only verify `deny.toml` accepts our dual choice.
 - **No `NOTICE` file** — we carry no third-party attributions beyond what Cargo records.
+- **No symlink pack-type doctor coverage in M7** — the speculative test `doctor_on_disk_check_symlink_pack_is_ok_when_declared_symlink` is deferred to M8 when a `symlink` pack type actually lands. The M7 on-disk check only covers dir-present / dir-kind-match / missing-dir for the currently-shipping `declarative`, `scripted`, `meta` pack types.
 
 ## Dependencies
 
@@ -185,12 +190,12 @@ pub async fn run_doctor(ctx: &ExecCtx<'_>, opts: DoctorOpts) -> Result<DoctorRep
 4. `cargo test --workspace` green; no regressions on M6 baseline.
 5. `cargo clippy --all-targets --workspace -- -D warnings` clean. Per-fn LOC ≤ 50; CBO ≤ 10.
 6. `cargo fmt --check` clean.
-7. Manual smoke: (a) run `grex import --from-repos-json` against this very repo's `E:\repos\REPOS.json` fixture and inspect the plan; (b) `grex doctor` on a clean workspace prints 4 OK rows.
+7. Manual smoke: (a) run `grex import --from-repos-json` against this very repo's `E:\repos\REPOS.json` fixture and inspect the plan; (b) `grex doctor` on a clean workspace prints 3 OK rows (manifest schema / gitignore sync / on-disk drift); passing `--lint-config` on the same workspace adds a 4th OK row.
 
 ## Source-of-truth links
 
 - [`milestone.md`](../../../milestone.md) §M7 — 4 deliverables enumeration.
 - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) — success criteria for `import`/`doctor`.
-- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §Workspace — module placement for `import.rs`/`doctor.rs` under `grex-core/src/`.
+- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §Workspace — directional guidance for module placement. Note: the §Workspace section still reads "Single crate `grex` (lib + bin). Sub-crates avoided in v1" — this is stale post-M5, which shipped a multi-crate workspace (`grex-core` + `grex`). We cite architecture.md for directional intent (module lives in the core library crate), not literal text; `import.rs` / `doctor.rs` land under `crates/grex-core/src/` per the actual shipped layout.
 - [`E:\repos\CLAUDE.md`](../../../../CLAUDE.md) — legacy `REPOS.json` schema reference (flat array of `{url, path}`).
 - Prior-change voice: [`../feat-m6-2-per-pack-lock/spec.md`](../feat-m6-2-per-pack-lock/spec.md).

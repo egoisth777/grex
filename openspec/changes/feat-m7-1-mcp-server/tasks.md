@@ -12,8 +12,9 @@ Tests-first per stage. A stage is "done" only when its listed tests exist, run r
 
 Land the empty crate and the deps so subsequent stages compile in isolation.
 
+- [ ] 1.0 **Verify rmcp 1.5.0 surface before pinning.** Run `cargo doc -p rmcp` (or `cargo add rmcp@1.5.0 --dry-run && cargo doc`) and confirm: (a) `#[tool]` proc-macro is published, (b) `Parameters<T: JsonSchema>` handler surface exists, (c) client `peer().send_request().cancel(reason)` helper is available (else fall back to raw stdio `notifications/cancelled` per spec §Cancellation). If any of (a)/(b) is missing, pin a different version OR narrow this change's scope; do NOT proceed with a broken pin.
 - [ ] 1.1 Add to root `Cargo.toml` `[workspace.dependencies]`:
-  - [ ] `rmcp = "1.5"`
+  - [ ] `rmcp = "1.5.0"`
   - [ ] `tokio-util = { version = "0.7", features = ["rt"] }`
 - [ ] 1.2 Create `crates/grex-mcp/Cargo.toml` — name `grex-mcp`, `workspace = true` on all deps (`rmcp`, `tokio`, `tokio-util`, `schemars`, `serde`, `tracing`, `grex-core`).
 - [ ] 1.3 Create `crates/grex-mcp/src/lib.rs` with a single `pub fn _placeholder() {}` (to be replaced in Stage 5).
@@ -93,7 +94,7 @@ Tests first (red), then implementation. Covers the `spawn_blocking` leak-window 
 - [ ] 4.2 Run: all three tests must compile and fail.
 - [ ] 4.3 Implement:
   - [ ] `pub enum PackLockErrorOrCancelled { Cancelled, Lock(PackLockError) }`
-  - [ ] `acquire_cancellable(path, cancel)` uses `tokio::task::spawn_blocking` wrapping the existing `fd_lock::write()` call; outer `tokio::select!` between `cancel.cancelled()` and the `JoinHandle`.
+  - [ ] `acquire_cancellable(self, cancel: &CancellationToken) -> Result<PackLockHold, PackLockErrorOrCancelled>` — consumes `self` to match existing `acquire_async(self)` at `pack_lock.rs:179`; reuses the boxed-fd + `transmute` lifetime dance. Uses `tokio::task::spawn_blocking` wrapping the existing `fd_lock::write()` call; outer `tokio::select!` between `cancel.cancelled()` and the `JoinHandle`.
   - [ ] Inline doc-comment describing the "OS thread held past cancel until syscall returns" contract, linking to `.omne/cfg/mcp.md` §Cancellation.
 - [ ] 4.4 Re-run tests: all green.
 - [ ] 4.5 Verify `cargo clippy -p grex-core -- -D warnings`.
@@ -179,7 +180,7 @@ Each tool is its own file under `crates/grex-mcp/src/tools/`. Tests first per to
 - [ ] 8.T1 `crates/grex/tests/serve_smoke.rs::grex_serve_subprocess_responds_to_tools_list` — spawn `grex serve` as child, pipe initialize + tools/list, assert 11-tool response, stdout is valid JSON-RPC only.
 - [ ] 8.T2 `serve_smoke.rs::grex_serve_shutdown_exits_cleanly` — send shutdown, assert exit code 0 within 500 ms.
 - [ ] 8.T3 `serve_smoke.rs::grex_serve_stderr_carries_tracing` — assert stderr contains `tracing` lines, stdout contains none.
-- [ ] 8.T4 CI: add `mcp-validator` job in `.github/workflows/ci.yml` running `mcp-protocol-validator` against a release build; blocks merge.
+- [ ] 8.T4 CI: add `mcp-validator` job in `.github/workflows/ci.yml` running `mcp-validator` against a release build; blocks merge.
 
 ---
 
@@ -187,6 +188,6 @@ Each tool is its own file under `crates/grex-mcp/src/tools/`. Tests first per to
 
 - [ ] G1 `cargo test --workspace` green across all stages.
 - [ ] G2 `cargo clippy --all-targets --workspace -- -D warnings` clean.
-- [ ] G3 `mcp-protocol-validator` green in CI.
+- [ ] G3 `mcp-validator` green in CI.
 - [ ] G4 No regressions on M5 (plugin) + M6 (scheduler, pack-lock) suites.
 - [ ] G5 Spec acceptance criteria 1-13 all demonstrably met (cross-link each to its test in the PR description).

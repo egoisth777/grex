@@ -19,19 +19,20 @@
 
 ## Stage 3 — `grex doctor` unit tests + core
 
-- [ ] Write `crates/grex-core/src/doctor.rs` `#[cfg(test)]` — 9 unit cases from spec §Unit covering all 4 check kinds + exit-code roll-up (all fail).
+- [ ] Write `crates/grex-core/src/doctor.rs` `#[cfg(test)]` — 8 unit cases from spec §Unit covering all 4 check kinds + exit-code roll-up (all fail). Symlink-pack doctor coverage is explicitly deferred to M8; do NOT add a speculative test here.
 - [ ] Implement `DoctorReport` / `Finding` / `CheckKind` / `Severity` / `DoctorOpts` / `DoctorError`.
 - [ ] Implement four check functions (manifest schema via M3 reader; gitignore sync via M6 const; on-disk drift via `fs::symlink_metadata`; config lint via `serde_yaml`).
 - [ ] Implement `run_doctor` orchestrator (sequential, read-only, build `DoctorReport`).
 - [ ] `pub mod doctor;` in `crates/grex-core/src/lib.rs`.
-- [ ] Verify 9 unit tests pass.
+- [ ] Verify 8 unit tests pass.
 
 ## Stage 4 — `grex doctor` CLI wiring
 
-- [ ] Write `crates/grex/tests/doctor_cli.rs` — 3 baseline integration tests: `doctor_clean_workspace_exits_zero_and_prints_ok_rows`, `doctor_warn_drift_exits_one`, `doctor_err_missing_pack_exits_two` (all fail).
-- [ ] Replace `crates/grex/src/cli/verbs/doctor.rs` stub with real wrapper; render `DoctorReport` (4-row table + `--json`); map severity to process exit code.
-- [ ] Wire `Doctor` subcommand args in `crates/grex/src/cli/args.rs` (`--fix`, `--json`).
-- [ ] Verify 3 integration tests pass.
+- [ ] Write `crates/grex/tests/doctor_cli.rs` — 4 baseline integration tests: `doctor_clean_workspace_exits_zero_and_prints_ok_rows` (3-row default table), `doctor_lint_config_flag_adds_config_row` (opt-in 4th row), `doctor_warn_drift_exits_one`, `doctor_err_missing_pack_exits_two` (all fail).
+- [ ] Replace `crates/grex/src/cli/verbs/doctor.rs` stub with real wrapper; render `DoctorReport` (3-row default table + optional 4th `ConfigLint` row under `--lint-config` + `--json`); map severity to process exit code.
+- [ ] Wire `Doctor` subcommand args in `crates/grex/src/cli/args.rs` (`--fix`, `--lint-config`, `--json`).
+- [ ] Default run (no `--lint-config`) MUST NOT touch `.omne/cfg/` or `openspec/config.yaml` — the config-lint check function is simply not invoked.
+- [ ] Verify 4 integration tests pass.
 
 ## Stage 5 — `grex doctor --fix` auto-heal
 
@@ -50,6 +51,7 @@
 - [ ] Create `LICENSE` pointer (3-line dual reference).
 - [ ] Add `[workspace.package]` block to root `Cargo.toml` (`license = "MIT OR Apache-2.0"` + `authors` + `edition` + `repository`).
 - [ ] For every crate in `crates/*/Cargo.toml`: replace per-crate `license`/`authors`/`edition`/`repository` with `.workspace = true`.
+- [ ] **Audit direct license declarations.** Run (via Grep tool or equivalent) a regex scan for `^license\s*=` across `crates/*/Cargo.toml`; expected result is zero matches to a string-literal RHS (only `license.workspace = true` rows may remain). If any crate still has a direct `license = "..."` declaration, fail this stage — fix before proceeding. Same audit for `authors`, `edition`, `repository`.
 - [ ] Append `## License` section to `README.md` (cite both files + contribution clause).
 - [ ] If `deny.toml` present: verify `[licenses].allow` includes `MIT` + `Apache-2.0`; if not, leave for follow-up (do not add `cargo-deny` in this change).
 - [ ] Verify 4 licence tests pass.

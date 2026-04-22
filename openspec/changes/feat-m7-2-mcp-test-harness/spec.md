@@ -8,12 +8,12 @@
 
 feat-m7-1 seeds the `grex-mcp` server with unit-level (L1) coverage of routing, schema derivation, and error mapping. That's enough to prove the handlers exist; it is not enough to prove the server **behaves** correctly on the wire, matches the CLI field-for-field, stays correct under parallel load, or releases its M6 primitives when a client cancels mid-call.
 
-`.omne/cfg/mcp.md` fixes the contract — MCP 2025-06-18 stdio, 11 exposed tools, standard `notifications/cancelled`, 5-tier lock ordering shared verbatim with the CLI. `.omne/cfg/test-plan.md` splits MCP coverage into eight layers (L1 – L8). This change lands layers **L2 – L5** — the ones that can be built with in-process transports plus a single per-OS real-pipe guard. Layers L6 (Inspector), L7 (mcp-protocol-validator), and L8 (fuzz) are deferred to feat-m7-3; they need external binaries and long-running jobs and must not block merge of the core harness.
+`.omne/cfg/mcp.md` fixes the contract — MCP 2025-06-18 stdio, 11 exposed tools, standard `notifications/cancelled`, 5-tier lock ordering shared verbatim with the CLI. `.omne/cfg/test-plan.md` splits MCP coverage into eight layers (L1 – L8). This change lands layers **L2 – L5** — the ones that can be built with in-process transports plus a single per-OS real-pipe guard. Layers L6 (Inspector), L7 (mcp-validator), and L8 (fuzz) are deferred to feat-m7-3; they need external binaries and long-running jobs and must not block merge of the core harness.
 
 ## Goal
 
 1. Add E2E handshake coverage over `tokio::io::duplex(4096)` — `initialize` → `initialized` → `tools/list` → `shutdown`, plus rejection of requests-before-init and rejection of double-init.
-2. Add **one** real-pipe subprocess test per OS (Linux + Windows) to catch regressions specific to OS pipe buffering, >64 KiB responses, and closed-stderr behaviour that `duplex` cannot exercise.
+2. Add **one** real-pipe subprocess test per OS (Linux + Windows + macOS) to catch regressions specific to OS pipe buffering, >64 KiB responses, and closed-stderr behaviour that `duplex` cannot exercise.
 3. Add CLI ↔ MCP parity — for each of the 11 exposed verbs, assert the normalised `--json` CLI output equals the normalised MCP `tools/call` result structurally.
 4. Add a concurrent-stress harness — N = 100 clients × 11 verbs against a shared server instance, with a `tokio::sync::Barrier` pinning saturation so the assertions are deterministic.
 5. Add cancellation-chaos coverage — every tool must honour `notifications/cancelled` and release its scheduler permit + pack-lock within a bounded wall-clock budget.
@@ -31,6 +31,7 @@ crates/grex-mcp/
     │   └── mod.rs                # fixtures + normalize() helper
     ├── handshake.rs              # L2 — duplex E2E lifecycle
     ├── real_pipe_linux.rs        # L2 — cfg(target_os="linux") subprocess guard
+    ├── real_pipe_macos.rs        # L2 — cfg(target_os="macos") subprocess guard
     ├── real_pipe_windows.rs      # L2 — cfg(target_os="windows") subprocess guard
     ├── parity.rs                 # L3 — CLI vs MCP per-verb parity
     ├── stress.rs                 # L4 — concurrent saturation
@@ -59,7 +60,7 @@ Cases (each an independent `#[tokio::test]`):
 
 ### L2 — Real-pipe guard (`real_pipe_*.rs`)
 
-One test per OS, cfg-gated (`#[cfg(target_os = "linux")]` / `#[cfg(target_os = "windows")]`). Spawns a release build of `grex serve` via `assert_cmd`, feeds bytes through real OS pipes, and verifies:
+One test per OS, cfg-gated (`#[cfg(target_os = "linux")]` / `#[cfg(target_os = "macos")]` / `#[cfg(target_os = "windows")]`). Spawns a release build of `grex serve` via `assert_cmd`, feeds bytes through real OS pipes, and verifies:
 
 - A single `tools/call` result > 64 KiB is delivered intact (crosses the kernel pipe buffer boundary that `duplex(4096)` hides).
 - Closing stderr on the client side does not crash the server (stdout-discipline invariant from `.omne/cfg/mcp.md`).
@@ -156,6 +157,7 @@ Pack-lock-release probe: after cancel, acquire `PackLock::acquire(same_path)` wi
 | `crates/grex-mcp/tests/common/mod.rs` | New — `TestFixture`, `run_cli_json`, `run_mcp_tool`, `normalize`. |
 | `crates/grex-mcp/tests/handshake.rs` | New — L2 duplex lifecycle cases. |
 | `crates/grex-mcp/tests/real_pipe_linux.rs` | New — `#[cfg(target_os = "linux")]` subprocess guard. |
+| `crates/grex-mcp/tests/real_pipe_macos.rs` | New — `#[cfg(target_os = "macos")]` subprocess guard. |
 | `crates/grex-mcp/tests/real_pipe_windows.rs` | New — `#[cfg(target_os = "windows")]` subprocess guard. |
 | `crates/grex-mcp/tests/parity.rs` | New — L3 per-verb parity loop. |
 | `crates/grex-mcp/tests/stress.rs` | New — L4 concurrent saturation. |
@@ -172,7 +174,7 @@ Pack-lock-release probe: after cancel, acquire `PackLock::acquire(same_path)` wi
 
 ### L2 real-pipe
 
-`real_pipe_linux.rs` + `real_pipe_windows.rs` — 2 cases per file, 4 total:
+`real_pipe_linux.rs` + `real_pipe_macos.rs` + `real_pipe_windows.rs` — 2 cases per file, 6 total:
 
 - `large_response_crosses_pipe_buffer` — send `tools/call{name:"ls"}` against a fixture with > 1 024 packs; assert deserialisable result.
 - `client_stderr_close_does_not_panic_server` — close client stderr after `initialize`; send `tools/list`; assert server still responds.
@@ -199,7 +201,7 @@ One `#[tokio::test]` **per verb** (11 tests), parametric over `VERBS_EXPOSED`. E
 ## Non-goals
 
 - **No L6 Inspector harness.** Browser/HTTP sidecar, moved to feat-m7-3.
-- **No L7 mcp-protocol-validator binary runs.** External tool, moved to feat-m7-3.
+- **No L7 mcp-validator binary runs.** External tool, moved to feat-m7-3.
 - **No L8 fuzz (`cargo fuzz`).** Long-running, deferred further in m7-3.
 - **No HTTP/SSE transport tests.** Stdio is the only v1 transport per `.omne/cfg/mcp.md` §Launch.
 - **No multi-client-per-server tests.** One `grex serve` = one session per `.omne/cfg/mcp.md` §Session model.
@@ -210,11 +212,11 @@ One `#[tokio::test]` **per verb** (11 tests), parametric over `VERBS_EXPOSED`. E
 ## Dependencies
 
 - **Prior**: feat-m7-1 (server + cancellable tool-handler API + `VERBS_EXPOSED` const); M6 feat-m6-1 (`Scheduler`), feat-m6-2 (`PackLock`), feat-m6-3 (lock-order proof); M5 pack-type plugin system.
-- **Next**: feat-m7-3 (L6 Inspector, L7 mcp-protocol-validator, L8 fuzz).
+- **Next**: feat-m7-3 (L6 Inspector, L7 mcp-validator, L8 fuzz).
 
 ## Acceptance
 
-1. All L2 tests pass on Linux + Windows CI — both `duplex` cases and the one real-pipe case per OS.
+1. All L2 tests pass on Linux + macOS + Windows CI — both `duplex` cases and the one real-pipe case per OS.
 2. L3 parity passes for all 11 verbs — `normalize(cli_json) == normalize(mcp_json)` byte-equal.
 3. L4 stress passes 3× consecutive on Linux + Windows; both `high_water` assertions hold; same-pack interleave-free invariant holds.
 4. L5 cancel passes for all 11 tools; post-cancel permit-acquire and pack-lock-acquire probes succeed within the OS-specific budget.

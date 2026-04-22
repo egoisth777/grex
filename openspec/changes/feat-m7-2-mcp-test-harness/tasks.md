@@ -2,7 +2,7 @@
 
 **Convention**: tests first, fixtures second, harness helpers third, glue last. The saturation invariants in L4 and the budget bounds in L5 are load-bearing — do not loosen them under flake pressure; diagnose root cause.
 
-**Layer scope**: L2 (3 stages — duplex handshake + per-OS real-pipe), L3 (2 stages — normaliser + parity loop), L4 (2 stages — stress baseline + saturation barrier), L5 (1 stage — cancel chaos). L1 belongs to feat-m7-1. L6 – L8 move to feat-m7-3.
+**Layer scope**: L2 (3 stages — duplex handshake + per-OS real-pipe on Linux + macOS + Windows), L3 (2 stages — normaliser + parity loop), L4 (2 stages — stress baseline + saturation barrier), L5 (1 stage — cancel chaos). L1 belongs to feat-m7-1. L6 – L8 move to feat-m7-3.
 
 ## Stage 1 — L2 duplex handshake (red)
 
@@ -23,12 +23,13 @@
 ## Stage 3 — L2 real-pipe per-OS guard
 
 - [ ] 3.1 Write `crates/grex-mcp/tests/real_pipe_linux.rs` (`#[cfg(target_os = "linux")]`) with 2 failing cases — `large_response_crosses_pipe_buffer`, `client_stderr_close_does_not_panic_server`.
-- [ ] 3.2 Write `crates/grex-mcp/tests/real_pipe_windows.rs` (`#[cfg(target_os = "windows")]`) with the same 2 cases.
-- [ ] 3.3 Add `assert_cmd` to `[dev-dependencies]`; implement helpers to spawn release `grex serve` via `Command::cargo_bin("grex")`.
-- [ ] 3.4 Fixture for large-response: seed > 1 024 packs in a tempdir workspace so `ls` returns > 64 KiB.
-- [ ] 3.5 Make both per-OS tests pass locally on the host OS; CI covers the other.
-- [ ] 3.6 Commit: `test(m7-2): L2 real-pipe guard per OS`.
-- [ ] 3.7 **Verify**: on Linux, `cargo test -p grex-mcp --test real_pipe_linux` — 2 passes; on Windows, same for `real_pipe_windows`.
+- [ ] 3.2 Write `crates/grex-mcp/tests/real_pipe_macos.rs` (`#[cfg(target_os = "macos")]`) with the same 2 cases.
+- [ ] 3.3 Write `crates/grex-mcp/tests/real_pipe_windows.rs` (`#[cfg(target_os = "windows")]`) with the same 2 cases.
+- [ ] 3.4 Add `assert_cmd` to `[dev-dependencies]`; implement helpers to spawn release `grex serve` via `Command::cargo_bin("grex")`.
+- [ ] 3.5 Fixture for large-response: seed > 1 024 packs in a tempdir workspace so `ls` returns > 64 KiB.
+- [ ] 3.6 Make per-OS tests pass locally on the host OS; CI covers the other two.
+- [ ] 3.7 Commit: `test(m7-2): L2 real-pipe guard per OS (linux+macos+windows)`.
+- [ ] 3.8 **Verify**: on Linux `cargo test -p grex-mcp --test real_pipe_linux` — 2 passes; on macOS `cargo test -p grex-mcp --test real_pipe_macos` — 2 passes; on Windows same for `real_pipe_windows`.
 
 ## Stage 4 — L3 normaliser (red → green)
 
