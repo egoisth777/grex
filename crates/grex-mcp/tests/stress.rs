@@ -99,10 +99,16 @@ const SAME_PACK_FAN_OUT: usize = 8;
 /// CI repeat policy: each stress test runs 3× consecutively in one job.
 const REPEAT_ITERATIONS: usize = 3;
 
-/// Initial wall-clock budget (placeholder per Stage 6 §6.3). Stage 8
-/// recalibrates from the first CI green run's p99 × 1.5 — see
-/// `openspec/changes/feat-m7-2-mcp-test-harness/tasks.md` §8.6.
-// TODO(feat-m7-2 Stage 8.4 / §8.6): recalibrate from CI p99 × 1.5.
+/// Wall-clock budget for the saturation iteration. Calibrated
+/// 2026-04-22 from the local Stage 7 green run (`stress 3/0 in 1.32s`
+/// for 1100 sync calls in 4 cohorts × 275 cycles). 5_000 ms holds
+/// ~3.8× headroom over the observed local total.
+///
+/// Stage 8.6 disposition: kept at 5_000 ms pending the first CI green
+/// run's `cargo test --timings` artifact. Once available, replace with
+/// `ceil(p99_ms × 1.5)` per spec §"Acceptance" item 7. Local headroom
+/// is sufficient that recalibration is a tightening (not a loosening)
+/// task — bumping this DOWN is the expected direction.
 const STRESS_BUDGET: Duration = Duration::from_millis(5_000);
 
 /// Per-call budget for the same-pack contention test. Each call may
@@ -169,9 +175,9 @@ async fn stress_same_pack_serialises() {
     for i in 0..SAME_PACK_FAN_OUT {
         let server_i = server.clone();
         let pack_root = pack_root.clone();
-        let h = tokio::spawn(async move {
-            drive_one_sync_await_response(server_i, pack_root, i).await
-        });
+        let h = tokio::spawn(
+            async move { drive_one_sync_await_response(server_i, pack_root, i).await },
+        );
         handlers.push(h);
     }
 
@@ -415,8 +421,7 @@ where
             panic!("duplex EOF before response id={expected_id}");
         }
         let trimmed = line.trim_end_matches(['\n', '\r']);
-        let frame: Value =
-            serde_json::from_str(trimmed).expect("frame is valid JSON-RPC line");
+        let frame: Value = serde_json::from_str(trimmed).expect("frame is valid JSON-RPC line");
         if frame.get("id").and_then(Value::as_i64) == Some(expected_id) {
             return frame;
         }

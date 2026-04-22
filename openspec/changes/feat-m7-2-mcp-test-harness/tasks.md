@@ -74,6 +74,14 @@
 
 ## Stage 8 — L5 cancellation chaos + budget recalibration
 
+> **Note:** Stage 8 went GREEN on first run because feat-m7-1's cancellation
+> plumbing already satisfies the L5 contract: the natural `tokio::select!`
+> race in `run_with_cancel` drops `_permit` on the cancel arm, and the
+> per-pack `PackLock` is owned inside `grex_core::sync::run` (released on
+> spawn_blocking unwind). Tests are real (would fail on regression — 250/500ms
+> wall-clock budget, `REQUEST_CANCELLED` code assertion, second-sync probe).
+> RED-first discipline N/A here.
+
 - [ ] 8.1 Write `crates/grex-mcp/tests/cancel.rs` with 11 parametric failing cases (one per `VERBS_EXPOSED` entry) — each sends `tools/call` then immediately `notifications/cancelled`; asserts `-32800 RequestCancelled` OR clean `CallToolResult`.
 - [ ] 8.2 Add `cancel_permit_released_under_budget` — post-cancel, acquire `PARALLEL` permits within budget; fail if any `acquire` blocks.
 - [ ] 8.3 Add `cancel_pack_lock_released_under_budget` — post-cancel, `PackLock::acquire(same_path)` within budget.
