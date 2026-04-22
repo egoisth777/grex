@@ -209,12 +209,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r .mcp-validator/requirements.txt
       - name: Run conformance suite (protocol 2025-06-18)
-        # Invocation mirrors upstream `ref_gh_actions/stdio-validation.yml`
-        # at tag v0.3.1: `python -m mcp_testing.stdio.cli "<server-cmd>"
-        # --protocol-version <ver> --output-dir reports --timeout <secs>`.
-        # Server command is POSITIONAL (not `--server-command`). The
-        # `PYTHONPATH` hop is needed because the upstream repo at this SHA
-        # is not a pip-installable project (no setup.py / pyproject.toml).
+        # Verified CLI at tag v0.3.1 via `--help`:
+        #   usage: cli.py [-h] [--args ARGS [ARGS ...]] [--debug]
+        #                 [--protocol-version {2024-11-05,2025-03-26,2025-06-18}]
+        #                 [--output-dir OUTPUT_DIR]
+        #                 [--report-format {text,json,html}]
+        #                 server_command
+        # Notes:
+        #   * `server_command` is POSITIONAL (not `--server-command`).
+        #   * There is NO `--timeout` flag at this SHA — upstream's own
+        #     `ref_gh_actions/stdio-validation.yml` template lists `--timeout`
+        #     but the template drifted from the code at v0.3.1. Omitted here.
+        #   * `PYTHONPATH` hop is needed because the upstream repo at this
+        #     SHA is not a pip-installable project (no setup.py / pyproject.toml).
         env:
           PYTHONPATH: ${{ github.workspace }}/.mcp-validator
         run: |
@@ -223,7 +230,7 @@ jobs:
             "$GITHUB_WORKSPACE/target/release/grex serve" \
             --protocol-version 2025-06-18 \
             --output-dir reports \
-            --timeout 30
+            --report-format json
       - name: Upload validator reports
         if: always()
         uses: actions/upload-artifact@v7

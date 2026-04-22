@@ -47,13 +47,26 @@ python -m mcp_testing.stdio.cli \
   "$GITHUB_WORKSPACE/target/release/grex serve" \
   --protocol-version 2025-06-18 \
   --output-dir reports \
-  --timeout 30
+  --report-format json
+```
+
+Verified `--help` output at tag `v0.3.1`:
+
+```
+usage: cli.py [-h] [--args ARGS [ARGS ...]] [--debug]
+              [--protocol-version {2024-11-05,2025-03-26,2025-06-18}]
+              [--output-dir OUTPUT_DIR] [--report-format {text,json,html}]
+              server_command
 ```
 
 Notes:
 
 - Server command is **positional**, NOT `--server-command` (the earlier
   spec draft had this wrong; corrected here and in `ci.yml`).
+- **No `--timeout` flag exists at this SHA.** Upstream's own
+  `ref_gh_actions/stdio-validation.yml` template lists `--timeout 30` but
+  the template drifted from the code; the CLI rejects it with
+  `unrecognized arguments: --timeout 30`. Omitted.
 - `--protocol-version` is passed to the validator, NOT to `grex serve`
   (which does not accept that flag).
 - `PYTHONPATH` is required because the upstream repo at this SHA is not
@@ -77,7 +90,7 @@ python -m mcp_testing.stdio.cli \
   "$(pwd)/target/release/grex serve" \
   --protocol-version 2025-06-18 \
   --output-dir reports \
-  --timeout 30
+  --report-format json
 ```
 
 Exit code `0` = conformant. Non-zero = protocol drift (inspect
