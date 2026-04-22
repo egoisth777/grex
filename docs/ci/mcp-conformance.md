@@ -14,11 +14,12 @@ rmcp-typed client, this job checks a third-party one.
 
 | Field | Value |
 |---|---|
-| Repository | [`github.com/Janix-ai/mcp-validator`](https://github.com/Janix-ai/mcp-validator) |
+| Upstream | [`github.com/Janix-ai/mcp-validator`](https://github.com/Janix-ai/mcp-validator) |
+| CI source | [`github.com/egoisth777/mcp-validator`](https://github.com/egoisth777/mcp-validator) (org-controlled mirror, same SHA) |
 | Tag | `v0.3.1` |
 | Commit SHA | `d766d3ee94076b13d0b73253e5221bbc76b9edb2` |
 | Released | 2025-07-08T13:55:45Z |
-| Install path | `actions/checkout` the pinned SHA into `.mcp-validator/`, then `pip install -r .mcp-validator/requirements.txt`, then run `python -m mcp_testing.stdio.cli` with `PYTHONPATH=.mcp-validator`. |
+| Install path | `actions/checkout` the pinned SHA from the **mirror** into `.mcp-validator/`, then `pip install -r .mcp-validator/requirements.txt`, then run `python -m mcp_testing.stdio.cli` with `PYTHONPATH=.mcp-validator`. |
 | PyPI status | `mcp-validator==0.3.1` is **NOT** published on PyPI (only `0.1.1` is). |
 | `pip install git+URL` | **NOT** supported at this SHA. The upstream repo at tag `v0.3.1` ships neither `setup.py` nor `pyproject.toml`, so pip refuses with `does not appear to be a Python project`. Clone-and-run is the only supported path until upstream adds a packaging file. |
 | Protocol | `2025-06-18` (matches `.omne/cfg/mcp.md` SSOT) |
@@ -34,6 +35,35 @@ gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW> --jq '.object.sha'
 ```
 
 Drift between the two is a merge blocker.
+
+### Supply-chain hardening
+
+The CI job checks out from `egoisth777/mcp-validator` (an **org-controlled
+mirror / fork** of `Janix-ai/mcp-validator`) rather than upstream directly.
+Rationale: `actions/checkout` of an external repo that we then `pip install`
+hands that external maintainer arbitrary code execution under the CI token
+if upstream is compromised, rewritten, or replaced. Mirroring the pin into
+a repo we control closes that window — the SHA is byte-identical to
+upstream, but the host cannot be tampered with by third parties.
+
+**Mirror refresh procedure** (run once per validator bump):
+
+```bash
+# 1. Confirm new upstream tag + SHA.
+gh api repos/Janix-ai/mcp-validator/releases/latest --jq '.tag_name,.published_at'
+NEW_SHA=$(gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW> --jq '.object.sha')
+
+# 2. Sync mirror's default branch with upstream (one-time, if not already
+#    tracking). The fork created via `gh repo fork Janix-ai/mcp-validator`
+#    already has all history; subsequent refreshes via:
+gh api -X POST repos/egoisth777/mcp-validator/merge-upstream \
+  -f branch=main
+
+# 3. Verify the new SHA is reachable from the mirror.
+gh api repos/egoisth777/mcp-validator/commits/$NEW_SHA --jq '.sha'
+
+# 4. Update `ref:` in `.github/workflows/ci.yml` mcp-conformance job.
+```
 
 ## CLI invocation
 
@@ -80,7 +110,8 @@ From repo root on any supported OS (Python 3.12):
 
 ```bash
 cargo build --release -p grex
-git clone https://github.com/Janix-ai/mcp-validator .mcp-validator
+# Use the org mirror (same SHA) so local repro matches CI's supply chain.
+git clone https://github.com/egoisth777/mcp-validator .mcp-validator
 git -C .mcp-validator checkout d766d3ee94076b13d0b73253e5221bbc76b9edb2
 python -m pip install --upgrade pip
 pip install -r .mcp-validator/requirements.txt
@@ -120,6 +151,26 @@ remove the gate temporarily:
 The pin is explicit, so a validator regression is always reproducible
 locally via the install command above — fixes are single-line PRs that bump
 the tag + SHA together.
+
+### Upstream disappearance
+
+If `Janix-ai/mcp-validator` is deleted, renamed, or has its history
+rewritten, CI continues to work unchanged because the job reads from the
+**org mirror** `egoisth777/mcp-validator`, which retains the pinned SHA
+independently. Remediation in that scenario:
+
+1. Confirm the mirror still holds the pinned SHA:
+   ```bash
+   gh api repos/egoisth777/mcp-validator/commits/d766d3ee94076b13d0b73253e5221bbc76b9edb2 --jq '.sha'
+   ```
+2. File a tracking issue noting upstream loss so future bumps either (a)
+   find a replacement validator or (b) vendor the validator source under
+   `.mcp-validator-vendored/` in-repo and drop the external checkout step.
+3. No CI changes required in the meantime — the mirror IS the durable
+   source of truth for the pinned build.
+
+Pointing `ref:` back at upstream is only appropriate if upstream is
+restored AND has been re-audited.
 
 ## CI job layout
 

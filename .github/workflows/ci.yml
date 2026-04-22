@@ -165,13 +165,21 @@ jobs:
   # 3-OS debug matrix (~5 min p95) with zero artefact payoff. Budget:
   # ~3.5 min cold / ~1.5 min warm.
   #
-  # Validator pin: `github.com/Janix-ai/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2`
-  # (tag `v0.3.1`, published 2025-07-08T13:55:45Z). PyPI publication of
-  # `mcp-validator==0.3.1` is NOT available (PyPI only lists `0.1.1` as of
-  # the 2026-04-22 lookup), so the git+SHA install path is the canonical
-  # pin and the only reliable install route. Any bump MUST update the tag
-  # AND SHA together — re-run
-  # `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW>` for the new SHA.
+  # Validator pin: `github.com/egoisth777/mcp-validator@d766d3ee94076b13d0b73253e5221bbc76b9edb2`
+  # (fork of Janix-ai/mcp-validator at tag `v0.3.1`, published
+  # 2025-07-08T13:55:45Z). We check out an **org-controlled mirror** rather
+  # than upstream directly so arbitrary upstream commits (or a compromised /
+  # deleted upstream) cannot execute code in CI — the SHA is the same, but
+  # the host repo is one we control. See
+  # `docs/ci/mcp-conformance.md` §"Supply-chain hardening" for rationale.
+  #
+  # PyPI publication of `mcp-validator==0.3.1` is NOT available (PyPI only
+  # lists `0.1.1` as of the 2026-04-22 lookup), so the git+SHA install path
+  # is the canonical pin and the only reliable install route. Any bump MUST
+  # update the tag AND SHA together — re-run
+  # `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v<NEW>` against
+  # upstream, then mirror the SHA into `egoisth777/mcp-validator` before
+  # bumping the `ref:` below.
   mcp-conformance:
     name: MCP protocol conformance (2025-06-18)
     runs-on: ubuntu-latest
@@ -188,7 +196,13 @@ jobs:
           python-version: "3.12"
       - name: Build release grex (self-contained; ~3 min cold, < 1 min warm)
         run: cargo build --release -p grex
-      - name: Check out mcp-validator (pinned to SHA d766d3e / tag v0.3.1)
+      - name: Check out mcp-validator (org mirror, SHA d766d3e / tag v0.3.1)
+        # Checked out from the **org-controlled mirror** `egoisth777/mcp-validator`
+        # (a fork of `Janix-ai/mcp-validator` pinned at the same SHA) to
+        # close the supply-chain ACE risk of running an external repo's
+        # code under CI credentials. Mirror refresh procedure +
+        # rationale: `docs/ci/mcp-conformance.md` §"Supply-chain hardening".
+        #
         # Upstream at tag v0.3.1 ships NEITHER `setup.py` NOR
         # `pyproject.toml`, so `pip install git+URL` is NOT supported —
         # pip refuses with "does not appear to be a Python project".
@@ -201,7 +215,7 @@ jobs:
         # `pip install`.
         uses: actions/checkout@v6
         with:
-          repository: Janix-ai/mcp-validator
+          repository: egoisth777/mcp-validator
           ref: d766d3ee94076b13d0b73253e5221bbc76b9edb2
           path: .mcp-validator
       - name: Install mcp-validator deps
