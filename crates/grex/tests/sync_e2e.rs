@@ -15,7 +15,18 @@ use std::sync::OnceLock;
 
 use grex_core::git::gix_backend::file_url_from_path;
 use grex_core::manifest;
-use grex_core::sync::{run, SyncError, SyncOptions};
+use grex_core::sync::{self, SyncError, SyncOptions};
+use tokio_util::sync::CancellationToken;
+
+/// feat-m7-1 stage 2: never-cancelled sentinel wrapper so the existing
+/// `run(&f.root, &opts)` call sites stay untouched. See
+/// `crates/grex-core/tests/concurrency.rs` for the rationale.
+fn run(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::run(pack_root, opts, &CancellationToken::new())
+}
 use grex_core::{ExecResult, StepKind};
 use tempfile::TempDir;
 

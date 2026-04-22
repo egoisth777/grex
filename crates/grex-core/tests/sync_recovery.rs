@@ -19,7 +19,17 @@ use std::fs;
 use chrono::Utc;
 use grex_core::execute::ExecError;
 use grex_core::manifest::{append_event, read_all, Event};
-use grex_core::sync::{run as sync_run, scan_recovery, HaltedContext, SyncError, SyncOptions};
+use grex_core::sync::{self, scan_recovery, HaltedContext, SyncError, SyncOptions};
+use tokio_util::sync::CancellationToken;
+
+/// feat-m7-1 stage 2: never-cancelled sentinel wrapper, see
+/// `crates/grex-core/tests/concurrency.rs` for the rationale.
+fn sync_run(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::run(pack_root, opts, &CancellationToken::new())
+}
 use tempfile::TempDir;
 
 // -------- fixture helpers ------------------------------------------------

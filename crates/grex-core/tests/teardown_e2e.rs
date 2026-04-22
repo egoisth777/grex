@@ -32,7 +32,26 @@ use grex_core::execute::{ExecCtx, MetaVisitedSet};
 use grex_core::pack::{self, PackManifest};
 use grex_core::plugin::pack_type::MetaPlugin;
 use grex_core::plugin::{PackTypePlugin, PackTypeRegistry};
-use grex_core::sync::{run, teardown, SyncOptions};
+use grex_core::sync::{self, SyncError, SyncOptions};
+use tokio_util::sync::CancellationToken;
+
+/// feat-m7-1 stage 2: never-cancelled sentinel wrappers (`run` +
+/// `teardown`) so the existing test bodies — which call them directly —
+/// stay untouched. See `crates/grex-core/tests/concurrency.rs` for the
+/// rationale; teardown gets the same treatment for parity.
+fn run(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::run(pack_root, opts, &CancellationToken::new())
+}
+
+fn teardown(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+) -> Result<grex_core::sync::SyncReport, SyncError> {
+    sync::teardown(pack_root, opts, &CancellationToken::new())
+}
 use grex_core::{Registry, VarEnv};
 use tempfile::TempDir;
 use tokio::runtime::Builder;

@@ -86,6 +86,27 @@ pub enum PackLockError {
     },
 }
 
+/// Outcome of [`PackLock::acquire_cancellable`] — either the
+/// underlying lock acquire failed, or the supplied cancellation token
+/// fired before the guard was returned. Distinct from
+/// [`crate::scheduler::Cancelled`]: that ZST signals semaphore-permit
+/// cancellation; this variant signals pack-lock cancellation. Verb
+/// bodies translate either into the same `PluginError::Cancelled` at
+/// the call site (feat-m7-1 Stages 6-7).
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum PackLockErrorOrCancelled {
+    /// The cancellation token fired before the lock was acquired.
+    /// The spawned blocking thread (if launched) may still be parked
+    /// in `fd_lock::write()` — see [`PackLock::acquire_cancellable`]
+    /// for the OS-thread leak-window contract.
+    #[error("pack lock acquire cancelled")]
+    Cancelled,
+    /// The underlying lock acquire failed before cancellation fired.
+    #[error(transparent)]
+    Lock(#[from] PackLockError),
+}
+
 use std::sync::Weak;
 
 fn path_mutex_registry() -> &'static Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>> {
@@ -242,6 +263,123 @@ impl PackLock {
                     path: PathBuf::new(),
                     source: io::Error::other(join_err.to_string()),
                 });
+            }
+        };
+
+        Ok(PackLockHold {
+            _fd_guard: Some(guard_static),
+            _mutex_guard: Some(mutex_guard),
+            _lock: boxed,
+        })
+    }
+
+    /// Cancellable async acquire — same semantics as
+    /// [`PackLock::acquire_async`] but races the acquire against a
+    /// [`tokio_util::sync::CancellationToken`]. Used by the embedded
+    /// MCP server (feat-m7-1) so a `notifications/cancelled` from the
+    /// client unblocks tool handlers that are parked on a contended
+    /// pack lock.
+    ///
+    /// **Consumes `self`** to mirror [`PackLock::acquire_async`] — the
+    /// same boxed-fd + transmute lifetime dance is needed to hand the
+    /// guard back across a `spawn_blocking` boundary, and reusing the
+    /// consumes-self contract preserves drop ordering against
+    /// [`PackLockHold`].
+    ///
+    /// ## OS-thread leak window — contract
+    ///
+    /// `fd_lock::write()` is a synchronous syscall that parks the
+    /// calling OS thread until the kernel releases the flock. Once the
+    /// blocking call has been launched on the
+    /// [`tokio::task::spawn_blocking`] pool, **the runtime cannot
+    /// interrupt it** — there is no portable way to unpark a thread
+    /// blocked in `flock(2)`. When the cancellation token fires we
+    /// resolve the outer `select!` with [`PackLockErrorOrCancelled::Cancelled`]
+    /// immediately, but the spawned OS thread stays parked until the
+    /// holder eventually releases. When that happens, the spawned
+    /// thread acquires the guard, the `JoinHandle` resolves to
+    /// `Ok((boxed, guard))`, and the tuple is dropped on the spot
+    /// (because the `select!` arm has already won) — at which point
+    /// the guard's `Drop` releases the kernel flock and a subsequent
+    /// acquirer can proceed.
+    ///
+    /// In other words: **cancellation is observable to the caller
+    /// instantly, but the underlying OS thread holds the lock briefly
+    /// past the cancel point, until the syscall returns**. Callers
+    /// that immediately re-attempt acquire on the same path may see
+    /// transient contention until that thread drains. See
+    /// `.omne/cfg/mcp.md` §Cancellation.
+    ///
+    /// # Errors
+    ///
+    /// * [`PackLockErrorOrCancelled::Cancelled`] — the token fired
+    ///   before a guard was returned.
+    /// * [`PackLockErrorOrCancelled::Lock`] wrapping
+    ///   [`PackLockError::Busy`] on same-thread re-entry, or
+    ///   [`PackLockError::Io`] on any OS-level lock failure.
+    pub async fn acquire_cancellable(
+        self,
+        cancel: &::tokio_util::sync::CancellationToken,
+    ) -> Result<PackLockHold, PackLockErrorOrCancelled> {
+        // Mirror `acquire_async`: serialise on the canonical-path
+        // async mutex first. Race the mutex acquire itself against
+        // cancel — same-task re-entry would normally hang here, but
+        // the cancel arm gives the caller an out.
+        let mtx = mutex_for(&self.canonical);
+        let mutex_guard = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(PackLockErrorOrCancelled::Cancelled),
+            g = Arc::clone(&mtx).lock_owned() => g,
+        };
+
+        // Box `self` so the address is stable for the transmuted
+        // `'static` guard lifetime — same dance as `acquire_async`.
+        let boxed = Box::new(self);
+        // Capture the sidecar path before the move into the closure
+        // so the JoinError arm below can report it (the closure
+        // consumes `boxed`, so we cannot read it from there).
+        let join_err_path = boxed.path.clone();
+        // feat-m7-1 — replicates the `acquire_async` blocking-pool
+        // hop. The closure body is intentionally identical (do NOT
+        // refactor — see the SAFETY note in `acquire_async`).
+        let join = tokio::task::spawn_blocking(
+            move || -> Result<(Box<PackLock>, RwLockWriteGuard<'static, File>), PackLockError> {
+                let mut boxed = boxed;
+                // SAFETY: see `acquire_async` — `boxed` is moved into
+                // the returned pair and never freed while the guard
+                // is live; field order in `PackLockHold` makes the
+                // guard drop first.
+                let guard_ref = boxed
+                    .inner
+                    .write()
+                    .map_err(|source| PackLockError::Io { path: boxed.path.clone(), source })?;
+                let guard_static: RwLockWriteGuard<'static, File> = unsafe {
+                    std::mem::transmute::<RwLockWriteGuard<'_, File>, RwLockWriteGuard<'static, File>>(
+                        guard_ref,
+                    )
+                };
+                Ok((boxed, guard_static))
+            },
+        );
+
+        // Race the blocking acquire against the cancellation token.
+        // If cancel wins, the JoinHandle is dropped on the spot — the
+        // spawned OS thread stays parked in `fd_lock::write()` until
+        // the kernel releases, at which point the returned tuple is
+        // dropped (see contract note above) and the flock is freed.
+        let join = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(PackLockErrorOrCancelled::Cancelled),
+            res = join => res,
+        };
+
+        let (boxed, guard_static) = match join {
+            Ok(res) => res.map_err(PackLockErrorOrCancelled::Lock)?,
+            Err(join_err) => {
+                return Err(PackLockErrorOrCancelled::Lock(PackLockError::Io {
+                    path: join_err_path,
+                    source: io::Error::other(join_err.to_string()),
+                }));
             }
         };
 
@@ -527,6 +665,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
     use tempfile::tempdir;
+    use tokio_util::sync::CancellationToken;
 
     #[test]
     fn pack_lock_acquires_creates_file() {
@@ -667,5 +806,179 @@ mod tests {
             })
             .await;
         assert!(result.is_err(), "reversed tier order must panic in debug builds");
+    }
+
+    // --- acquire_cancellable (feat-m7-1 Stage 4) -----------------------------
+
+    /// 4.T1 — uncontended path returns Ok(PackLockHold).
+    #[tokio::test]
+    async fn acquire_cancellable_happy_path() {
+        let dir = tempdir().unwrap();
+        let lock = PackLock::open(dir.path()).unwrap();
+        let token = CancellationToken::new();
+        let result = lock.acquire_cancellable(&token).await;
+        assert!(result.is_ok(), "expected Ok(PackLockHold) on uncontended pack");
+    }
+
+    /// 4.T2 — task A holds the lock; task B's token fires after 10 ms;
+    /// B must surface `Err(Cancelled)` within 50 ms.
+    #[tokio::test]
+    async fn acquire_cancellable_cancel_during_blocking_fd_lock_returns_cancelled() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let path_b = path.clone();
+
+        // Task A: acquire and hold for 500 ms (long enough to cover B's window).
+        let a_started = Arc::new(tokio::sync::Notify::new());
+        let a_started_clone = Arc::clone(&a_started);
+        let a = tokio::spawn(async move {
+            let lock = PackLock::open(&path).unwrap();
+            let _hold = lock.acquire_async().await.unwrap();
+            a_started_clone.notify_one();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        });
+        a_started.notified().await;
+
+        let token = CancellationToken::new();
+        let cancel_handle = token.clone();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancel_handle.cancel();
+        });
+
+        let started = Instant::now();
+        let lock_b = PackLock::open(&path_b).unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_millis(50), lock_b.acquire_cancellable(&token))
+                .await
+                .expect("acquire_cancellable must return within 50 ms after cancel");
+
+        let waited = started.elapsed();
+        assert!(
+            matches!(result, Err(PackLockErrorOrCancelled::Cancelled)),
+            "expected Err(Cancelled), got {result:?} after {waited:?}"
+        );
+
+        canceller.await.unwrap();
+        a.abort();
+        let _ = a.await;
+    }
+
+    // --- helpers for 4.T3 / 4.T4 -------------------------------------------
+
+    /// Spawn a "holder" task that acquires `path` and releases on
+    /// signal. Returns `(JoinHandle, started_notify, release_notify)`.
+    /// Caller awaits `started` to know the lock is held, then fires
+    /// `release` when ready to let the holder drop its guard.
+    fn spawn_holder(
+        path: PathBuf,
+    ) -> (tokio::task::JoinHandle<()>, Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let started_c = Arc::clone(&started);
+        let release_c = Arc::clone(&release);
+        let h = tokio::spawn(async move {
+            let lock = PackLock::open(&path).unwrap();
+            let _hold = lock.acquire_async().await.unwrap();
+            started_c.notify_one();
+            release_c.notified().await;
+        });
+        (h, started, release)
+    }
+
+    /// Poll `acquire_async` against `path` until it succeeds or the
+    /// outer deadline expires. Returns `Ok(())` on success, `Err(())`
+    /// on timeout.
+    async fn poll_acquire_until_free(path: PathBuf, deadline: Duration) -> Result<(), ()> {
+        tokio::time::timeout(deadline, async move {
+            loop {
+                let lock = PackLock::open(&path).unwrap();
+                if let Ok(Ok(_hold)) =
+                    tokio::time::timeout(Duration::from_millis(100), lock.acquire_async()).await
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .map_err(|_| ())
+    }
+
+    /// 4.T3 — regression for the documented OS-thread leak window:
+    /// after B is cancelled, A releases its lock; the spawn_blocking
+    /// thread that B kicked off must eventually unblock and drop its
+    /// guard. We observe this by polling from a third task C — if B's
+    /// blocking thread leaked its guard, C would wait forever.
+    #[tokio::test]
+    async fn acquire_cancellable_spawn_blocking_thread_releases_guard_when_it_finally_unblocks() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let (a, a_started, release_a) = spawn_holder(path.clone());
+        a_started.notified().await;
+
+        // Task B: race against cancel while A holds the fd-lock.
+        let token = CancellationToken::new();
+        let cancel_handle = token.clone();
+        let path_b = path.clone();
+        let b = tokio::spawn(async move {
+            let lock = PackLock::open(&path_b).unwrap();
+            lock.acquire_cancellable(&token).await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancel_handle.cancel();
+        let b_result = tokio::time::timeout(Duration::from_millis(100), b)
+            .await
+            .expect("B must resolve quickly after cancel")
+            .expect("B task panicked");
+        assert!(
+            matches!(b_result, Err(PackLockErrorOrCancelled::Cancelled)),
+            "expected B to see Cancelled, got {b_result:?}"
+        );
+
+        // Release A — B's parked OS thread should drain.
+        release_a.notify_one();
+        a.await.unwrap();
+
+        assert!(
+            poll_acquire_until_free(path, Duration::from_millis(2_000)).await.is_ok(),
+            "task C never acquired — spawn_blocking thread leaked its fd-lock guard"
+        );
+    }
+
+    /// 4.T4 — covers the outer-mutex cancel arm of the `select!` in
+    /// `acquire_cancellable`. Task A holds the in-process async mutex
+    /// (via `acquire_async`, which acquires both tiers); task B calls
+    /// `acquire_cancellable` and is parked on `lock_owned()` (NOT yet
+    /// at the fd-lock blocking call). Cancelling B's token must
+    /// short-circuit the mutex wait and return `Err(Cancelled)`.
+    #[tokio::test]
+    async fn acquire_cancellable_cancel_during_async_mutex_wait_returns_cancelled() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let (a, a_started, release_a) = spawn_holder(path.clone());
+        a_started.notified().await;
+
+        let token = CancellationToken::new();
+        let cancel_handle = token.clone();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancel_handle.cancel();
+        });
+
+        let lock_b = PackLock::open(&path).unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_millis(50), lock_b.acquire_cancellable(&token))
+                .await
+                .expect("acquire_cancellable must return within 50 ms after cancel");
+
+        assert!(
+            matches!(result, Err(PackLockErrorOrCancelled::Cancelled)),
+            "expected Err(Cancelled) from outer-mutex cancel arm, got {result:?}"
+        );
+
+        canceller.await.unwrap();
+        release_a.notify_one();
+        a.await.unwrap();
     }
 }

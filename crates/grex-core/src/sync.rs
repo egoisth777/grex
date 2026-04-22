@@ -34,6 +34,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 
 use crate::execute::{
     ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, MetaVisitedSet,
@@ -390,7 +391,21 @@ impl Clone for SyncError {
 ///
 /// Returns the first error that halts the pipeline — see [`SyncError`] for
 /// the taxonomy.
-pub fn run(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError> {
+///
+/// `cancel` is the cooperative cancellation handle threaded through the
+/// pipeline by feat-m7-1 stage 2. Stage 2 only wires the parameter; the
+/// `is_cancelled()` polls land in stages 3-4 (scheduler + pack-lock
+/// acquire). CLI callers pass a never-cancelled sentinel
+/// (`CancellationToken::new()`); the MCP server passes a token tied to
+/// the request lifetime.
+pub fn run(
+    pack_root: &Path,
+    opts: &SyncOptions,
+    cancel: &CancellationToken,
+) -> Result<SyncReport, SyncError> {
+    // Stage 2 is signature-only — silence "unused parameter" without
+    // hiding it behind `_` (downstream stages will read it).
+    let _ = cancel;
     let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
     ensure_workspace_dir(&workspace)?;
     let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
@@ -1422,7 +1437,15 @@ pub fn pack_display_name(node: &PackNode) -> &str {
 /// # Errors
 ///
 /// Returns the first error that halts the pipeline — see [`SyncError`].
-pub fn teardown(pack_root: &Path, opts: &SyncOptions) -> Result<SyncReport, SyncError> {
+///
+/// See [`run`] for the `cancel` contract — feat-m7-1 stage 2 threads
+/// the parameter through teardown for parity; stages 3-4 add the polls.
+pub fn teardown(
+    pack_root: &Path,
+    opts: &SyncOptions,
+    cancel: &CancellationToken,
+) -> Result<SyncReport, SyncError> {
+    let _ = cancel;
     let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
     ensure_workspace_dir(&workspace)?;
     let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;

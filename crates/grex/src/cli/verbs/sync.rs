@@ -17,6 +17,7 @@
 use crate::cli::args::{GlobalFlags, SyncArgs};
 use anyhow::Result;
 use grex_core::sync::{self, HaltedContext, SyncError, SyncOptions, SyncReport, SyncStep};
+use tokio_util::sync::CancellationToken;
 
 /// Entry point for the `sync` verb.
 ///
@@ -25,7 +26,7 @@ use grex_core::sync::{self, HaltedContext, SyncError, SyncOptions, SyncReport, S
 /// Surface the `anyhow::Result` so `main` can render whatever the
 /// orchestrator layer emitted; exit codes are set via `std::process::exit`
 /// on the halt paths since `anyhow::Error` does not carry them.
-pub fn run(args: SyncArgs, global: &GlobalFlags) -> Result<()> {
+pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
         println!("grex sync: unimplemented (M1 scaffold)");
         return Ok(());
@@ -39,7 +40,7 @@ pub fn run(args: SyncArgs, global: &GlobalFlags) -> Result<()> {
         .with_ref_override(args.ref_override.clone())
         .with_only_patterns(only_patterns)
         .with_force(args.force);
-    match run_impl(&pack_root, &opts, args.quiet) {
+    match run_impl(&pack_root, &opts, args.quiet, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::UsageError => std::process::exit(2),
         RunOutcome::Validation => std::process::exit(1),
@@ -58,8 +59,13 @@ enum RunOutcome {
     Tree,
 }
 
-fn run_impl(pack_root: &std::path::Path, opts: &SyncOptions, quiet: bool) -> RunOutcome {
-    match sync::run(pack_root, opts) {
+fn run_impl(
+    pack_root: &std::path::Path,
+    opts: &SyncOptions,
+    quiet: bool,
+    cancel: &CancellationToken,
+) -> RunOutcome {
+    match sync::run(pack_root, opts, cancel) {
         Ok(report) => {
             render_report(&report, opts.dry_run, quiet);
             if report.halted.is_some() {

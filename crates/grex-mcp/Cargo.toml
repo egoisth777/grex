@@ -1,0 +1,55 @@
+[package]
+name = "grex-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# License diverges from workspace MIT default until feat-m7-4 migrates the workspace to dual.
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+authors.workspace = true
+description = "MCP-native server for grex (M7): exposes the 11 core verbs as MCP tools."
+
+[dependencies]
+# `rmcp` defaults already include the server feature; we additionally need
+# `client` so the integration tests can build a duplex client transport
+# against our server. Pulling it into `[dependencies]` (not just dev-deps)
+# keeps the feature unification trivial for downstream crates that re-export
+# our types.
+rmcp = { workspace = true, features = ["server", "client", "macros", "transport-io"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+grex-core = { workspace = true }
+
+[features]
+# Enables the `__test_set_block_until_cancelled` hook + the in-handler
+# `block_until_cancelled` short-circuit in `tools/sync.rs`. Used by the
+# integration test in `tests/cancellation.rs::notifications_cancelled_aborts_inflight_sync`
+# to deterministically race `notifications/cancelled` against an in-flight
+# `tools/call sync`. NOT enabled by default — production `grex serve`
+# binaries compile this branch out entirely (one fewer atomic load per call,
+# zero exposed test-surface symbols).
+#
+# The `tests/cancellation.rs` integration test is gated behind this feature
+# at the file level (`#![cfg(feature = "test-hooks")]`) so a plain
+# `cargo test -p grex-mcp` skips it; CI and local devs run
+# `cargo test -p grex-mcp --features test-hooks` (or `--all-features`).
+# This avoids the cargo-feature-unification footgun that a self-edge
+# dev-dependency would create (which silently turns on `test-hooks` for
+# every `cargo build -p grex-mcp` invocation, defeating the gate).
+test-hooks = []
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
+tokio-util = { workspace = true }
+
+[lints]
+workspace = true

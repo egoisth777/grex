@@ -36,7 +36,7 @@ pub use vars::{expand, VarEnv, VarExpandError};
 
 pub mod scheduler;
 
-pub use scheduler::Scheduler;
+pub use scheduler::{Cancelled, Scheduler};
 
 pub mod pack_lock;
 

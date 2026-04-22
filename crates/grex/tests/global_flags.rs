@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{grex, required_args_for, run_with_flags, VERBS};
+use common::{grex, required_args_for, run_with_flags, STUB_VERBS as VERBS};
 use predicates::prelude::*;
 
 #[test]

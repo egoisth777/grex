@@ -95,16 +95,20 @@ Correctness-by-construction on the scheduler.
 **Effort**: 4-6 days (Lean4 theorem is the long pole).
 **Depends on**: M5.
 
-## M7 — MCP server + import + doctor
+## M7 — MCP-native server (rmcp 1.5) + import + doctor
 Agent-native surface + legacy ingest + integrity.
 
-- `grex serve --mcp` stdio JSON-RPC 2.0 server (e.g. via `jsonrpc-core` or hand-rolled).
-- Method registry generated from CLI verb registry; 1:1 mapping.
+- `crates/grex-mcp` exposes a Path-B MCP server via the `rmcp 1.5.0` framework, NOT a hand-rolled `grex.<verb>` JSON-RPC surface.
+- 11 tools registered via `#[tool]` macro on `impl GrexMcpServer`: `init`, `add`, `rm`, `ls`, `status`, `sync`, `update`, `doctor`, `import`, `run`, `exec`. Excludes `serve` (the transport itself) and `teardown` (plugin hook).
+- Per-tool `read_only_hint` + `destructive_hint` agent-safety annotations. `exec` strips `--shell` (agent safety; CLI keeps `exec --shell` for interactive use).
+- Cancellation via rmcp's built-in `local_ct_pool` (HashMap<RequestId, CancellationToken>) — NOT a custom DashMap layer. Per-request `CancellationToken` injected via `FromContextPart`; `notifications/cancelled` routes to it.
+- Wired to stdio in `grex serve` (verb-scoped `--manifest`, `--workspace`, `--parallel`; default `RUST_LOG=grex=info,rmcp=warn`).
 - `grex import --from-repos-json <path>` reads legacy flat `{url, path}[]` → emits `add` events.
 - `grex doctor`: manifest schema check, gitignore sync check, on-disk drift (paths in REPOS.json not on disk + vice versa), lint (pack.yaml schema validate).
-- License decision: MIT vs Apache-2.0 vs dual — locked here.
+- License decision: `MIT OR Apache-2.0` dual — locked here.
+- See `openspec/changes/feat-m7-1-mcp-server/spec.md` `## Known limitations` + `## rmcp 1.5.0 wiring notes` for known gaps and rmcp 1.5 surface quirks.
 
-**Acceptance**: MCP `initialize` handshake works; every CLI verb reachable via JSON-RPC; legacy REPOS.json import produces identical state to manual `grex add` sequence; doctor exits non-zero on known-broken fixtures.
+**Acceptance**: MCP `initialize` handshake works; 11 tools discoverable via `tools/list`; `notifications/cancelled` aborts in-flight `sync` within budget; legacy REPOS.json import produces identical state to manual `grex add` sequence; doctor exits non-zero on known-broken fixtures.
 **Effort**: 4-6 days.
 **Depends on**: M6.
 
