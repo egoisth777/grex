@@ -131,10 +131,27 @@ Exit code `0` = conformant. Non-zero = protocol drift (inspect
 
 To confirm the gate actually gates (not just green-by-accident):
 
-1. On a throwaway branch, break one MCP tool schema (e.g. rename a tool in
-   `crates/grex-mcp/src/tools/` or drop a required field from a response).
-2. Rerun the commands above — validator MUST exit non-zero.
-3. Revert the change and confirm exit 0 again.
+1. On a throwaway branch matching the CI trigger glob (`feat/**`), break
+   the MCP surface. Notes on what actually trips validator v0.3.1's stdio
+   suite: renaming a tool or downgrading `protocolVersion` both PASS
+   (validator accepts any initialize and does not assert tool inventory).
+   The reliable break is making `grex serve` exit non-zero before
+   accepting any stdio frames — e.g. replace `serve::run` body with
+   `anyhow::bail!("smoke")`.
+2. Push and wait for CI — the `MCP protocol conformance (2025-06-18)`
+   job MUST exit red.
+3. Delete the throwaway branch locally and on origin; do NOT merge.
+
+#### Proof of red run
+
+| Date | Branch | Head SHA | Run URL | Result |
+|---|---|---|---|---|
+| 2026-04-22 | `feat/m7-3-smoke-regression-proof` (since deleted) | `357b3b77dbbfabe7a5fec1f20f70a906cabfcd38` | <https://github.com/egoisth777/grex/actions/runs/24808713997/job/72608705067> | `mcp-conformance` = **failure** |
+
+Revert: sub-branch deleted from both local and `origin` after capture;
+PR #28's `feat/m7-3-mcp-ci-conformance` HEAD never contained the smoke
+commit. Proof commit (`357b3b7`) is no longer reachable via any branch
+— only this URL preserves the evidence.
 
 ## Bypass procedure
 
