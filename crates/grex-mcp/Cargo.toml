@@ -69,3 +69,11 @@ chrono = { workspace = true }
 
 [lints]
 workspace = true
+
+# docs.rs metadata (M8-3). `all-features` intentionally covers `test-hooks`
+# so doc-only annotations on that feature's public surface render; if the
+# extra test-only symbols become noisy on docs.rs we can narrow to an
+# explicit `features = [...]` list here without touching the crate code.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

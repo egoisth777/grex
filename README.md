@@ -51,12 +51,30 @@ Universal flags on every verb: `--json`, `--plain`, `--dry-run`,
 
 M1 scaffold. See `milestone.md` for the roadmap.
 
-## Docs
+## Documentation
+
+- Hosted mdBook site: <https://egoisth777.github.io/grex/> <!-- TODO: verify at M8-1 tag cut (URL resolves once Pages is enabled on the repo) -->
+- API reference (post-M8-2 publish): <https://docs.rs/grex-core> / <https://docs.rs/grex-mcp>
+- Local build: `bash docs/build.sh` (or `docs\build.ps1` on Windows) — requires
+  `cargo install mdbook --locked`.
+
+### Source-of-truth design docs
 
 - `openspec/feat-grex/spec.md` — active feature spec
-- `.omne/cfg/README.md` — design-doc index
+- `.omne/cfg/README.md` — design-doc index (mdBook site is generated from these)
 - `progress.md` — current state + last endpoint
 - `milestone.md` — phased delivery plan
+
+## Changelog
+
+See [`CHANGELOG.md`](./CHANGELOG.md) — Keep-a-Changelog 1.1.0 format, per-release
+entries categorised by Added / Changed / Deprecated / Removed / Fixed / Security.
+
+## Versioning
+
+See [`docs/semver.md`](./docs/semver.md) — what MAJOR / MINOR / PATCH mean for the
+four public surfaces (manifest schema, CLI surface, MCP tool surface, `pack.yaml`
+schema) plus the deprecation policy.
 
 ## License
 

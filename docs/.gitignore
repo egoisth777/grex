@@ -1,0 +1,9 @@
+# mdBook build output.
+book/
+
+# Copied-in chapters (SSOT is .omne/cfg/*.md; docs/build.{sh,ps1} regenerates
+# these and prepends an AUTO-GENERATED banner at build time). Ignore every
+# src/*.md, then re-include the authored pages (SUMMARY.md, introduction.md).
+src/*.md
+!src/SUMMARY.md
+!src/introduction.md

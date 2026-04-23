@@ -52,6 +52,13 @@ tracing-subscriber = { workspace = true }
 [lints]
 workspace = true
 
+# docs.rs metadata (M8-3). Builds with `all-features` so optional surfaces
+# like `plugin-inventory` render in the canonical API docs, and sets the
+# `--cfg docsrs` flag so any `#[cfg(docsrs)]` doc-only items become visible.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 # M2 placeholder deps retained for M3+ work (error adapters, YAML
 # manifest parsing, async scheduler). Remove from this list as each is
 # actually used. TODO(m3): delete this block.
