@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex-teardown 1  "grex-teardown " 
+.SH NAME
+grex\-teardown \- Tear down a pack tree (reverse of `sync`/`install`)
+.SH SYNOPSIS
+\fBgrex\-teardown\fR [\fB\-\-workspace\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR] 
+.SH DESCRIPTION
+Tear down a pack tree (reverse of `sync`/`install`)
+.SH OPTIONS
+.TP
+\fB\-\-workspace\fR=\fIWORKSPACE\fR
+Workspace directory. Defaults to `<pack_root>/.grex/workspace`
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress per\-action log lines
+.TP
+\fB\-\-no\-validate\fR
+Skip plan\-phase validators. Debug\-only escape hatch
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIPACK_ROOT\fR]
+Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `teardown` prints a usage stub and exits 0

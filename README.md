@@ -56,6 +56,30 @@ Pre-built binaries ship for 5 targets: `x86_64-unknown-linux-gnu`,
 Both installer one-liners resolve to the latest GitHub Release, built by
 `cargo-dist` on every `v*.*.*` tag push (see [`docs/release.md`](./docs/release.md)).
 
+### Man pages
+
+Every release tarball ships a `man/` directory with one Unix man page per CLI
+verb (`grex.1` plus `grex-<verb>.1`). They are auto-generated from the
+`clap::Command` tree via `clap_mangen` and are a passive projection of the
+CLI surface — never edit them by hand.
+
+If you install via `cargo install grex-cli`, the `man/` directory is **not**
+copied into your system man path; install manually after unpacking a release
+tarball or checking out the repo:
+
+```sh
+# Linux / macOS — per-user
+install -Dm644 man/*.1 -t ~/.local/share/man/man1/
+
+# System-wide (requires sudo)
+sudo install -Dm644 man/*.1 -t /usr/local/share/man/man1/
+```
+
+Then `man grex`, `man grex-sync`, etc. Fish / zsh completions are out of
+scope for v1.0.0 and tracked for v1.1. See the mdBook
+["Man pages" chapter](https://egoisth777.github.io/grex/man-pages.html) for
+the auto-generation flow.
+
 ## Quickstart
 
 ```sh

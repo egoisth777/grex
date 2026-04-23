@@ -20,7 +20,27 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ## [Unreleased]
 
-_Nothing landed past the 1.0.0 cut yet._
+### Changed
+
+- **M8-7 — MCP `import` + `doctor` wired through `grex_core`**: the
+  `import` tool now dispatches into
+  `grex_core::import::import_from_repos_json` and the `doctor` tool into
+  `grex_core::doctor::run_doctor`, mirroring the CLI surfaces shipped in
+  M7-4a / M7-4b. Both tools return structured JSON envelopes (full
+  `ImportPlan` / `DoctorReport`). The `parity_import` + `parity_doctor`
+  integration tests (previously `#[ignore]` breadcrumbs) are now live
+  and green, closing the CLI / MCP parity gap for these two verbs.
+
+### Added
+
+- **`--json` output wired for all 11 non-transport verbs** (was 2/12 —
+  only `doctor` and `import` honoured the flag; `init`, `add`, `rm`,
+  `ls`, `status`, `sync`, `update`, `run`, `exec`, `teardown` silently
+  dropped it). Stub verbs now emit
+  `{"status": "unimplemented", "verb": "<name>"}`; `sync` / `teardown`
+  emit a `SyncReport`-shaped document. `serve` is excluded (it owns
+  stdio for JSON-RPC). Schemas are documented in
+  [`docs/src/cli-json.md`](./docs/src/cli-json.md). Resolves M8-6.
 
 ## [Unreleased - 1.0.0]
 

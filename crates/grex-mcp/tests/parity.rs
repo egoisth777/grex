@@ -48,7 +48,7 @@ use grex_mcp::VERBS_EXPOSED;
 #[path = "common/mod.rs"]
 mod common;
 
-use common::assert_parity;
+use common::{assert_parity, assert_parity_doctor_report, assert_parity_import_plan};
 
 /// Compile-time pin: 11 parametric tests below = `VERBS_EXPOSED.len()`.
 /// The const-assert keeps a future contributor who adds an MCP-only tool
@@ -97,26 +97,22 @@ async fn parity_update() {
     assert_parity("update").await;
 }
 
-// feat-m7-4b landed real `grex doctor` CLI wiring: the CLI now runs
-// checks and exits with a severity-derived code, while the MCP
-// `doctor` tool remains an M7-1 `not_implemented` stub. The two
-// surfaces therefore DELIBERATELY diverge until a follow-up sub-scope
-// lifts MCP up to CLI parity. The test is kept in the file as a
-// breadcrumb; flip `#[ignore]` off once MCP doctor ships real impl.
+// feat-m8-release blocker fix (field-level parity): both surfaces must
+// emit the same `DoctorReport` JSON shape. We drive both against a
+// tempdir workspace seeded with a known-drift fixture (manifest-only,
+// no gitignore → gitignore-missing warning) and field-compare.
 #[tokio::test]
-#[ignore = "m7-4b: CLI doctor implemented, MCP doctor still stub — parity gap tracked for follow-up"]
 async fn parity_doctor() {
-    assert_parity("doctor").await;
+    assert_parity_doctor_report().await;
 }
 
+// feat-m8-release blocker fix (field-level parity): both surfaces must
+// emit the same `ImportPlan` JSON shape. We drive both against a
+// tempdir workspace containing a fixture `REPOS.json` with two valid
+// entries and field-compare the resulting plan.
 #[tokio::test]
-#[ignore = "feat-m7-4a shipped a real `grex import` CLI while the MCP `import` \
-            tool is still the M7-1 stub — CLI returns `PackOpError` on missing \
-            `--from-repos-json`, MCP returns `Unimplemented`. Re-enable when \
-            the MCP side is wired through `grex_core::import::import_from_repos_json` \
-            (tracked as a follow-up to M7-4a)."]
 async fn parity_import() {
-    assert_parity("import").await;
+    assert_parity_import_plan().await;
 }
 
 #[tokio::test]

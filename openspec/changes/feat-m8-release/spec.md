@@ -202,6 +202,20 @@ The four M7 residual tech-debt issues are **parked for v1.0.1** and explicitly N
 
 Each is tracked in its own GitHub issue, assigned to `v1.0.1` milestone. Rationale: none is a correctness bug for the v1.0.0 happy path; all are edge-case hardening that can safely wait one PATCH cycle. Shipping v1.0.0 on schedule matters more than absorbing these into the release umbrella.
 
+### M8-7 — MCP `import` / `doctor` wiring (landed pre-v1.0.0)
+
+Originally parked as M7 residual tech-debt: the MCP `import` + `doctor`
+tool handlers shipped in M7-1 as `not_implemented` stubs even after
+M7-4a / M7-4b lit up the corresponding CLI verbs, so agents could not
+reach the real `grex_core` routines. Resolved in M8-7 by dispatching
+both handlers through their CLI-equivalent core entry points
+(`grex_core::import::import_from_repos_json`,
+`grex_core::doctor::run_doctor`) and un-ignoring the `parity_import` +
+`parity_doctor` integration tests. Annotation matrix unchanged
+(`import: read_only=false, destructive=false`; `doctor: read_only=true,
+destructive=false`) — the `.omne/cfg/mcp.md` table remains the spec
+source of truth and its compile-time tests still pass.
+
 Other non-goals:
 
 - **No `grex upgrade` / self-update mechanism** — deferred to v2 per `milestone.md` v2 backlog.

@@ -20,6 +20,8 @@
 # Reference
 
 - [CLI reference](./cli.md)
+- [CLI JSON output](./cli-json.md)
+- [Man pages](./man-pages.md)
 - [Migration from REPOS.json](./migration.md)
 
 # Engineering
