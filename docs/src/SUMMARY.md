@@ -5,6 +5,7 @@
 # Getting started
 
 - [Quickstart](./goals.md)
+- [Pack template](./pack-template.md)
 
 # Concepts
 

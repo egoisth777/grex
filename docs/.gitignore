@@ -7,3 +7,4 @@ book/
 src/*.md
 !src/SUMMARY.md
 !src/introduction.md
+!src/pack-template.md

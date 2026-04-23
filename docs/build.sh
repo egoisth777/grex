@@ -21,12 +21,13 @@ fi
 mkdir -p "${SRC_DIR}"
 
 # Copy every *.md from .omne/cfg/ EXCEPT README.md (the index is replaced by
-# SUMMARY.md in the mdBook world). Authored files under docs/src/
-# (SUMMARY.md, introduction.md) are never overwritten because their names do
-# not exist under .omne/cfg/.
+# SUMMARY.md in the mdBook world) and pack-template.md (authored directly
+# under docs/src/, not sourced from .omne/cfg/). Authored files under
+# docs/src/ (SUMMARY.md, introduction.md, pack-template.md) are never
+# overwritten because their names do not exist under .omne/cfg/.
 for src in "${CFG_DIR}"/*.md; do
     base="$(basename "${src}")"
-    if [ "${base}" = "README.md" ]; then
+    if [ "${base}" = "README.md" ] || [ "${base}" = "pack-template.md" ]; then
         continue
     fi
     dest="${SRC_DIR}/${base}"

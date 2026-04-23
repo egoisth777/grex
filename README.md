@@ -65,6 +65,29 @@ grex sync
 grex doctor
 ```
 
+### Try with the reference pack template
+
+To see a complete, working pack shape end-to-end, install the reference
+template from the in-tree fixture:
+
+```sh
+grex add "file://$(pwd)/examples/pack-template"
+grex sync
+```
+
+The template ships as [`examples/pack-template/`](./examples/pack-template/)
+in-tree. Once grex v1.0.0 ships, a standalone mirror repo will be
+published and you can install via the clone form:
+
+```sh
+# Available at v1.0.0+ release; until then use the file:// form above.
+grex add git@github.com:egoisth777/grex-pack-template.git
+grex sync
+```
+
+See the [mdBook "Pack template" chapter](https://egoisth777.github.io/grex/pack-template.html)
+for the ownership / publishing contract.
+
 ## CLI verbs
 
 | Verb      | Description                                         |

@@ -1,9 +1,9 @@
 # docs/build.ps1 — Windows dev loop for the mdBook site.
 #
-# Mirrors docs/build.sh: copies .omne/cfg/*.md (excluding README.md) into
-# docs/src/, then invokes `mdbook build`. Authored files under docs/src/
-# (SUMMARY.md, introduction.md) are preserved because their names do not
-# collide with any source under .omne/cfg/.
+# Mirrors docs/build.sh: copies .omne/cfg/*.md (excluding README.md and
+# pack-template.md) into docs/src/, then invokes `mdbook build`. Authored
+# files under docs/src/ (SUMMARY.md, introduction.md, pack-template.md) are
+# preserved because their names do not collide with any copied source.
 $ErrorActionPreference = 'Stop'
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -19,7 +19,7 @@ if (-not (Test-Path $cfgDir)) {
 New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
 
 Get-ChildItem -Path $cfgDir -Filter '*.md' -File | ForEach-Object {
-    if ($_.Name -ieq 'README.md') { return }
+    if ($_.Name -ieq 'README.md' -or $_.Name -ieq 'pack-template.md') { return }
     $dest = Join-Path $srcDir $_.Name
     Copy-Item -LiteralPath $_.FullName -Destination $dest -Force
     # Prepend AUTO-GENERATED banner at build time so the copy trail is obvious
