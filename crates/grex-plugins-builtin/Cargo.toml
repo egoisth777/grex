@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Built-in action primitives and pack-type handlers for grex."
+documentation = "https://docs.rs/grex-plugins-builtin"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }

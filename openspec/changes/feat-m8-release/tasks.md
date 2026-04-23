@@ -37,15 +37,15 @@ Generate the release workflow and verify the 6-cell matrix.
 
 Name audit first; everything else gates on its outcome.
 
-- [ ] 2.1 **Name audit**: `curl -sI https://crates.io/api/v1/crates/grex` — if 404, name is free; if 200, inspect the owner / version / last-update. Document finding in the PR description.
-- [ ] 2.2 If `grex` is squatted, choose fallback from the ordered list (`grex-cli`, `grex-rs`, `graphex`) and update all references: `Cargo.toml`, `README.md`, installer script names, docs.rs URLs.
-- [ ] 2.3 Edit root `Cargo.toml` `[workspace.package]` block: add `version = "1.0.0"` alongside the existing `license` / `authors` / `edition` / `repository` from M7-4c.
-- [ ] 2.4 Edit each crate's `Cargo.toml`: replace `version = "0.0.1"` with `version.workspace = true`. Affects: `grex-core`, `grex-mcp`, `grex` (+ any lib split present).
-- [ ] 2.5 Add per-crate metadata: `description`, `keywords` (≤5), `categories`, `readme = "README.md"`, `repository`, `homepage`, `documentation = "https://docs.rs/<crate>"`.
-- [ ] 2.6 Run `cargo publish --dry-run -p grex-core`; fix any warnings until clean.
-- [ ] 2.7 Run `cargo publish --dry-run -p grex-mcp`.
-- [ ] 2.8 Run `cargo publish --dry-run -p grex` (bin crate; may need to strip bin-only deps from packaged source — address if it surfaces).
-- [ ] 2.9 **Real publish** (on a release tag checkout only): `cargo publish -p grex-core` → wait for crates.io index to update (~30s) → `cargo publish -p grex-mcp` → wait → `cargo publish -p grex`.
+- [x] 2.1 **Name audit**: `cargo search grex --limit 5` — `grex` is taken (pemistahl v1.4.6). See [`crates-io-names.md`](./crates-io-names.md) §1.
+- [x] 2.2 Fallback chosen: bin crate publishes as `grex-cli` (library crate names free). Binary `[[bin]] name = "grex"` preserved — `cargo install grex-cli` still installs a binary called `grex`. README install snippet update pending (§8 of crates-io-names.md).
+- [x] 2.3 Root `Cargo.toml` `[workspace.package]` bumped to `version = "1.0.0"`; `keywords` + `categories` added.
+- [x] 2.4 All crate `Cargo.toml` files already use `version.workspace = true`; workspace-internal deps updated to `version = "1.0.0"`.
+- [x] 2.5 Per-crate metadata added (`description` [already], `documentation`, `keywords` ≤5, `categories` ≤5). `repository`, `homepage`, `readme` inherited via `*.workspace = true`.
+- [x] 2.6 `cargo publish --dry-run -p grex-core --allow-dirty` — CLEAN. 85 files / 994KiB / zero warnings.
+- [ ] 2.7 `cargo publish --dry-run -p grex-mcp` — not locally runnable until `grex-core` is on crates.io (structural; see crates-io-names.md §5). Validates at real-publish time.
+- [ ] 2.8 `cargo publish --dry-run -p grex-cli` — same blocker as 2.7. Package renamed from `grex` to `grex-cli`.
+- [ ] 2.9 **Real publish** — user-owned; NOT RUN. Order: `grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli` (30s between each).
 
 **Tests**:
 - [ ] 2.T1 `cargo metadata --format-version 1 | jq '[.packages[] | select(.name | startswith("grex")) | .version] | unique'` returns `["1.0.0"]` (single element).

@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
@@ -16,6 +16,8 @@ repository = "https://github.com/egoisth777/grex"
 homepage = "https://github.com/egoisth777/grex"
 authors = ["egoisth777"]
 readme = "README.md"
+keywords = ["dev-environment", "orchestrator", "pack", "mcp", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 # CLI
@@ -70,9 +72,9 @@ comfy-table = "7"
 owo-colors = "4"
 
 # internal workspace crates
-grex-core = { path = "crates/grex-core", version = "0.0.1" }
-grex-mcp = { path = "crates/grex-mcp", version = "0.0.1" }
-grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "0.0.1" }
+grex-core = { path = "crates/grex-core", version = "1.0.0" }
+grex-mcp = { path = "crates/grex-mcp", version = "1.0.0" }
+grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.0.0" }
 
 # dev-dependencies (shared via workspace)
 assert_cmd = "2"

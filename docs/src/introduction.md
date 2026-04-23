@@ -50,12 +50,17 @@ contract** — they hold independently of any commit SHA on `main`.
 ## Install
 
 ```sh
-cargo install grex
+cargo install grex-cli
 grex init
 grex add https://github.com/egoisth777/grex-inst dev/grex-inst
 grex sync
 grex doctor
 ```
+
+> **Note:** the crate is published as `grex-cli`; the installed binary is
+> `grex`. If pemistahl's unrelated `grex` (regex-from-test-cases tool) is
+> already on your PATH, pass `--force` to `cargo install grex-cli` or
+> rename the existing binary first to avoid a silent overwrite.
 
 Or use one of the pre-built installer scripts attached to each GitHub
 Release (M8-1 cargo-dist wiring).

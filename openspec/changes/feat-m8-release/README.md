@@ -45,7 +45,7 @@ See [`tasks.md`](./tasks.md) for the per-stage checklist. Ordering:
 
 Full list in [`spec.md`](./spec.md) §Acceptance. Headline items:
 
-- `cargo install grex` works fresh on Win/Linux/macOS.
+- `cargo install grex-cli` works fresh on Win/Linux/macOS (installs binary `grex`).
 - 6-cell cargo-dist matrix produces attached artefacts on `v1.0.0` tag push.
 - All 4 workspace crates report `1.0.0`; all publish to crates.io (or documented fallback).
 - mdBook site live on GitHub Pages; `docs.rs/grex-core` + `docs.rs/grex-mcp` render cleanly.

@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Core library for grex: manifest, lockfile, scheduler, pack model, plugin traits."
+documentation = "https://docs.rs/grex-core"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }

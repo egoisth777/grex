@@ -1541,8 +1541,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "grex"
-version = "0.0.1"
+name = "grex-cli"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1566,7 +1566,7 @@ dependencies = [
 
 [[package]]
 name = "grex-core"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "grex-mcp"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1612,7 +1612,7 @@ dependencies = [
 
 [[package]]
 name = "grex-plugins-builtin"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "grex-core",

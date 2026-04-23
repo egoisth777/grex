@@ -158,7 +158,7 @@ No Rust source files are touched. No behaviour changes.
 
 - [ ] `cargo publish --dry-run -p grex-core` passes.
 - [ ] `cargo publish --dry-run -p grex-mcp` passes (after grex-core dry-run).
-- [ ] `cargo publish --dry-run -p grex` passes.
+- [ ] `cargo publish --dry-run -p grex-cli` passes.
 - [ ] `cargo metadata --format-version 1 | jq '.packages[].version'` reports `1.0.0` for all 4 workspace crates.
 - [ ] Name audit documented in PR description (either "grex reserved" or "fallback <name> chosen and why").
 
@@ -219,7 +219,7 @@ Other non-goals:
 
 ## Acceptance
 
-1. `cargo install grex` works fresh on Windows, Linux, and macOS (all 3 OS covered by `milestone.md` §M8).
+1. `cargo install grex-cli` works fresh on Windows, Linux, and macOS (all 3 OS covered by `milestone.md` §M8) — installs binary `grex`.
 2. Six-cell cargo-dist matrix (3 OS × 2 arches) produces a GitHub Release with attached artefacts on `v1.0.0` tag push.
 3. All 4 workspace crates report `1.0.0` via `cargo metadata`; all three lib/bin crates publish to crates.io (or documented fallback name) successfully.
 4. mdBook site is live at the configured GitHub Pages URL; `docs.rs/grex-core` + `docs.rs/grex-mcp` render API docs without feature-flag warnings.
