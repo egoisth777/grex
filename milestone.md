@@ -105,7 +105,7 @@ Agent-native surface + legacy ingest + integrity.
 - Wired to stdio in `grex serve` (verb-scoped `--manifest`, `--workspace`, `--parallel`; default `RUST_LOG=grex=info,rmcp=warn`).
 - `grex import --from-repos-json <path>` reads legacy flat `{url, path}[]` → emits `add` events.
 - `grex doctor`: manifest schema check, gitignore sync check, on-disk drift (paths in REPOS.json not on disk + vice versa), lint (pack.yaml schema validate).
-- License decision: `MIT OR Apache-2.0` dual — locked here.
+- License decision: `MIT OR Apache-2.0` dual — locked here. **[M7-4c: SHIPPED on `feat/m7-4c-license`]** workspace migrated to `MIT OR Apache-2.0` across all 4 crates via `license.workspace = true`; `LICENSE-MIT` + verbatim `LICENSE-APACHE` + dual-pointer `LICENSE` landed at repo root; README `## License` rewritten with standard Rust contribution paragraph; `crates/grex/tests/license_metadata.rs` asserts parity via `cargo metadata`.
 - See `openspec/changes/feat-m7-1-mcp-server/spec.md` `## Known limitations` + `## rmcp 1.5.0 wiring notes` for known gaps and rmcp 1.5 surface quirks.
 
 **Acceptance**: MCP `initialize` handshake works; 11 tools discoverable via `tools/list`; `notifications/cancelled` aborts in-flight `sync` within budget; legacy REPOS.json import produces identical state to manual `grex add` sequence; doctor exits non-zero on known-broken fixtures.

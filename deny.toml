@@ -16,7 +16,9 @@ ignore = [
 
 [licenses]
 version = 2
-# Permissive + weak-copyleft licenses acceptable for MIT-licensed project
+# Permissive + weak-copyleft licenses acceptable for MIT OR Apache-2.0 project (M7-4c).
+# Both MIT and Apache-2.0 are in this allowlist so the workspace's own crates
+# satisfy their own gate.
 allow = [
     "MIT",
     "MIT-0",
@@ -35,7 +37,7 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "allow"  # relax for M1; tighten later
+multiple-versions = "allow"  # relax for M1; tighten once deps stabilize — see https://github.com/egoisth777/grex/issues/32
 wildcards = "deny"
 
 [sources]
