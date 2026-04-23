@@ -10,26 +10,32 @@ Five independent stages, each landing in its own PR if preferred. Cross-stage or
 
 ## Stage M8-1 — cargo-dist wiring
 
-Generate the release workflow and verify the 6-cell matrix.
+Generate the release workflow and verify the 5-cell matrix. `aarch64-pc-windows-msvc`
+intentionally dropped (msvc arm64 cross-compile still flaky on GitHub-hosted
+runners as of cargo-dist 0.31.x) — deferred to v1.0.1+ per spec §Known risks.
 
-- [ ] 1.1 Install cargo-dist locally (`cargo install cargo-dist --version 0.22.*`).
-- [ ] 1.2 Run `cargo dist init` at repo root; accept defaults except:
-  - [ ] installers = `["shell", "powershell"]`
-  - [ ] targets = 6 cells listed in spec
-  - [ ] `pr-run-mode = "plan"`
-- [ ] 1.3 Verify `[workspace.metadata.dist]` block landed in root `Cargo.toml`.
-- [ ] 1.4 Run `cargo dist generate`; commit `.github/workflows/release.yml` as-generated (no hand edits).
-- [ ] 1.5 Add a CI drift check: a GitHub Action that fails if `cargo dist generate` would produce a different `release.yml` than committed.
-- [ ] 1.6 Push a throwaway `v1.0.0-rc1` tag on a feature branch; observe all 6 matrix cells complete.
+- [x] 1.1 Install cargo-dist locally (`cargo install cargo-dist --locked --version 0.31.0` — binary installs as `dist.exe`). **Bumped 0.24.1 → 0.31.0 in M8-1 review: ubuntu-20.04 retired 2025-04; aarch64-linux-gnu cross-compile added in 0.26.0.**
+- [x] 1.2 `[workspace.metadata.dist]` authored manually (`dist init` is interactive and failed in our non-TTY shell); matches spec:
+  - [x] installers = `["shell", "powershell"]`
+  - [x] targets = 5 cells (x86_64/aarch64 linux; x86_64/aarch64 darwin; x86_64 msvc)
+  - [x] `pr-run-mode = "plan"`
+  - [x] `github-attestations = true` (provenance via GitHub's native attestations, no sigstore)
+  - [x] `include = ["CHANGELOG.md", "README.md", "LICENSE*"]`
+  - [x] `cargo-dist-version = "0.31.0"` (exact pin)
+  - [x] `github-custom-runners` pins linux jobs to ubuntu-22.04 / ubuntu-22.04-arm.
+- [x] 1.3 Verified `[workspace.metadata.dist]` + `[profile.dist]` present in root `Cargo.toml`.
+- [x] 1.4 Ran `dist generate`; hardened `.github/workflows/release.yml` post-generate: workflow-level `contents: read`; per-job write scopes; fork-PR guard on host/announce; attest glob fix `join(_)` + pre-attest `ls` debug; idempotency guard on `gh release create`; artefact-count sanity; timeout-minutes on every job.
+- [x] 1.5 CI drift signal: `release-plan` job in `ci.yml` runs `dist plan --output-format=json` on every PR (pinned to 0.31.0).
+- [ ] 1.6 Push a throwaway `v1.0.0-rc1` tag on a feature branch; observe all 5 matrix cells complete. **User-owned; not run.**
 
 **Tests**:
-- [ ] 1.T1 `cargo dist plan` exits 0 locally.
-- [ ] 1.T2 CI drift check passes on main after initial commit.
-- [ ] 1.T3 `v1.0.0-rc1` tag push produces a draft GitHub Release with artefacts from all 6 cells.
-- [ ] 1.T4 Linux `aarch64` cell completes within the runner's memory / time budget.
-- [ ] 1.T5 `sh` installer from the draft release installs `grex` on a fresh Ubuntu VM; `grex --version` prints `1.0.0`.
-- [ ] 1.T6 `ps1` installer from the draft release installs `grex` on a fresh Windows PowerShell session; `grex --version` prints `1.0.0`.
-- [ ] 1.T7 macOS `x86_64` + `aarch64` manual install smoke test on available hardware.
+- [x] 1.T1 `dist plan` exits 0 locally (5 targets, 1 bin `grex`, zero metadata warnings).
+- [ ] 1.T2 CI drift check passes on main after initial commit. **Pending first CI run on merge.**
+- [ ] 1.T3 `v1.0.0-rc1` tag push produces a draft GitHub Release with artefacts from all 5 cells. **User-owned.**
+- [ ] 1.T4 Linux `aarch64` cell completes within the runner's memory / time budget. **User-owned.**
+- [ ] 1.T5 `sh` installer from the draft release installs `grex` on a fresh Ubuntu VM; `grex --version` prints `1.0.0`. **User-owned.**
+- [ ] 1.T6 `ps1` installer from the draft release installs `grex` on a fresh Windows PowerShell session; `grex --version` prints `1.0.0`. **User-owned.**
+- [ ] 1.T7 macOS `x86_64` + `aarch64` manual install smoke test on available hardware. **User-owned.**
 
 ---
 

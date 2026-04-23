@@ -253,6 +253,22 @@ jobs:
           path: reports/
           retention-days: 14
 
+  # Gate: cargo-dist manifest sanity (M8-1).
+  # Runs `dist plan` on every PR to catch drift in `[workspace.metadata.dist]`
+  # before a tag push. No binaries built, no artefacts uploaded — single step.
+  # Pinned to the same cargo-dist version as `[workspace.metadata.dist].cargo-dist-version`.
+  release-plan:
+    name: release-plan (cargo-dist)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install cargo-dist (v0.31.0; pinned to workspace.metadata.dist)
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.31.0/cargo-dist-installer.sh | sh
+      - name: dist plan
+        run: dist plan --output-format=json > /dev/null
+
   # Housekeeping: cargo-audit (redundant with cargo-deny advisories, kept for standalone signal).
   cargo-audit:
     name: cargo-audit

@@ -17,20 +17,53 @@ outside `.grex/` is opaque payload; everything inside `.grex/` is the pack's
 declared contract (manifest, actions, pack-type metadata). Every pack is a
 meta-pack by construction — zero-children just means leaf.
 
-## Quickstart
+## Install
+
+Pick one of three paths. All three land the same `grex` binary (v1.0.0+).
+
+### 1. `cargo install` (crates.io)
 
 ```sh
 cargo install grex-cli
+```
+
+The crate is published as `grex-cli`; the installed binary is `grex`. If
+pemistahl's unrelated `grex` (regex-from-test-cases tool) is already on
+your PATH, pass `--force` to `cargo install grex-cli` or rename the
+existing binary first to avoid a silent overwrite.
+
+### 2. Shell installer (Linux / macOS)
+
+```sh
+curl -LsSf https://github.com/egoisth777/grex/releases/latest/download/grex-cli-installer.sh | sh
+```
+
+### 3. PowerShell installer (Windows)
+
+```powershell
+powershell -c "irm https://github.com/egoisth777/grex/releases/latest/download/grex-cli-installer.ps1 | iex"
+```
+
+Both installer one-liners are a **convenience path — they do NOT verify
+attestations**. For a verified install (SLSA build provenance via
+`gh attestation verify`), see
+[`docs/release.md` §Verified install](./docs/release.md#verified-install-recommended-for-security-sensitive-environments).
+
+Pre-built binaries ship for 5 targets: `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc`. Anything else falls back to `cargo install grex-cli`.
+
+Both installer one-liners resolve to the latest GitHub Release, built by
+`cargo-dist` on every `v*.*.*` tag push (see [`docs/release.md`](./docs/release.md)).
+
+## Quickstart
+
+```sh
 grex init
 grex add https://github.com/egoisth777/grex-inst dev/grex-inst
 grex sync
 grex doctor
 ```
-
-> **Note:** the crate is published as `grex-cli`; the installed binary is
-> `grex`. If pemistahl's unrelated `grex` (regex-from-test-cases tool) is
-> already on your PATH, pass `--force` to `cargo install grex-cli` or
-> rename the existing binary first to avoid a silent overwrite.
 
 ## CLI verbs
 
