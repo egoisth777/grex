@@ -1,7 +1,25 @@
 # progress — grex
 
 ## Where we are
-M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4b (doctor) + M7-4c (dual license) shipped on their branches; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) rebased on post-M7-4b `main` and pushed for PR review.
+**M7 FULLY SHIPPED 2026-04-23.** All six M7 PRs squash-merged to `main`:
+- M7-1 (MCP server) — PR #25 → `0b80a63`
+- M7-2 (test harness L2-L5) — PR #26 → `e98af8c`
+- M7-3 (mcp-ci-conformance) — PR #28 → `ce01eb5`
+- M7-4a (import) — PR #31 → `aa8c7d1`
+- M7-4b (doctor) — PR #29 → `5ce880e`
+- M7-4c (dual license) — PR #30 → `262770a`
+
+Post-merge follow-ups tracked in issues #32, #33, #34, #35 (e.g. MCP `tools/import` wire-through to un-ignore `parity_import`, MCP-side doctor wiring to un-ignore `parity_doctor`, branch-protection required check on `mcp-conformance`, and per-verb `--json` completion).
+
+Next active milestone: **M8 (release v1.0.0)** — `cargo-dist` cross-platform binaries, crates.io publish, docs.rs + mdBook, reference pack template. Depends only on M7 (✓).
+
+## Endpoint (2026-04-23, main, post-M7 closure)
+- Branch: `main` at `aa8c7d1`; no in-flight feature branches.
+- Worktrees pruned (`.claude/worktrees/{m7-3, rebase-m7-4a, agent-a5cfd746, agent-ac2157de, agent-afed5e7f}` removed); merged feature branches (`feat/m7-3-mcp-ci-conformance`, `feat/m7-4a-import`, `feat/m7-4b-doctor`, `feat/m7-4c-license`) + `worktree-agent-*` branches deleted.
+- OpenSpec: `openspec/changes/feat-m7-3-mcp-ci-conformance/` and `openspec/changes/feat-m7-4-import-doctor-license/` archived to `openspec/archive/`.
+- `milestone.md`: M7 block marked ✓ COMPLETE 2026-04-23 with commit SHAs + PR numbers.
+- CLAUDE.md root: active feature pointer flipped from stale `feat-grex M4` to `feat-grex M8` post-M7.
+- **Next action**: open `feat-m8` branch off `main`; spec drafting at `openspec/changes/feat-m8-release/`.
 
 ## Sub-endpoint (2026-04-22, feat/m7-4a-import — M7-4a COMPLETE, awaiting PR review)
 - Branch: `feat/m7-4a-import` rebased onto post-M7-4b `main`; ahead of `main` by 2 commits (feat + polish/test-fixups).
