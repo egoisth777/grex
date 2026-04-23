@@ -80,10 +80,13 @@ proptest! {
 /// `serve` is excluded as of feat-m7-1 stage 8 — it is now a real
 /// long-running stdio MCP loop that needs a JSON-RPC handshake to exit
 /// cleanly. Coverage in `crates/grex/tests/serve_smoke.rs`.
+/// `doctor` is excluded as of feat-m7-4b — it now executes real checks
+/// and exits with a severity code derived from the workspace it runs in
+/// (unrelated to arg parsing). Coverage in `crates/grex/tests/doctor_cli.rs`.
 #[test]
 fn each_verb_accepts_required_args() {
     for verb in VERBS {
-        if *verb == "serve" {
+        if *verb == "serve" || *verb == "doctor" {
             continue;
         }
         let mut cmd = grex();

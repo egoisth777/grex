@@ -74,10 +74,12 @@ fn init_stub() {
     grex().arg("init").assert().success().stdout(predicate::str::contains("unimplemented"));
 }
 
-/// `ls`, `status`, `doctor` — no args, all succeed.
+/// `ls`, `status` — no args, all succeed with the M1 "unimplemented"
+/// stub marker. `doctor` is excluded as of feat-m7-4b; its dedicated
+/// coverage lives in `crates/grex/tests/doctor_cli.rs`.
 #[test]
 fn zero_arg_verbs_succeed() {
-    for verb in ["ls", "status", "doctor"] {
+    for verb in ["ls", "status"] {
         grex().arg(verb).assert().success().stdout(predicate::str::contains("unimplemented"));
     }
 }
