@@ -20,4 +20,4 @@ On every new session, read in order:
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: `feat-grex` M4 (plugin system) — M3 Stage B fully shipped to `main` (2026-04-20).
+Active feature: `feat-grex` M8 (release v1.0.0) — M7 fully shipped to `main` (2026-04-23) via PRs #25 #26 #28 #29 #30 #31.

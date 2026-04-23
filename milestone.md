@@ -95,8 +95,19 @@ Correctness-by-construction on the scheduler.
 **Effort**: 4-6 days (Lean4 theorem is the long pole).
 **Depends on**: M5.
 
-## M7 — MCP-native server (rmcp 1.5) + import + doctor
+## M7 — MCP-native server (rmcp 1.5) + import + doctor  [✓ COMPLETE 2026-04-23]
 Agent-native surface + legacy ingest + integrity.
+
+**Status**: All sub-milestones shipped and squash-merged to `main`:
+- M7-1 (MCP server) — PR #25 → `0b80a63`.
+- M7-2 (test harness L2-L5) — PR #26 → `e98af8c`.
+- M7-3 (mcp-ci-conformance) — PR #28 → `ce01eb5`.
+- M7-4a (`grex import --from-repos-json`) — PR #31 → `aa8c7d1`.
+- M7-4b (`grex doctor`) — PR #29 → `5ce880e`.
+- M7-4c (MIT OR Apache-2.0 dual license) — PR #30 → `262770a`.
+
+Follow-up issues tracked post-merge: #32, #33, #34, #35.
+
 
 - `crates/grex-mcp` exposes a Path-B MCP server via the `rmcp 1.5.0` framework, NOT a hand-rolled `grex.<verb>` JSON-RPC surface.
 - 11 tools registered via `#[tool]` macro on `impl GrexMcpServer`: `init`, `add`, `rm`, `ls`, `status`, `sync`, `update`, `doctor`, `import`, `run`, `exec`. Excludes `serve` (the transport itself) and `teardown` (plugin hook).
@@ -107,7 +118,10 @@ Agent-native surface + legacy ingest + integrity.
 - `grex doctor` — **SHIPPED (M7-4b, 2026-04-22)**: three default checks (manifest schema, gitignore sync, on-disk drift) + opt-in `config-lint` under `--lint-config` (`openspec/config.yaml` + `.omne/cfg/*.md`). `--fix` heals gitignore drift only (unit-tested to prove it never writes to the manifest on schema errors nor re-creates missing pack dirs). Exit codes 0/1/2 roll up via worst severity; property test asserts the invariant.
 - License decision: `MIT OR Apache-2.0` dual — locked here. **[M7-4c: SHIPPED on `feat/m7-4c-license`]** workspace migrated to `MIT OR Apache-2.0` across all 4 crates via `license.workspace = true`; `LICENSE-MIT` + verbatim `LICENSE-APACHE` + dual-pointer `LICENSE` landed at repo root; README `## License` rewritten with standard Rust contribution paragraph; `crates/grex/tests/license_metadata.rs` asserts parity via `cargo metadata`.
 - See `openspec/changes/feat-m7-1-mcp-server/spec.md` `## Known limitations` + `## rmcp 1.5.0 wiring notes` for known gaps and rmcp 1.5 surface quirks.
-- **M7-3 (mcp-ci-conformance) — IN PROGRESS on `feat/m7-3-mcp-ci-conformance`**: adds `mcp-conformance` CI job running `mcp-validator` (Janix-ai, tag `v0.3.1`, SHA `d766d3e…`) against `grex serve` at protocol `2025-06-18`. Self-contained, parallel to the `build` matrix, pinned via git+SHA (PyPI 0.3.1 is unpublished). See `docs/ci/mcp-conformance.md` for pin rationale + bypass procedure. Spec drift corrected: server command is POSITIONAL (not `--server-command`) per upstream `ref_gh_actions/stdio-validation.yml@v0.3.1`.
+- **M7-3 (mcp-ci-conformance) — SHIPPED (PR #28 → `ce01eb5`)**: `mcp-conformance` CI job running `mcp-validator` (Janix-ai, tag `v0.3.1`, SHA `d766d3e…`) against `grex serve` at protocol `2025-06-18`. Self-contained, parallel to the `build` matrix, pinned via git+SHA (PyPI 0.3.1 is unpublished). See `docs/ci/mcp-conformance.md` for pin rationale + bypass procedure. Spec drift corrected: server command is POSITIONAL (not `--server-command`) per upstream `ref_gh_actions/stdio-validation.yml@v0.3.1`.
+- **M7-4a (import) — SHIPPED (PR #31 → `aa8c7d1`)**: `grex import --from-repos-json` + `ImportPlan`/`ImportOpts`, dry-run, idempotent re-runs, JSON + human table output, 27 unit + 10 integration cases.
+- **M7-4b (doctor) — SHIPPED (PR #29 → `5ce880e`)**: 3 default checks + `--lint-config` opt-in + `--fix` safety contract proven by tests; exit-code roll-up invariant covered by property test.
+- **M7-4c (dual license) — SHIPPED (PR #30 → `262770a`)**: workspace now `MIT OR Apache-2.0` via `license.workspace = true`; LICENSE-MIT + verbatim LICENSE-APACHE + dual-pointer LICENSE at repo root.
 
 **Acceptance**: MCP `initialize` handshake works; 11 tools discoverable via `tools/list`; `notifications/cancelled` aborts in-flight `sync` within budget; legacy REPOS.json import produces identical state to manual `grex add` sequence; doctor exits non-zero on known-broken fixtures.
 **Effort**: 4-6 days.
