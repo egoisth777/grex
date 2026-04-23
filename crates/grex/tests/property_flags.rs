@@ -83,10 +83,14 @@ proptest! {
 /// `doctor` is excluded as of feat-m7-4b — it now executes real checks
 /// and exits with a severity code derived from the workspace it runs in
 /// (unrelated to arg parsing). Coverage in `crates/grex/tests/doctor_cli.rs`.
+///
+/// `import` is excluded as of feat-m7-4a — it hard-requires a readable
+/// `--from-repos-json <path>` and a writable manifest; covered end-to-end
+/// in `crates/grex/tests/import_cli.rs`.
 #[test]
 fn each_verb_accepts_required_args() {
     for verb in VERBS {
-        if *verb == "serve" || *verb == "doctor" {
+        if *verb == "serve" || *verb == "doctor" || *verb == "import" {
             continue;
         }
         let mut cmd = grex();

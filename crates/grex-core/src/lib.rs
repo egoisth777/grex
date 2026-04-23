@@ -9,6 +9,7 @@ pub mod env;
 pub mod execute;
 pub mod fs;
 pub mod git;
+pub mod import;
 pub mod lockfile;
 pub mod log;
 pub mod manifest;

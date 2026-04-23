@@ -211,6 +211,15 @@ pub struct ImportArgs {
     /// Path to a legacy REPOS.json file.
     #[arg(long)]
     pub from_repos_json: Option<std::path::PathBuf>,
+
+    /// Target manifest (`grex.jsonl`). Defaults to `<cwd>/grex.jsonl`.
+    #[arg(long, value_name = "PATH")]
+    pub manifest: Option<std::path::PathBuf>,
+
+    /// Verb-scoped dry-run. Alias for the global `--dry-run`; either
+    /// flag short-circuits before any manifest write.
+    #[arg(long = "dry-run", short = 'n')]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]
