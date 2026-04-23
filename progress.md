@@ -1,7 +1,23 @@
 # progress — grex
 
 ## Where we are
-M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4c (dual license) shipped on `feat/m7-4c-license`; M7-4a (import) + M7-4b (doctor) in flight on sibling branches.
+M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4c (dual license) shipped on `feat/m7-4c-license`; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) + M7-4b (doctor) in flight on sibling branches.
+
+## Sub-endpoint (2026-04-22, feat/m7-3-mcp-ci-conformance — CI conformance job landed)
+- Branch: `feat/m7-3-mcp-ci-conformance` (forked from `origin/main` `d8dad5f`, rebased onto post-M7-4c `main`).
+- **M7-3 (mcp-ci-conformance) — IN PROGRESS**:
+  - Append-only change to `.github/workflows/ci.yml`: new `mcp-conformance` job running `mcp-validator` (Janix-ai, tag `v0.3.1`, SHA `d766d3ee94076b13d0b73253e5221bbc76b9edb2`) against a release build of `grex serve` at protocol `2025-06-18`.
+  - Self-contained job (own `cargo build --release -p grex`; no `needs:` coupling to the debug `build` matrix). Distinct `Swatinem/rust-cache@v2` key `release` so release target does not thrash the debug cache.
+  - Artefact upload `mcp-conformance-reports` (14d retention), always.
+  - New doc: `docs/ci/mcp-conformance.md` (pin rationale, bypass procedure, local repro, deliberate-regression smoke).
+  - Stage-1 probe SKIPPED locally on Windows (validator Python module + release-build bring-up infeasible outside Linux CI); Option A per user directive — CI is the oracle, iterate via `gh pr checks --watch` on failure. Documented tradeoff in PR body.
+- **Spec drift corrected (observed vs. draft proposal)**:
+  1. **PyPI publication missing**: `mcp-validator==0.3.1` is NOT on PyPI (only `0.1.1`). Canonical install is `pip install 'git+https://github.com/Janix-ai/mcp-validator@<SHA>'`. Proposal listed PyPI as primary + git as fallback; reality is git-only.
+  2. **CLI entry point**: the proposal's `mcp-validator --server-command "<cmd>" --protocol-version <ver>` was unverified. Upstream `ref_gh_actions/stdio-validation.yml@v0.3.1` confirms the real invocation is `python -m mcp_testing.stdio.cli "<server-cmd>" --protocol-version <ver> --output-dir <dir> --timeout <secs>` — server command is POSITIONAL, not a flag.
+  3. `docs/ci/mcp-conformance.md` + `ci.yml` job comments document both deltas so future bumps start from reality, not draft.
+- **Carry-forward**: maintainer action — add `MCP protocol conformance (2025-06-18)` as a required status check on `main` via branch-protection UI once this PR lands (Acceptance #3). Procedure documented in `docs/ci/mcp-conformance.md` §Bypass.
+- **Active branch**: `feat/m7-3-mcp-ci-conformance`.
+- **Next action**: push branch, open PR against `main`, watch CI. If validator exits non-zero on baseline, treat as real conformance bug (L6 gate working) or adjust invocation.
 
 ## Last endpoint (2026-04-22, feat/m7-4c-license — M7-4c shipped, PR open)
 - Branch: `feat/m7-4c-license` (from `origin/main` head `cae9734`).
@@ -21,7 +37,6 @@ M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator C
   - `cargo metadata --format-version=1 --no-deps` shows `"MIT OR Apache-2.0"` for all 4 workspace crates.
 - **Scope discipline**: zero edits under `crates/*/src/` — license sub-scope is metadata-only by design. Sibling M7-4a (import) + M7-4b (doctor) branches are untouched.
 - **Next action**: push `feat/m7-4c-license`, open PR `feat(m7-4c): adopt MIT OR Apache-2.0 dual license` vs main, watch checks green.
-
 
 
 ## Last endpoint (2026-04-22, main, post-M7-2 squash-merge)
