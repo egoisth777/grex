@@ -18,7 +18,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 clap_mangen = "=0.2.26"
 anyhow = { workspace = true }
-grex-cli = { path = "../grex" }
+grex-cli = { path = "../grex", version = "1.0.0" }
 
 [lints]
 workspace = true

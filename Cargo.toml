@@ -133,3 +133,15 @@ include = ["CHANGELOG.md", "README.md", "LICENSE*", "man/"]
 # within GitHub-hosted supported images). macOS/Windows left to cargo-dist
 # defaults.
 github-custom-runners = { "global" = "ubuntu-22.04", "x86_64-unknown-linux-gnu" = "ubuntu-22.04", "aarch64-unknown-linux-gnu" = "ubuntu-22.04-arm" }
+# M8-1 CI hardening: .github/workflows/release.yml carries hand-written
+# customisations that cargo-dist's generator does not round-trip:
+#   - workflow-level `permissions: contents: read` (defence-in-depth)
+#   - per-job `timeout-minutes` caps
+#   - fork-PR guards on `host` / `announce`
+#   - archive-existence + tag-idempotency checks in the `host` step
+#   - attest-glob fix using `join(matrix.targets, '_')` instead of ', '
+#   - a debug "list distrib artefacts" step
+# `allow-dirty = ["ci"]` tells `dist plan` / `dist init` to accept the
+# divergence instead of demanding a regenerate. Revisit when cargo-dist
+# exposes first-class knobs for the patterns above.
+allow-dirty = ["ci"]

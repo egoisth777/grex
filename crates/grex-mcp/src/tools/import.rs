@@ -19,7 +19,7 @@
 //!
 //! # Return value
 //!
-//! Returns a structured [`ImportPlan`](grex_core::import::ImportPlan)
+//! Returns a structured [`ImportPlan`]
 //! as JSON content in a successful [`CallToolResult`]. Missing
 //! `from_repos_json`, a workspace-escape attempt, or a core-level
 //! [`ImportError`](grex_core::import::ImportError) all surface as
