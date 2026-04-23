@@ -1,7 +1,18 @@
 # progress — grex
 
 ## Where we are
-M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4b (doctor) + M7-4c (dual license) shipped on their branches; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) in flight on its sibling branch.
+M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4b (doctor) + M7-4c (dual license) shipped on their branches; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) rebased on post-M7-4b `main` and pushed for PR review.
+
+## Sub-endpoint (2026-04-22, feat/m7-4a-import — M7-4a COMPLETE, awaiting PR review)
+- Branch: `feat/m7-4a-import` rebased onto post-M7-4b `main`; ahead of `main` by 2 commits (feat + polish/test-fixups).
+- **M7-4a (`grex import --from-repos-json`) — COMPLETE**:
+  - New `crates/grex-core/src/import.rs` module: `import_from_repos_json`, `ImportPlan`/`ImportEntry`/`ImportSkip`/`ImportFailure`, `ImportOpts`, `ImportedKind`, `SkipReason`, `ImportError` + 27 `#[cfg(test)]` unit cases (classify heuristic × 9, parse edge-cases × 7, plan/dispatch/idempotence × 9, empty-array + property-style roundtrip × 2).
+  - Flat `REPOS.json` → classify (`https`/`git@`/`.git` → `scripted`; empty/path → `declarative`) → plan → skip-on-collision (existing manifest row or dup-in-input) → append `Event::Add` per imported row. `--dry-run` short-circuits before any manifest write; idempotent re-runs are all-skipped; post-`Rm` re-import is non-colliding.
+  - CLI wiring: `crates/grex/src/cli/verbs/import.rs` renders the plan as a human table (with `DRY-RUN:` prefix when applicable) or structured JSON under `--json`; `ImportArgs { --from-repos-json, --manifest, --dry-run/-n }` on `crates/grex/src/cli/args.rs`. 10 integration cases in `crates/grex/tests/import_cli.rs`.
+  - Parity-test carry-forward: `crates/grex-mcp/tests/parity.rs::parity_import` is `#[ignore]`d with a FIXME block — MCP `tools/import` is still the M7-1 stub, so CLI-now-real + MCP-still-stub diverge on ParitySignal (`PackOpError` vs `Unimplemented`). Re-enable when MCP handler is wired through `grex_core::import::import_from_repos_json` (follow-up to M7-4a).
+  - Rebase fix-up on top of M7-4b: `STUB_VERBS` and `each_verb_accepts_required_args` exclude union (`serve`/`doctor`/`import`) now that both `import` and `doctor` are real verbs.
+  - **Workspace state (pre-rebase)**: 620 passed, 0 failed, 1 ignored across 56 test binaries; `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --check` clean.
+- **Next action**: push rebased branch, watch CI green on PR #31; follow up with MCP-side import wiring to flip the parity test back on.
 
 ## Sub-endpoint (2026-04-22, feat/m7-3-mcp-ci-conformance — CI conformance job landed)
 - Branch: `feat/m7-3-mcp-ci-conformance` (forked from `origin/main` `d8dad5f`, rebased onto post-M7-4c `main`).
