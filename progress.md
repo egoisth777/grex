@@ -1,7 +1,7 @@
 # progress — grex
 
 ## Where we are
-M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4c (dual license) shipped on `feat/m7-4c-license`; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) + M7-4b (doctor) in flight on sibling branches.
+M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator CI conformance) + M7-4 (import + doctor + license-dual) split across parallel sub-branches. M7-4b (doctor) + M7-4c (dual license) shipped on their branches; M7-3 in flight on `feat/m7-3-mcp-ci-conformance`; M7-4a (import) in flight on its sibling branch.
 
 ## Sub-endpoint (2026-04-22, feat/m7-3-mcp-ci-conformance — CI conformance job landed)
 - Branch: `feat/m7-3-mcp-ci-conformance` (forked from `origin/main` `d8dad5f`, rebased onto post-M7-4c `main`).
@@ -38,8 +38,31 @@ M7-1 + M7-2 squash-merged to main (`0b80a63` + `e98af8c`); M7-3 (mcp-validator C
 - **Scope discipline**: zero edits under `crates/*/src/` — license sub-scope is metadata-only by design. Sibling M7-4a (import) + M7-4b (doctor) branches are untouched.
 - **Next action**: push `feat/m7-4c-license`, open PR `feat(m7-4c): adopt MIT OR Apache-2.0 dual license` vs main, watch checks green.
 
+## Sibling endpoint (2026-04-22, feat/m7-4b-doctor, Stage 3 docs complete)
+- Branch: `feat/m7-4b-doctor` (forked off `main @ d8dad5f`).
+- **grex doctor — IMPLEMENTED**: three default checks (manifest-schema,
+  gitignore-sync, on-disk-drift) + opt-in `config-lint` under
+  `--lint-config`. Exit code rolls up via worst severity (0 OK / 1
+  WARN / 2 ERR).
+- **`--fix` safety contract — proven by tests**: only heals
+  gitignore-drift via M5-2 writer. Two dedicated unit tests
+  (`run_doctor_fix_does_not_touch_manifest_on_schema_error`,
+  `run_doctor_fix_does_not_touch_disk_on_drift_error`) plus two CLI
+  tests assert byte-unchanged manifest + untouched filesystem on
+  non-gitignore errors.
+- **Tests**: 614 passed, 1 ignored (parity_doctor — MCP doctor still
+  M7-1 not_implemented stub while CLI has real impl; breadcrumb left
+  on the test). Property test asserts exit-code roll-up invariant over
+  random finding sets.
+- **Harness adjustments**: STUB_VERBS and zero-arg stub assertions
+  drop doctor; `parity_doctor` is `#[ignore]`'d pending MCP-side impl.
+- **Clippy**: `--workspace --all-targets -D warnings` clean; every fn
+  ≤ 50 LOC per workspace gates (refactored `check_on_disk_drift` and
+  `check_config_lint` into helpers).
+- **Next action**: open PR `feat/m7-4b-doctor` → `main`; after merge
+  resume with M7-4a (import) or M7-4c (license-dual).
 
-## Last endpoint (2026-04-22, main, post-M7-2 squash-merge)
+## Earlier endpoint (2026-04-22, main, post-M7-2 squash-merge)
 - Branch: `main` (HEAD `e98af8c`); no active feature branch.
 - **M7-1 (mcp-server) — SHIPPED & MERGED**: PR #25 squash-merged into `main` as `0b80a63`.
 - **M7-2 (test-harness L2-L5) — SHIPPED & MERGED**: PR #26 squash-merged into `main` as `e98af8c`. Stage 7 wired `Scheduler::acquire_cancellable` at the MCP edge (resolves m7-1 PR #25 reviewer flag).

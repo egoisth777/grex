@@ -23,11 +23,14 @@ pub const VERBS: &[&str] = &[
 /// `serve` is excluded as of feat-m7-1 stage 8: it is now a real long-running
 /// stdio MCP loop (no "unimplemented" message, exits non-zero on closed
 /// stdin without a handshake). Its dedicated coverage lives in
-/// `crates/grex/tests/serve_smoke.rs`. Use this slice for parametric tests
+/// `crates/grex/tests/serve_smoke.rs`. `doctor` is excluded as of feat-m7-4b:
+/// it now executes real checks against the current working directory and
+/// exits with a severity-derived code, so its dedicated coverage lives in
+/// `crates/grex/tests/doctor_cli.rs`. Use this slice for parametric tests
 /// that actually *run* the verb; use `VERBS` for tests that only inspect
 /// help text or the verb-name surface.
 pub const STUB_VERBS: &[&str] =
-    &["init", "add", "rm", "ls", "status", "sync", "update", "doctor", "import", "run", "exec"];
+    &["init", "add", "rm", "ls", "status", "sync", "update", "import", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.
