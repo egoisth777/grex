@@ -20,6 +20,24 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
+### Security
+
+## [1.0.0] - 2026-04-23
+
+First stable release. Rolls up milestones M1 through M7 as shipped to `main`,
+plus the M8-6 / M8-7 completeness work. Section previously tracked as
+`[Unreleased - 1.0.0]`.
+
 ### Changed
 
 - **M8-7 — MCP `import` + `doctor` wired through `grex_core`**: the
@@ -41,16 +59,6 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
   emit a `SyncReport`-shaped document. `serve` is excluded (it owns
   stdio for JSON-RPC). Schemas are documented in
   [`docs/src/cli-json.md`](./docs/src/cli-json.md). Resolves M8-6.
-
-## [Unreleased - 1.0.0]
-
-First stable release. Rolls up milestones M1 through M7 as shipped to `main`. No
-behaviour changes vs the `main` tip at commit
-[`d5cd99c`](https://github.com/egoisth777/grex/commit/d5cd99c) — this entry is a
-narrative roll-up of work already merged, not new code. Section will be renamed
-to `[1.0.0] — YYYY-MM-DD` at tag-cut time.
-
-### Added
 
 - **M1 — cargo workspace scaffold**: 4-crate cargo workspace (`grex-core`,
   `grex-mcp`, `grex`, test harness), `clap`-driven CLI skeleton with the full
