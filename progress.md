@@ -1,25 +1,56 @@
 # progress — grex
 
 ## Where we are
-**M7 FULLY SHIPPED 2026-04-23.** All six M7 PRs squash-merged to `main`:
-- M7-1 (MCP server) — PR #25 → `0b80a63`
-- M7-2 (test harness L2-L5) — PR #26 → `e98af8c`
-- M7-3 (mcp-ci-conformance) — PR #28 → `ce01eb5`
-- M7-4a (import) — PR #31 → `aa8c7d1`
-- M7-4b (doctor) — PR #29 → `5ce880e`
-- M7-4c (dual license) — PR #30 → `262770a`
+**M8 COMPLETENESS PASS LANDED ON `feat/m8-release` 2026-04-23.** PR #37 open vs `main`. Five commits on branch build the v1.0.0 release scaffolding end-to-end — release pipeline, crates.io rename, mdBook docs + SemVer policy, pack-template reference + smoke, and the `--json`/MCP-parity/man-pages completeness pass:
+- `7fe709c` feat(m8-3,m8-5): mdBook docs site + CHANGELOG + SemVer policy
+- `44efdb3` feat(m8-2): bump workspace to 1.0.0, rename bin crate to grex-cli
+- `7bebcb6` feat(m8-1): cargo-dist 0.31.0 release pipeline
+- `a9941b0` feat(m8-4): pack-template reference + end-to-end smoke
+- `0f540ef` feat(m8-6,m8-7,m8-8): v1.0.0 completeness — --json, MCP parity, man pages
 
-Post-merge follow-ups tracked in issues #32, #33, #34, #35 (e.g. MCP `tools/import` wire-through to un-ignore `parity_import`, MCP-side doctor wiring to un-ignore `parity_doctor`, branch-protection required check on `mcp-conformance`, and per-verb `--json` completion).
+All final gates green post-`0f540ef`: `cargo fmt --check` + `cargo clippy --all-targets --all-features --workspace -D warnings` + `cargo test --workspace` (**682 passed / 0 failed / 0 ignored**) + `cargo test -p grex-mcp --test parity` (un-ignored, green) + `cargo xtask gen-man` drift-free + `python .scripts/test.py` + `bash docs/build.sh` + `cargo publish --dry-run -p grex-core` — all green. Issues #32 and #33 are closed by `0f540ef` (MCP parity); #34 (branch-protection on `mcp-conformance`) parked for v1.0.1 as governance, not code.
 
-Next active milestone: **M8 (release v1.0.0)** — `cargo-dist` cross-platform binaries, crates.io publish, docs.rs + mdBook, reference pack template. Depends only on M7 (✓).
+M7 remains fully shipped on `main` (see prior endpoint block). Post-merge of PR #37, user-owned handoffs for the actual v1.0.0 release: `git tag v1.0.0` + push (fires `release.yml`), `cargo publish` per crate in order (`grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`), `gh repo create egoisth777/grex-pack-template` + initial push, CHANGELOG date swap.
+
+## Endpoint (2026-04-23, feat/m8-release — M8-6/7/8 completeness pass landed; PR #37)
+- Branch: `feat/m8-release` at `0f540ef`; PR #37 open vs `main`.
+- **M8-6 (`--json` fan-out)**: `--json` wired for the 10 remaining verbs (was 2/12). Stub verbs emit `{"status":"unimplemented","verb":"X"}` as a v1-stable shape; `sync`/`teardown` emit structured `SyncReport`. Missing `<pack_root>` now yields a usage-error envelope + exit 2 (was stub + exit 0). `crates/grex/tests/json_output.rs` 12 tests cover the two-envelope-family contract; `docs/src/cli-json.md` documents it.
+- **M8-7 (MCP parity — closes #32 + #33)**: `crates/grex-mcp/src/tools/import.rs` + `doctor.rs` wired through `grex_core` for real. Path-traversal guard `resolve_in_workspace()` with 2 negative tests. MCP `doctor` dropped `fix` param entirely (CLI retains `--fix`); `annotations.read_only_hint = true` is now honest. Parity tests un-ignored + rewritten: tempdir fixture + field-level CLI↔MCP JSON parity (prior skeleton was an error-path false positive). Canonical shapes aligned: doctor `{exit_code, worst_severity, findings[]}`, import `{dry_run, imported[], skipped[], failed[]}`.
+- **M8-8 (man pages)**: `crates/xtask/` with `gen-man` subcommand; reuses `Cli::command()` via a new `crates/grex/src/lib.rs` carve-out so the CLI crate exposes its clap definition without duplicating it. 15 man pages generated into `man/`. `ci.yml` gains a `man-drift` job; `[workspace.metadata.dist].include += "man/"` ships them with cargo-dist artifacts; `.cargo/config.toml` alias for `cargo xtask`; `docs/src/man-pages.md` chapter + README subsection.
+- **Review methodology**: parallel per-stage reviewers (correctness / security / reliability / simplicity / maintainability / architecture) + `codex:rescue`, two rounds. Blockers fixed before commit.
+- **Final gates (post-`0f540ef`)**: `cargo fmt --check` + `cargo clippy --all-targets --all-features --workspace -D warnings` + `cargo test --workspace` (**682 passed / 0 failed / 0 ignored**) + `cargo test -p grex-mcp --test parity` (un-ignored, green) + `cargo xtask gen-man` drift-free + `python .scripts/test.py` + `bash docs/build.sh` + `cargo publish --dry-run -p grex-core` — all green.
+- **Parked for v1.0.1**: #34 branch-protection on `mcp-conformance` (governance action, not code).
+- **Next action**: land PR #37; then user-owned release handoffs (tag `v1.0.0` → `release.yml` fires; `cargo publish` per crate in order `grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`; create `egoisth777/grex-pack-template` + initial push; swap CHANGELOG `[Unreleased - 1.0.0]` date).
+
+## Sub-endpoint (2026-04-22, feat/m8-release — M8-4 pack-template reference + smoke)
+- Branch: `feat/m8-release` at `a9941b0`.
+- **M8-4 (pack-template)**: `examples/pack-template/` declarative pack — `type=declarative`, `require cmd_available:git`, `mkdir` + `symlink` targeting `$HOME/.grex-pack-template`, explicit `teardown:` for reversibility. Referenced by `docs/src/pack-template.md` mdBook chapter with an external-repo handoff appendix for the forthcoming `egoisth777/grex-pack-template` mirror (user-owned creation).
+- **End-to-end smoke**: `crates/grex/tests/pack_template_smoke.rs` runs `grex_core::sync::run` in a tempdir with redirected `$HOME`, then re-runs and asserts the no-op / idempotent outcome. Catches regressions in the exemplar, not just the code.
+
+## Sub-endpoint (2026-04-22, feat/m8-release — M8-1 cargo-dist 0.31.0 release pipeline)
+- Branch: `feat/m8-release` at `7bebcb6`.
+- **M8-1 (release pipeline)**: `cargo-dist` bumped `0.24.1 → 0.31.0` (pre-`aarch64-linux` + retired `ubuntu-20.04`). 5 targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`. GitHub Attestations for provenance.
+- **`.github/workflows/release.yml` hygiene**: workflow-default `contents: read`; build job grants `attestations: write` + `id-token: write`; host/announce jobs grant `contents: write`; fork-PR guard on the release-creation steps. Per-job `timeout-minutes`. Partial-matrix guard before `gh release create`. Idempotency guard aborts if the target tag already exists.
+- **`docs/release.md`**: tag procedure, `cargo publish --wait-for-publish --timeout 300` (no `sleep 30` race), verified install via `gh attestation verify`, supported-platforms table, rollback limits.
+
+## Sub-endpoint (2026-04-22, feat/m8-release — M8-2 workspace 1.0.0 + bin-crate rename)
+- Branch: `feat/m8-release` at `44efdb3`.
+- **M8-2 (version + crate rename)**: `[workspace.package] version = "1.0.0"`; internal deps pinned `{ path, version = "1.0.0" }`; `keywords.workspace = true` + `categories.workspace = true` propagated so all 4 crates inherit. Bin crate **package** renamed `grex → grex-cli` (crates.io `grex` is squatted by pemistahl/grex regex tool v1.4.6); `[[bin]] name = "grex"` preserved so the installed binary is unchanged.
+- **Audit + publish order**: `openspec/changes/feat-m8-release/crates-io-names.md` documents the rationale + publish order (`grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`). `cargo publish --dry-run -p grex-core` green.
+
+## Sub-endpoint (2026-04-22, feat/m8-release — M8-3 + M8-5 mdBook + CHANGELOG + SemVer)
+- Branch: `feat/m8-release` at `7fe709c` (branch-initial commit off `main @ d5cd99c`).
+- **M8-3 (docs site)**: mdBook scaffolding mirrors `.omne/cfg/` content into `docs/src/`; `.github/workflows/docs.yml` builds + deploys with **job-scoped permissions** (pages + id-token only on the deploy job). `[package.metadata.docs.rs]` added to the 3 lib crates (`grex-core`, `grex-plugins-builtin`, `grex-mcp`) so docs.rs picks up feature + target config deterministically.
+- **M8-5 (CHANGELOG + SemVer)**: `CHANGELOG.md` in Keep-a-Changelog format with a rolling `[Unreleased - 1.0.0]` that rolls up M1–M7. `docs/semver.md` codifies stability policy spanning manifest schema, CLI surface, MCP tool schemas, and `pack.yaml` — the four public contracts that carry v1 semver weight.
+- **Endpoint (this branch)**: scaffolding + version bump + release pipeline + pack-template all landed; completeness pass (M8-6/7/8) shipped in `0f540ef` on 2026-04-23 (see Endpoint above).
 
 ## Endpoint (2026-04-23, main, post-M7 closure)
-- Branch: `main` at `aa8c7d1`; no in-flight feature branches.
+- Branch: `main` at `d5cd99c`; `feat/m8-release` forked from here.
 - Worktrees pruned (`.claude/worktrees/{m7-3, rebase-m7-4a, agent-a5cfd746, agent-ac2157de, agent-afed5e7f}` removed); merged feature branches (`feat/m7-3-mcp-ci-conformance`, `feat/m7-4a-import`, `feat/m7-4b-doctor`, `feat/m7-4c-license`) + `worktree-agent-*` branches deleted.
 - OpenSpec: `openspec/changes/feat-m7-3-mcp-ci-conformance/` and `openspec/changes/feat-m7-4-import-doctor-license/` archived to `openspec/archive/`.
 - `milestone.md`: M7 block marked ✓ COMPLETE 2026-04-23 with commit SHAs + PR numbers.
 - CLAUDE.md root: active feature pointer flipped from stale `feat-grex M4` to `feat-grex M8` post-M7.
-- **Next action**: open `feat-m8` branch off `main`; spec drafting at `openspec/changes/feat-m8-release/`.
+- **M7 FULLY SHIPPED 2026-04-23.** All six M7 PRs squash-merged to `main`: M7-1 PR #25 → `0b80a63`; M7-2 PR #26 → `e98af8c`; M7-3 PR #28 → `ce01eb5`; M7-4a PR #31 → `aa8c7d1`; M7-4b PR #29 → `5ce880e`; M7-4c PR #30 → `262770a`. Post-merge follow-ups tracked in issues #32, #33, #34, #35.
 
 ## Sub-endpoint (2026-04-22, feat/m7-4a-import — M7-4a COMPLETE, awaiting PR review)
 - Branch: `feat/m7-4a-import` rebased onto post-M7-4b `main`; ahead of `main` by 2 commits (feat + polish/test-fixups).

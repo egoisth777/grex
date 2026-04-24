@@ -137,7 +137,7 @@ Ship it.
 - Changelog + SemVer policy documented.
 - `grex-inst` example pack listed as exemplar.
 
-**Acceptance**: `cargo install grex` works fresh on all 3 OS; reference pack repo installs via `grex add`; docs site live.
+**Acceptance**: `cargo install grex-cli` works fresh on all 3 OS (installs binary `grex`); reference pack repo installs via `grex add`; docs site live.
 **Effort**: 2-4 days.
 **Depends on**: M7.
 

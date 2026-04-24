@@ -1,6 +1,5 @@
 use clap::Parser;
-
-mod cli;
+use grex_cli::cli;
 
 fn main() -> anyhow::Result<()> {
     let args = cli::args::Cli::parse();

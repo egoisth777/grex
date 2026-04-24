@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex-import 1  "grex-import " 
+.SH NAME
+grex\-import \- Import legacy REPOS.json
+.SH SYNOPSIS
+\fBgrex\-import\fR [\fB\-\-from\-repos\-json\fR] [\fB\-\-manifest\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Import legacy REPOS.json
+.SH OPTIONS
+.TP
+\fB\-\-from\-repos\-json\fR=\fIFROM_REPOS_JSON\fR
+Path to a legacy REPOS.json file
+.TP
+\fB\-\-manifest\fR=\fIPATH\fR
+Target manifest (`grex.jsonl`). Defaults to `<cwd>/grex.jsonl`
+.TP
+\fB\-n\fR, \fB\-\-dry\-run\fR
+Verb\-scoped dry\-run. Alias for the global `\-\-dry\-run`; either flag short\-circuits before any manifest write
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

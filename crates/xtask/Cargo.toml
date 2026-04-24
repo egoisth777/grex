@@ -1,0 +1,24 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# M8-8: xtask is an internal build-tooling crate. It is NOT published
+# to crates.io — the man-page generator is invoked from CI + release
+# prep only. Keeping `publish = false` also keeps the crate out of any
+# `cargo publish --workspace` sweep.
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+clap_mangen = "=0.2.26"
+anyhow = { workspace = true }
+grex-cli = { path = "../grex", version = "1.0.0" }
+
+[lints]
+workspace = true

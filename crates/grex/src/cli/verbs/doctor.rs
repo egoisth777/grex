@@ -42,8 +42,10 @@ fn print_table(report: &DoctorReport) {
     }
 }
 
-/// Minimal JSON rendering — spec only requires a `findings` array with
-/// the core fields. A hand-rolled object keeps serde/schemars deps narrow.
+/// Canonical `doctor` JSON shape. Must remain byte-equal to the MCP
+/// handler's output (`crates/grex-mcp/src/tools/doctor.rs::render_report_json`)
+/// and match `docs/src/cli-json.md §doctor`. Any field rename or
+/// addition MUST land in all three places in the same commit.
 fn render_json(report: &DoctorReport) -> String {
     let findings: Vec<serde_json::Value> = report
         .findings
@@ -51,11 +53,7 @@ fn render_json(report: &DoctorReport) -> String {
         .map(|f| {
             serde_json::json!({
                 "check": f.check.label(),
-                "severity": match f.severity {
-                    Severity::Ok => "ok",
-                    Severity::Warning => "warning",
-                    Severity::Error => "error",
-                },
+                "severity": severity_label(f.severity),
                 "pack": f.pack,
                 "detail": f.detail,
                 "auto_fixable": f.auto_fixable,
@@ -64,7 +62,18 @@ fn render_json(report: &DoctorReport) -> String {
         .collect();
     let doc = serde_json::json!({
         "exit_code": report.exit_code(),
+        "worst_severity": severity_label(report.worst()),
         "findings": findings,
     });
-    serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_string())
+    // Compact form so byte-comparison against the MCP surface (which
+    // uses `Value::to_string`, also compact) is trivial.
+    serde_json::to_string(&doc).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn severity_label(s: Severity) -> &'static str {
+    match s {
+        Severity::Ok => "ok",
+        Severity::Warning => "warning",
+        Severity::Error => "error",
+    }
 }

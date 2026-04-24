@@ -1,0 +1,8 @@
+[default.extend-words]
+# "invokable" (adjective form of "invoke") is valid English prose in
+# docs/src-authored/mcp.md ("user-invokable verb"). typos flags it as
+# a misspelling of "invocable"; accept both forms.
+invokable = "invokable"
+# `ratatui` is the canonical crate name of a Rust TUI library
+# (github.com/ratatui-org/ratatui). typos flags it as "ratatouille".
+ratatui = "ratatui"

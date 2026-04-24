@@ -191,24 +191,37 @@ fn import_with_from_repos_json_relative_path_parses() {
 }
 
 // ---------- sync ----------
+//
+// feat-m8-release blocker fix: `sync` without `<pack_root>` now emits a
+// usage-error envelope and exits 2 (not the legacy "unimplemented" stub).
+// Parse-surface coverage is asserted via `stderr` containing the verb's
+// own usage message (not clap's `error:` prefix), so we can still prove
+// clap accepted the flag shape.
 
 #[test]
-fn sync_default_succeeds() {
-    grex().arg("sync").assert().success().stdout(predicate::str::contains("unimplemented"));
+fn sync_default_emits_usage_error() {
+    grex()
+        .arg("sync")
+        .assert()
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("grex sync:").and(predicate::str::contains("pack_root")));
 }
 
 /// With `#[arg(long, default_value_t = true)]`, clap derive does **not**
 /// synthesize a `--no-recursive` negation. The only supported ways to set the
 /// bool are `--recursive` (sets true, the default) and — if we want false —
 /// re-declaring the field with `ArgAction::Set`. That is an M2 concern;
-/// here we just verify the current spelling is stable.
+/// here we just verify the current spelling parses cleanly (clap-accepted,
+/// then the missing-pack-root fall-through).
 #[test]
-fn sync_recursive_explicit_true_succeeds() {
+fn sync_recursive_explicit_true_parses() {
     grex()
         .args(["sync", "--recursive"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("grex sync:"));
 }
 
 // ---------- serve ----------

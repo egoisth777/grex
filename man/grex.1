@@ -1,0 +1,73 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex 1  "grex 1.0.0" 
+.SH NAME
+grex \- Pack\-based dev\-env orchestrator
+.SH SYNOPSIS
+\fBgrex\fR [\fB\-\-json\fR] [\fB\-\-plain\fR] [\fB\-\-dry\-run\fR] [\fB\-\-filter\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Pack\-based dev\-env orchestrator
+.SH OPTIONS
+.TP
+\fB\-\-json\fR
+Emit output as JSON
+.TP
+\fB\-\-plain\fR
+Emit plain (non\-color, non\-table) output
+.TP
+\fB\-\-dry\-run\fR
+Show planned actions without executing them
+.TP
+\fB\-\-filter\fR=\fIFILTER\fR
+Filter packs by expression
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+grex\-init(1)
+Initialize a grex workspace
+.TP
+grex\-add(1)
+Register and clone a pack
+.TP
+grex\-rm(1)
+Teardown and remove a pack
+.TP
+grex\-ls(1)
+List registered packs
+.TP
+grex\-status(1)
+Report drift vs lockfile
+.TP
+grex\-sync(1)
+Git fetch and pull (recurse by default)
+.TP
+grex\-update(1)
+Sync plus re\-run install on lock change
+.TP
+grex\-doctor(1)
+Run integrity checks
+.TP
+grex\-serve(1)
+Start MCP stdio server
+.TP
+grex\-import(1)
+Import legacy REPOS.json
+.TP
+grex\-run(1)
+Run a named action across packs
+.TP
+grex\-exec(1)
+Execute a shell command in pack context
+.TP
+grex\-teardown(1)
+Tear down a pack tree (reverse of `sync`/`install`)
+.TP
+grex\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v1.0.0

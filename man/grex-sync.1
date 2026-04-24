@@ -1,0 +1,52 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex-sync 1  "grex-sync " 
+.SH NAME
+grex\-sync \- Git fetch and pull (recurse by default)
+.SH SYNOPSIS
+\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR] 
+.SH DESCRIPTION
+Git fetch and pull (recurse by default)
+.SH OPTIONS
+.TP
+\fB\-\-recursive\fR
+Recurse into child packs
+.TP
+\fB\-\-workspace\fR=\fIWORKSPACE\fR
+Workspace directory for cloned children. Defaults to `<pack_root>/.grex/workspace`
+.TP
+\fB\-n\fR, \fB\-\-dry\-run\fR
+Plan actions without touching the filesystem
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress per\-action log lines
+.TP
+\fB\-\-no\-validate\fR
+Skip plan\-phase validators. Debug\-only escape hatch
+.TP
+\fB\-\-ref\fR=\fIREF\fR
+Override the default ref for every pack in this sync invocation. Accepts a branch, tag, or commit SHA. Empty strings are rejected
+.TP
+\fB\-\-only\fR=\fIGLOB\fR
+Restrict sync to packs whose workspace\-relative path (or name) matches the glob. Repeat the flag to OR\-combine multiple patterns (standard `*`/`**`/`?` semantics). Non\-matching packs are skipped entirely — no action execution, no lockfile write
+.TP
+\fB\-\-force\fR
+Re\-execute every pack even when its `actions_hash` is unchanged from the prior lockfile. Overrides the M4\-B skip\-on\-hash short\-circuit; dry\-run semantics are unchanged
+.TP
+\fB\-\-parallel\fR=\fIPARALLEL\fR
+Max parallel pack ops during this sync run (feat\-m6\-1).
+
+Semantics: * Absent → default `num_cpus::get()` resolved in `verbs::sync`. * `0` → unbounded (`Semaphore::MAX_PERMITS`). * `1` → serial fast\-path (preserves pre\-M6 wall\-order). * `2..=1024` → bounded parallel.
+
+Env fallback: `GREX_PARALLEL` is honoured only when the flag is absent. Clap reads the env var automatically via `env`.
+
+Distinct from the global `\-\-parallel` on [`GlobalFlags`]; that knob is documented as the harness\-level worker cap and rejects `0`. Sync parallelism uses `0` as the "unbounded" sentinel per `.omne/cfg/concurrency.md`.
+.RS
+May also be specified with the \fBGREX_PARALLEL\fR environment variable. 
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIPACK_ROOT\fR]
+Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `sync` prints the legacy M1 stub and exits 0

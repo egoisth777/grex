@@ -1,0 +1,3 @@
+# grex managed-block contract (M6): `.grex/.state/` is the per-pack runtime
+# state cache — gitignored, pruned by `grex doctor --compact`.
+.grex/.state/

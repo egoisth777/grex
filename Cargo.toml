@@ -5,10 +5,11 @@ members = [
     "crates/grex-core",
     "crates/grex-mcp",
     "crates/grex-plugins-builtin",
+    "crates/xtask",
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
@@ -16,6 +17,8 @@ repository = "https://github.com/egoisth777/grex"
 homepage = "https://github.com/egoisth777/grex"
 authors = ["egoisth777"]
 readme = "README.md"
+keywords = ["dev-environment", "orchestrator", "pack", "mcp", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 # CLI
@@ -70,9 +73,9 @@ comfy-table = "7"
 owo-colors = "4"
 
 # internal workspace crates
-grex-core = { path = "crates/grex-core", version = "0.0.1" }
-grex-mcp = { path = "crates/grex-mcp", version = "0.0.1" }
-grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "0.0.1" }
+grex-core = { path = "crates/grex-core", version = "1.0.0" }
+grex-mcp = { path = "crates/grex-mcp", version = "1.0.0" }
+grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.0.0" }
 
 # dev-dependencies (shared via workspace)
 assert_cmd = "2"
@@ -89,7 +92,56 @@ strip = "symbols"
 opt-level = 0
 debug = true
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 # Workspace-wide clippy gates. Thresholds in clippy.toml.
 [workspace.lints.clippy]
 too_many_lines = "deny"
 cognitive_complexity = "deny"
+
+# ---------------------------------------------------------------------------
+# cargo-dist — release orchestration for v1.0.0+ (M8-1).
+#
+# `cargo-dist` generates the GitHub Actions release workflow (`.github/workflows/release.yml`)
+# from this block. Only the bin crate (`grex-cli`, which produces the `grex`
+# executable) is shipped as a binary; lib crates are skipped automatically.
+#
+# aarch64 Windows (`aarch64-pc-windows-msvc`) is intentionally omitted — the
+# msvc arm64 cross-compile path is still flaky on GitHub-hosted runners as of
+# cargo-dist 0.24.x. Tracked as a follow-up for v1.0.1+ (see
+# `openspec/changes/feat-m8-release/spec.md` §Known risks).
+# ---------------------------------------------------------------------------
+[workspace.metadata.dist]
+cargo-dist-version = "0.31.0"
+ci = ["github"]
+installers = ["shell", "powershell"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+pr-run-mode = "plan"
+github-attestations = true
+include = ["CHANGELOG.md", "README.md", "LICENSE*", "man/"]
+# Pin runners explicitly — ubuntu-20.04 was retired 2025-04. Map Linux jobs to
+# ubuntu-22.04 (covers glibc compatibility for older distros while staying
+# within GitHub-hosted supported images). macOS/Windows left to cargo-dist
+# defaults.
+github-custom-runners = { "global" = "ubuntu-22.04", "x86_64-unknown-linux-gnu" = "ubuntu-22.04", "aarch64-unknown-linux-gnu" = "ubuntu-22.04-arm" }
+# M8-1 CI hardening: .github/workflows/release.yml carries hand-written
+# customisations that cargo-dist's generator does not round-trip:
+#   - workflow-level `permissions: contents: read` (defence-in-depth)
+#   - per-job `timeout-minutes` caps
+#   - fork-PR guards on `host` / `announce`
+#   - archive-existence + tag-idempotency checks in the `host` step
+#   - attest-glob fix using `join(matrix.targets, '_')` instead of ', '
+#   - a debug "list distrib artefacts" step
+# `allow-dirty = ["ci"]` tells `dist plan` / `dist init` to accept the
+# divergence instead of demanding a regenerate. Revisit when cargo-dist
+# exposes first-class knobs for the patterns above.
+allow-dirty = ["ci"]

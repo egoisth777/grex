@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "Built-in action primitives and pack-type handlers for grex."
+documentation = "https://docs.rs/grex-plugins-builtin"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
@@ -19,6 +22,12 @@ grex-core = { workspace = true }
 
 [lints]
 workspace = true
+
+# docs.rs metadata (M8-3). Built-in action / pack-type plugins are a public
+# lib surface; publish API docs alongside `grex-core` + `grex-mcp`.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 # M2 scaffold: this crate is an empty shell. All deps are placeholders
 # for M3+ action primitives (async, YAML pack manifests, core traits).

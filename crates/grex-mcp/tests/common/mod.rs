@@ -485,6 +485,11 @@ pub enum ParitySignal {
     /// error (e.g. missing pack root for `sync`). CLI exits non-zero
     /// with stderr text; MCP returns `packop_error(...)`.
     PackOpError,
+    /// Verb dispatched into `grex_core`, completed cleanly, and emitted
+    /// a structured report. CLI exits zero; MCP returns a
+    /// `CallToolResult::success`. Used by the M8-7 `doctor` wiring
+    /// where an empty-workspace run is the happy path.
+    Success,
 }
 
 /// CLI argv for every verb that drives `assert_parity` into a
@@ -549,6 +554,13 @@ pub fn default_mcp_params_for(verb: &str, fixture: &TestFixture) -> Value {
             "dryRun": true,
             "noValidate": true,
         }),
+        // `doctor` + `import` parity drive through the field-level
+        // helpers (`assert_parity_doctor_report`,
+        // `assert_parity_import_plan`) — not `assert_parity`. These
+        // entries stay bare so the `default_mcp_params_cover_all_verbs`
+        // helper-test remains exhaustive.
+        "doctor" => json!({}),
+        "import" => json!({}),
         // `update` accepts an optional pack name; bare is fine.
         // All other stubs accept no required params.
         _ => json!({}),
@@ -574,7 +586,7 @@ fn sync_pack_root(fixture: &TestFixture) -> std::path::PathBuf {
 /// to stderr (`sync` with `pack_root` pointing at a non-`.grex` path).
 /// When CLI `--json` wiring lands the body parses as JSON; until then we
 /// classify on text shape.
-async fn drive_cli(verb: &str, args: &[String]) -> ParitySignal {
+async fn drive_cli(verb: &str, args: &[String], fixture: &TestFixture) -> ParitySignal {
     // `cargo_bin` resolves to `target/debug/grex[.exe]`. `assert_cmd`
     // ensures it is built before the test runs (same wiring m7-1
     // serve_smoke uses).
@@ -583,6 +595,12 @@ async fn drive_cli(verb: &str, args: &[String]) -> ParitySignal {
     for a in args {
         cmd.arg(a);
     }
+    // Pin the subprocess cwd to the fixture tempdir so verbs that
+    // resolve paths relative to `current_dir()` (e.g. `doctor`,
+    // `import` with the default manifest) stay deterministic and
+    // cannot see the harness's real working tree. `sync` already
+    // takes an absolute path argument so the cwd change is harmless.
+    cmd.current_dir(fixture.workspace.path());
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     // tokio-async wrapper around `std::process::Command::output()` keeps
@@ -595,23 +613,21 @@ async fn drive_cli(verb: &str, args: &[String]) -> ParitySignal {
         .expect("CLI subprocess runs");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let _stderr = String::from_utf8_lossy(&output.stderr);
 
     if stdout.contains("unimplemented") {
         ParitySignal::Unimplemented
     } else if !output.status.success() {
         // Non-zero exit with no `"unimplemented"` marker → real domain
-        // error path (currently only `sync` against a missing pack
-        // reaches here).
+        // error path. `sync` (missing pack) and `import` (missing
+        // `--from-repos-json`) reach here.
         ParitySignal::PackOpError
     } else {
-        panic!(
-            "CLI `grex {verb}` returned success with no 'unimplemented' marker — \
-             parity-helper assumption violated. CLI surface has gained real \
-             output for this verb; flip `assert_parity` to the spec-shaped \
-             strict byte-equal of normalised JSON. \
-             stdout: {stdout:?} stderr: {stderr:?}"
-        );
+        // Clean zero-exit with no "unimplemented" marker = real wired
+        // verb that completed. Only `doctor` currently reaches here
+        // (empty fixture workspace → all-OK report, exit 0). Future
+        // wired verbs will follow suit.
+        ParitySignal::Success
     }
 }
 
@@ -656,12 +672,14 @@ async fn drive_mcp(verb: &str, fixture: &TestFixture, params: Value) -> ParitySi
         .get("result")
         .unwrap_or_else(|| panic!("MCP tools/call for `{verb}` returned no `result`: {resp:?}"));
     let is_error = result.get("isError").and_then(Value::as_bool).unwrap_or(false);
-    assert!(
-        is_error,
-        "MCP tools/call for `{verb}` returned isError=false — parity-helper \
-         assumption violated; flip `assert_parity` to spec-shaped strict \
-         byte-equal. result: {result:?}"
-    );
+
+    // A wired verb that completed cleanly returns `isError: false` (or
+    // the flag absent). We classify that as `Success` and let the
+    // per-verb parity test assert against its CLI counterpart.
+    if !is_error {
+        return ParitySignal::Success;
+    }
+
     let body_text =
         result.pointer("/content/0/text").and_then(Value::as_str).unwrap_or_else(|| {
             panic!("MCP isError envelope for `{verb}` lacks content[0].text: {result:?}")
@@ -703,13 +721,183 @@ pub async fn assert_parity(verb: &str) {
     let fixture = TestFixture::new();
     let args = default_args_for(verb, &fixture);
     let mcp_params = default_mcp_params_for(verb, &fixture);
-    let cli_signal = drive_cli(verb, &args).await;
+    let cli_signal = drive_cli(verb, &args, &fixture).await;
     let mcp_signal = drive_mcp(verb, &fixture, mcp_params).await;
     assert_eq!(
         cli_signal, mcp_signal,
         "CLI and MCP surfaces disagree on `{verb}` outcome — \
          CLI: {cli_signal:?}, MCP: {mcp_signal:?}"
     );
+}
+
+// ============================================================================
+// L3 field-level parity — feat-m8-release blocker fix
+// ============================================================================
+//
+// The `ParitySignal` scheme above only asserts outcome-class equivalence
+// ("both surfaces signalled PackOpError" etc.). That is too weak for
+// wired verbs like `doctor` + `import` — a schema divergence (renamed
+// field, dropped wrapper, different label set) would still signal
+// `Success` on both sides.
+//
+// These helpers drive both surfaces against a concrete fixture, parse
+// both JSON outputs, and assert structural equivalence on the
+// verb-specific shape. Timestamps + absolute paths are normalised via
+// [`normalize`] so host-specific scalars collapse.
+
+/// Drive CLI `grex <verb> --json <args...>` with cwd pinned to
+/// `fixture.workspace` and return the parsed JSON stdout.
+///
+/// Panics if the subprocess does not produce valid JSON on stdout —
+/// tests that expect failure should go through `drive_cli` instead.
+async fn run_cli_json(verb: &str, args: &[String], fixture: &TestFixture) -> Value {
+    let mut cmd = std::process::Command::cargo_bin("grex").expect("grex binary builds");
+    cmd.arg("--json");
+    cmd.arg(verb);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.current_dir(fixture.workspace.path());
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let output = tokio::task::spawn_blocking(move || cmd.output())
+        .await
+        .expect("spawn_blocking joins")
+        .expect("CLI subprocess runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "CLI `{verb} --json` stdout is not JSON: {e}; status={:?}; stdout=<<{stdout}>>",
+            output.status.code()
+        )
+    })
+}
+
+/// Drive MCP `tools/call` for `verb` against an in-process duplex
+/// server rooted at `fixture.workspace`, return the parsed JSON body
+/// carried inside `content[0].text`.
+async fn run_mcp_tool_json(verb: &str, fixture: &TestFixture, params: Value) -> Value {
+    // Build a server whose `ServerState.workspace` points at the fixture
+    // tempdir (not cwd). Mirrors the real `grex serve --workspace ...`.
+    let workspace = fixture.workspace.path().to_path_buf();
+    let state = grex_mcp::ServerState::new(
+        grex_core::Scheduler::new(1),
+        grex_core::Registry::default(),
+        workspace.join("grex.jsonl"),
+        workspace,
+    );
+    let (server_io, client_io) = tokio::io::duplex(4096);
+    let server = grex_mcp::GrexMcpServer::new(state);
+    let server_task = tokio::spawn(async move {
+        let _ = server.run(server_io).await;
+    });
+    let (read, write) = tokio::io::split(client_io);
+    let mut client = Client {
+        reader: BufReader::new(read),
+        writer: write,
+        next_id: AtomicI64::new(1),
+        server_task: Some(server_task),
+    };
+    let _ = client.initialize().await;
+    client.notify("initialized", json!({})).await;
+    let resp = client.call("tools/call", json!({ "name": verb, "arguments": params })).await;
+    client.shutdown().await;
+
+    let result = resp
+        .get("result")
+        .unwrap_or_else(|| panic!("MCP tools/call for `{verb}` returned no `result`: {resp:?}"));
+    let text = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("MCP `{verb}` envelope has no content[0].text: {result:?}"));
+    serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("MCP `{verb}` body is not JSON: {e}; body: {text:?}"))
+}
+
+/// Seed an empty workspace → all-OK report. Both surfaces must emit the
+/// same `{exit_code, worst_severity, findings}` shape.
+///
+/// We do NOT seed drift: introducing a .gitignore-missing warning would
+/// require fragile text matching on its detail strings, and empty-
+/// workspace already exercises the full rendering pipeline (findings
+/// array, severity label set, exit-code roll-up).
+pub async fn assert_parity_doctor_report() {
+    let fixture = TestFixture::new();
+    let cli_raw = run_cli_json("doctor", &[], &fixture).await;
+    let mcp_raw = run_mcp_tool_json("doctor", &fixture, json!({})).await;
+    let cli = normalize(cli_raw);
+    let mcp = normalize(mcp_raw);
+
+    // Canonical doctor shape pins:
+    //   {exit_code: number, worst_severity: string, findings: [...]}
+    // No wrapper keys. Any divergence is a schema contract break.
+    assert_eq!(cli, mcp, "doctor CLI/MCP JSON bodies must be byte-equal after normalise");
+    for (k, expected_type) in
+        [("exit_code", "number"), ("worst_severity", "string"), ("findings", "array")]
+    {
+        let got = &cli[k];
+        let ok = match expected_type {
+            "number" => got.is_number(),
+            "string" => got.is_string(),
+            "array" => got.is_array(),
+            _ => unreachable!(),
+        };
+        assert!(
+            ok,
+            "doctor JSON missing or wrong-typed field `{k}` (expected {expected_type}): {cli:?}"
+        );
+    }
+}
+
+/// Seed a `REPOS.json` with two entries — one scripted (non-empty URL),
+/// one declarative (empty URL) — and assert both surfaces produce the
+/// same `ImportPlan` shape under `--dry-run`.
+pub async fn assert_parity_import_plan() {
+    let fixture = TestFixture::new();
+    let repos_path = fixture.workspace.path().join("REPOS.json");
+    std::fs::write(
+        &repos_path,
+        r#"[
+            {"url": "https://example.invalid/a.git", "path": "a"},
+            {"url": "", "path": "b"}
+        ]"#,
+    )
+    .expect("seed REPOS.json fixture");
+
+    // CLI gets the absolute path via --from-repos-json; MCP gets the
+    // workspace-relative form (the MCP handler resolves against
+    // state.workspace + canonicalises).
+    let cli_args = vec![
+        "--from-repos-json".to_string(),
+        repos_path.to_string_lossy().into_owned(),
+        "--dry-run".to_string(),
+    ];
+    let cli_raw = run_cli_json("import", &cli_args, &fixture).await;
+    let mcp_raw = run_mcp_tool_json(
+        "import",
+        &fixture,
+        json!({ "fromReposJson": "REPOS.json", "dryRun": true }),
+    )
+    .await;
+
+    let cli = normalize(cli_raw);
+    let mcp = normalize(mcp_raw);
+
+    // Canonical import shape pins:
+    //   {dry_run: bool, imported: [...], skipped: [...], failed: [...]}
+    // No `summary` wrapper — counts are derived from array lengths.
+    assert_eq!(cli, mcp, "import CLI/MCP JSON bodies must be byte-equal after normalise");
+    for k in ["dry_run", "imported", "skipped", "failed"] {
+        assert!(cli.get(k).is_some(), "import JSON missing field `{k}`: {cli:?}");
+    }
+    assert!(
+        cli.get("summary").is_none(),
+        "import JSON must not carry a `summary` wrapper: {cli:?}"
+    );
+    assert_eq!(cli["dry_run"], json!(true));
+    assert_eq!(cli["imported"].as_array().map(Vec::len), Some(2));
+    assert_eq!(cli["skipped"].as_array().map(Vec::len), Some(0));
+    assert_eq!(cli["failed"].as_array().map(Vec::len), Some(0));
 }
 
 #[cfg(test)]

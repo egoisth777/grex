@@ -79,7 +79,7 @@ Single crate `grex` (bin + lib). CLI verbs dispatch into the library. Data flow:
 
 ## Acceptance
 
-All success-criteria items PASS in the GitHub Actions matrix (Windows + Ubuntu + macOS × stable + beta toolchains). Lean4 `.olean` builds clean. `cargo install grex` works from crates.io on all three OSes. At least one reference pack repo (`grex-inst` or successor) is published as an installable example.
+All success-criteria items PASS in the GitHub Actions matrix (Windows + Ubuntu + macOS × stable + beta toolchains). Lean4 `.olean` builds clean. `cargo install grex-cli` works from crates.io on all three OSes (the published crate is `grex-cli`; the installed binary is `grex`). At least one reference pack repo (`grex-inst` or successor) is published as an installable example.
 
 ## M3 Stage B — Variable expansion (slice 1)
 

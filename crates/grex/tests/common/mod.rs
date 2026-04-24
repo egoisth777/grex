@@ -26,11 +26,15 @@ pub const VERBS: &[&str] = &[
 /// `crates/grex/tests/serve_smoke.rs`. `doctor` is excluded as of feat-m7-4b:
 /// it now executes real checks against the current working directory and
 /// exits with a severity-derived code, so its dedicated coverage lives in
-/// `crates/grex/tests/doctor_cli.rs`. Use this slice for parametric tests
-/// that actually *run* the verb; use `VERBS` for tests that only inspect
-/// help text or the verb-name surface.
-pub const STUB_VERBS: &[&str] =
-    &["init", "add", "rm", "ls", "status", "sync", "update", "run", "exec"];
+/// `crates/grex/tests/doctor_cli.rs`. `sync` is excluded as of
+/// feat-m8-release: the bare-invocation fall-through now emits a
+/// `usage` error envelope and exits 2 (see `docs/src/cli-json.md`
+/// §"Missing `<pack_root>`"); its dedicated coverage lives in
+/// `crates/grex/tests/json_output.rs::sync_without_pack_root_json_emits_usage_error`
+/// and the E2E suite. Use this slice for parametric tests that actually
+/// *run* the verb; use `VERBS` for tests that only inspect help text or
+/// the verb-name surface.
+pub const STUB_VERBS: &[&str] = &["init", "add", "rm", "ls", "status", "update", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.

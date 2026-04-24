@@ -1,0 +1,22 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex-serve 1  "grex-serve " 
+.SH NAME
+grex\-serve \- Start MCP stdio server
+.SH SYNOPSIS
+\fBgrex\-serve\fR [\fB\-\-manifest\fR] [\fB\-\-workspace\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Start MCP stdio server
+.SH OPTIONS
+.TP
+\fB\-\-manifest\fR=\fIPATH\fR
+Path to the `grex.jsonl` event\-log manifest. Captured at server launch and immutable for the session (per spec §"Manifest binding"). Defaults to `<cwd>/grex.jsonl` when omitted
+.TP
+\fB\-\-workspace\fR=\fIPATH\fR
+Workspace root the MCP server resolves relative paths against. Defaults to the current working directory when omitted
+.TP
+\fB\-\-parallel\fR=\fIPARALLEL\fR
+Harness\-level worker cap inherited by the MCP server\*(Aqs `Scheduler` (feat\-m7\-1 stage 8.3). `1` = serial; range `1..=1024`. Defaults to `std::thread::available_parallelism()` when omitted. Distinct from `sync \-\-parallel` which uses `0` = unbounded
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

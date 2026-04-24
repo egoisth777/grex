@@ -22,7 +22,7 @@ pub fn run(args: ImportArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
         .context("grex import failed")?;
 
     if global.json {
-        emit_json(&plan)?;
+        emit_json(&plan, dry_run)?;
     } else {
         emit_human(&plan, dry_run);
     }
@@ -54,7 +54,14 @@ fn emit_human(plan: &ImportPlan, dry_run: bool) {
     );
 }
 
-fn emit_json(plan: &ImportPlan) -> Result<()> {
+/// Canonical `import` JSON shape. Must remain byte-equal to the MCP
+/// handler's output (`crates/grex-mcp/src/tools/import.rs::render_plan_json`)
+/// and match `docs/src/cli-json.md §import`. Any field rename or
+/// addition MUST land in all three places in the same commit.
+///
+/// Shape: `{dry_run, imported[], skipped[], failed[]}`. No `summary`
+/// wrapper — readers derive counts from the arrays directly.
+fn emit_json(plan: &ImportPlan, dry_run: bool) -> Result<()> {
     let imported: Vec<_> = plan
         .imported
         .iter()
@@ -80,14 +87,24 @@ fn emit_json(plan: &ImportPlan) -> Result<()> {
             })
         })
         .collect();
+    let failed: Vec<_> = plan
+        .failed
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "path": f.path,
+                "error": f.error,
+            })
+        })
+        .collect();
     let out = serde_json::json!({
+        "dry_run": dry_run,
         "imported": imported,
         "skipped": skipped,
-        "failed": plan.failed.iter().map(|f| serde_json::json!({
-            "path": f.path,
-            "error": f.error,
-        })).collect::<Vec<_>>(),
+        "failed": failed,
     });
-    println!("{}", serde_json::to_string_pretty(&out)?);
+    // Compact form so byte-comparison against the MCP surface (which
+    // uses `Value::to_string`, also compact) is trivial.
+    println!("{}", serde_json::to_string(&out)?);
     Ok(())
 }

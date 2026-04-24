@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH grex-doctor 1  "grex-doctor " 
+.SH NAME
+grex\-doctor \- Run integrity checks
+.SH SYNOPSIS
+\fBgrex\-doctor\fR [\fB\-\-fix\fR] [\fB\-\-lint\-config\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Run integrity checks
+.SH OPTIONS
+.TP
+\fB\-\-fix\fR
+Heal gitignore drift by re\-emitting the managed block. Safety: NEVER touches the manifest or the filesystem on other checks
+.TP
+\fB\-\-lint\-config\fR
+Run the opt\-in config\-lint check (`openspec/config.yaml` + `.omne/cfg/*.md`). Skipped by default
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

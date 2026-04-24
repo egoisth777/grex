@@ -1,0 +1,5 @@
+Hello from the grex reference pack-template.
+
+If you are reading this file under $HOME/.grex-pack-template/hello.txt, the
+template's `symlink` action executed successfully. Run `grex teardown
+grex-pack-template` to reverse the install.
