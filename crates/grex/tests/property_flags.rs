@@ -87,10 +87,12 @@ proptest! {
 /// `import` is excluded as of feat-m7-4a — it hard-requires a readable
 /// `--from-repos-json <path>` and a writable manifest; covered end-to-end
 /// in `crates/grex/tests/import_cli.rs`.
+/// `sync` is excluded as of feat-m8 — it now requires `<pack_root>` to
+/// avoid the stub fall-through; covered end-to-end in dedicated sync tests.
 #[test]
 fn each_verb_accepts_required_args() {
     for verb in VERBS {
-        if *verb == "serve" || *verb == "doctor" || *verb == "import" {
+        if *verb == "serve" || *verb == "doctor" || *verb == "import" || *verb == "sync" {
             continue;
         }
         let mut cmd = grex();

@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 description = "MCP-native server for grex (M7): exposes the 11 core verbs as MCP tools."
+documentation = "https://docs.rs/grex-mcp"
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 # `rmcp` defaults already include the server feature; we additionally need
@@ -69,3 +72,11 @@ chrono = { workspace = true }
 
 [lints]
 workspace = true
+
+# docs.rs metadata (M8-3). `all-features` intentionally covers `test-hooks`
+# so doc-only annotations on that feature's public surface render; if the
+# extra test-only symbols become noisy on docs.rs we can narrow to an
+# explicit `features = [...]` list here without touching the crate code.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

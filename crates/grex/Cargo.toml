@@ -1,5 +1,5 @@
 [package]
-name = "grex"
+name = "grex-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,9 @@ homepage.workspace = true
 authors.workspace = true
 readme.workspace = true
 description = "Cross-platform dev-environment orchestrator. Pack-based, agent-native, Rust-fast."
+documentation = "https://docs.rs/grex-cli"
+keywords.workspace = true
+categories.workspace = true
 
 [[bin]]
 name = "grex"

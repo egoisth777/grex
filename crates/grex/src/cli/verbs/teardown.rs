@@ -23,14 +23,26 @@ use tokio_util::sync::CancellationToken;
 /// (same pattern as `sync` since `anyhow::Error` does not carry them).
 pub fn run(args: TeardownArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
-        println!("grex teardown: requires <pack_root>");
-        return Ok(());
+        // Missing required positional → usage error. Mirrors `sync`'s
+        // fall-through (see that verb for the rationale).
+        if global.json {
+            super::sync::emit_json_error(
+                "usage",
+                "`<pack_root>` is required (directory with `.grex/pack.yaml` or the YAML file)",
+                "teardown",
+            );
+        } else {
+            eprintln!(
+                "grex teardown: <pack_root> required (directory with `.grex/pack.yaml` or the YAML file)"
+            );
+        }
+        std::process::exit(2);
     };
     let opts = SyncOptions::new()
         .with_dry_run(global.dry_run)
         .with_validate(!args.no_validate)
         .with_workspace(args.workspace.clone());
-    match run_impl(&pack_root, &opts, args.quiet, cancel) {
+    match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::Validation => std::process::exit(1),
         RunOutcome::Exec => std::process::exit(2),
@@ -49,39 +61,35 @@ fn run_impl(
     pack_root: &std::path::Path,
     opts: &SyncOptions,
     quiet: bool,
+    json: bool,
     cancel: &CancellationToken,
 ) -> RunOutcome {
     match sync::teardown(pack_root, opts, cancel) {
         Ok(report) => {
-            render_report(&report, quiet);
+            if json {
+                super::sync::emit_json_report(&report, opts.dry_run, "teardown");
+            } else {
+                render_report(&report, quiet);
+            }
             if report.halted.is_some() {
                 return RunOutcome::Exec;
             }
             RunOutcome::Ok
         }
-        Err(SyncError::Validation { errors }) => {
-            eprintln!("validation failed:");
-            for e in &errors {
-                eprintln!("  - {e}");
-            }
-            RunOutcome::Validation
-        }
-        Err(SyncError::Tree(e)) => {
-            eprintln!("tree walk failed: {e}");
-            RunOutcome::Tree
-        }
-        Err(SyncError::Exec(e)) => {
-            eprintln!("execution error: {e}");
-            RunOutcome::Exec
-        }
-        Err(SyncError::Halted(ctx)) => {
-            print_halted_context(&ctx);
-            RunOutcome::Exec
-        }
-        Err(other) => {
-            eprintln!("teardown failed: {other}");
-            RunOutcome::Tree
-        }
+        Err(err) => map_sync_outcome(super::sync::classify_sync_err(err, json, "teardown")),
+    }
+}
+
+/// Narrow `sync`'s [`super::sync::RunOutcome`] (which carries a
+/// `UsageError` variant for `--only` glob errors) down to teardown's
+/// smaller enum. Teardown doesn't accept `--only`, so `UsageError`
+/// would be unreachable; we collapse it into `Tree` defensively.
+fn map_sync_outcome(o: super::sync::RunOutcome) -> RunOutcome {
+    match o {
+        super::sync::RunOutcome::Ok => RunOutcome::Ok,
+        super::sync::RunOutcome::Validation => RunOutcome::Validation,
+        super::sync::RunOutcome::Exec => RunOutcome::Exec,
+        super::sync::RunOutcome::Tree | super::sync::RunOutcome::UsageError => RunOutcome::Tree,
     }
 }
 

@@ -28,8 +28,23 @@ use tokio_util::sync::CancellationToken;
 /// on the halt paths since `anyhow::Error` does not carry them.
 pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = args.pack_root.clone() else {
-        println!("grex sync: unimplemented (M1 scaffold)");
-        return Ok(());
+        // Missing required positional → usage error. `--json` emits the
+        // canonical error envelope (`{verb, error: {kind, message}}`);
+        // text mode prints a hint to stderr. Both paths exit 2 (the
+        // `cli.md` frozen usage-error code), matching how the MCP
+        // surface's `packop_error` reports the same failure.
+        if global.json {
+            emit_json_error(
+                "usage",
+                "`<pack_root>` is required (directory with `.grex/pack.yaml` or the YAML file)",
+                "sync",
+            );
+        } else {
+            eprintln!(
+                "grex sync: <pack_root> required (directory with `.grex/pack.yaml` or the YAML file)"
+            );
+        }
+        std::process::exit(2);
     };
     let dry_run = args.dry_run || global.dry_run;
     let only_patterns = if args.only.is_empty() { None } else { Some(args.only.clone()) };
@@ -40,7 +55,7 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
         .with_ref_override(args.ref_override.clone())
         .with_only_patterns(only_patterns)
         .with_force(args.force);
-    match run_impl(&pack_root, &opts, args.quiet, cancel) {
+    match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::UsageError => std::process::exit(2),
         RunOutcome::Validation => std::process::exit(1),
@@ -49,7 +64,7 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
     }
 }
 
-enum RunOutcome {
+pub(super) enum RunOutcome {
     Ok,
     /// CLI usage error (invalid `--only` glob, etc.). Maps to exit 2 — the
     /// `cli.md` frozen exit code for usage errors.
@@ -63,45 +78,169 @@ fn run_impl(
     pack_root: &std::path::Path,
     opts: &SyncOptions,
     quiet: bool,
+    json: bool,
     cancel: &CancellationToken,
 ) -> RunOutcome {
     match sync::run(pack_root, opts, cancel) {
         Ok(report) => {
-            render_report(&report, opts.dry_run, quiet);
+            if json {
+                emit_json_report(&report, opts.dry_run, "sync");
+            } else {
+                render_report(&report, opts.dry_run, quiet);
+            }
             if report.halted.is_some() {
                 return RunOutcome::Exec;
             }
             RunOutcome::Ok
         }
-        Err(SyncError::Validation { errors }) => {
-            eprintln!("validation failed:");
-            for e in &errors {
-                eprintln!("  - {e}");
-            }
+        Err(err) => classify_sync_err(err, json, "sync"),
+    }
+}
+
+/// Map a [`SyncError`] to a [`RunOutcome`] and emit the human or JSON
+/// error block. Extracted from `run_impl` to keep clippy's
+/// `too_many_lines` guard happy — the verb identifier is parameterised
+/// so `teardown` can reuse the same routing.
+pub(super) fn classify_sync_err(err: SyncError, json: bool, verb: &str) -> RunOutcome {
+    match err {
+        SyncError::Validation { errors } => {
+            emit_validation(&errors, json, verb);
             RunOutcome::Validation
         }
-        Err(SyncError::Tree(e)) => {
-            eprintln!("tree walk failed: {e}");
+        SyncError::Tree(e) => {
+            emit_simple("tree", &e.to_string(), "tree walk failed", json, verb);
             RunOutcome::Tree
         }
-        Err(SyncError::Exec(e)) => {
-            eprintln!("execution error: {e}");
+        SyncError::Exec(e) => {
+            emit_simple("exec", &e.to_string(), "execution error", json, verb);
             RunOutcome::Exec
         }
-        Err(SyncError::Halted(ctx)) => {
-            print_halted_context(&ctx);
+        SyncError::Halted(ctx) => {
+            if json {
+                emit_json_halted(&ctx, verb);
+            } else {
+                print_halted_context(&ctx);
+            }
             RunOutcome::Exec
         }
-        Err(SyncError::InvalidOnlyGlob { pattern, source }) => {
-            eprintln!("error: invalid --only glob `{pattern}`: {source}");
+        SyncError::InvalidOnlyGlob { pattern, source } => {
+            let msg = format!("invalid --only glob `{pattern}`: {source}");
+            emit_simple("usage", &msg, "error", json, verb);
             RunOutcome::UsageError
         }
-        // SyncError is `#[non_exhaustive]`; future variants route to the
-        // generic unrecoverable bucket until they get dedicated mapping.
-        Err(other) => {
-            eprintln!("sync failed: {other}");
+        other => {
+            emit_simple("other", &other.to_string(), &format!("{verb} failed"), json, verb);
             RunOutcome::Tree
         }
+    }
+}
+
+fn emit_validation(errors: &[impl std::fmt::Display], json: bool, verb: &str) {
+    if json {
+        let joined = errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; ");
+        emit_json_error("validation", &joined, verb);
+    } else {
+        eprintln!("validation failed:");
+        for e in errors {
+            eprintln!("  - {e}");
+        }
+    }
+}
+
+fn emit_simple(kind: &str, message: &str, human_prefix: &str, json: bool, verb: &str) {
+    if json {
+        emit_json_error(kind, message, verb);
+    } else {
+        eprintln!("{human_prefix}: {message}");
+    }
+}
+
+/// Emit the sync/teardown `SyncReport` as a JSON object mirroring the
+/// human text path. One `steps` entry per action; plus the halted
+/// context (when present) and a summary count block.
+pub(super) fn emit_json_report(report: &SyncReport, dry_run: bool, verb: &str) {
+    let steps: Vec<serde_json::Value> =
+        report.steps.iter().map(|s| step_to_json(s, dry_run)).collect();
+    let halted = report.halted.as_ref().and_then(|h| match h {
+        SyncError::Halted(ctx) => Some(serde_json::json!({
+            "pack": ctx.pack,
+            "action": ctx.action_name,
+            "idx": ctx.action_idx,
+            "error": ctx.error.to_string(),
+            "recovery_hint": ctx.recovery_hint,
+        })),
+        _ => None,
+    });
+    let doc = serde_json::json!({
+        "verb": verb,
+        "dry_run": dry_run,
+        "steps": steps,
+        "halted": halted,
+        "event_log_warnings": report.event_log_warnings,
+        "summary": {"total_steps": report.steps.len()},
+    });
+    if let Ok(s) = serde_json::to_string(&doc) {
+        println!("{s}");
+    }
+}
+
+fn step_to_json(s: &SyncStep, dry_run: bool) -> serde_json::Value {
+    use grex_core::ExecResult;
+    let (result, details) = match &s.exec_step.result {
+        ExecResult::PerformedChange => ("performed_change", serde_json::Value::Null),
+        ExecResult::WouldPerformChange => {
+            if dry_run {
+                ("would_perform_change", serde_json::Value::Null)
+            } else {
+                ("performed_change", serde_json::Value::Null)
+            }
+        }
+        ExecResult::AlreadySatisfied => ("already_satisfied", serde_json::Value::Null),
+        ExecResult::NoOp => ("noop", serde_json::Value::Null),
+        ExecResult::Skipped { pack_path, actions_hash, .. } => (
+            "skipped",
+            serde_json::json!({
+                "pack_path": pack_path.display().to_string(),
+                "actions_hash": actions_hash,
+            }),
+        ),
+        _ => ("other", serde_json::Value::Null),
+    };
+    serde_json::json!({
+        "pack": s.pack,
+        "action": s.exec_step.action_name,
+        "idx": s.action_idx,
+        "result": result,
+        "details": details,
+    })
+}
+
+pub(super) fn emit_json_error(kind: &str, message: &str, verb: &str) {
+    let doc = serde_json::json!({
+        "verb": verb,
+        "error": {
+            "kind": kind,
+            "message": message,
+        },
+    });
+    if let Ok(s) = serde_json::to_string(&doc) {
+        println!("{s}");
+    }
+}
+
+pub(super) fn emit_json_halted(ctx: &HaltedContext, verb: &str) {
+    let doc = serde_json::json!({
+        "verb": verb,
+        "halted": {
+            "pack": ctx.pack,
+            "action": ctx.action_name,
+            "idx": ctx.action_idx,
+            "error": ctx.error.to_string(),
+            "recovery_hint": ctx.recovery_hint,
+        },
+    });
+    if let Ok(s) = serde_json::to_string(&doc) {
+        println!("{s}");
     }
 }
 

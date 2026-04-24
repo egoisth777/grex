@@ -1,0 +1,45 @@
+schema_version: "1"
+name: grex-pack-template
+type: declarative
+version: "1.0.0"
+
+# Reference pack for grex v1.0.0.
+# Teaches the three most common real-world patterns:
+#   1. `require` — gate the pack on a prerequisite; abort early if missing.
+#   2. `mkdir`   — idempotent directory creation under the user's home.
+#   3. `symlink` — place a payload file under the user's home tree.
+#
+# `$HOME` is portable across all three OSes: grex-core's var-expansion
+# synthesises `$HOME` from `%USERPROFILE%` on Windows (see
+# `crates/grex-core/src/vars/mod.rs`), so a single action block covers
+# linux / macos / windows without an explicit `when:` fan-out.
+#
+# Every action below is a no-op on the second `grex sync`:
+#   * `require` re-evaluates the predicate (read-only).
+#   * `mkdir` no-ops when the directory already exists.
+#   * `symlink` no-ops when dst already points at src.
+#
+# Replace these actions with your own — the 7 primitives are documented at
+# https://egoisth777.github.io/grex/actions.html.
+
+actions:
+  - require:
+      any_of:
+        - cmd_available: git
+        - os: windows
+      on_fail: error
+
+  - mkdir: { path: "$HOME/.grex-pack-template" }
+
+  - symlink:
+      src: files/hello.txt
+      dst: "$HOME/.grex-pack-template/hello.txt"
+      backup: false
+      normalize: true
+      kind: file
+
+teardown:
+  - rmdir:
+      path: "$HOME/.grex-pack-template"
+      backup: true
+      force: false
