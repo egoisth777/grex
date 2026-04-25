@@ -1,14 +1,16 @@
-# grex — Cross-platform dev-environment orchestrator
+# grex — nested meta-repo manager. Pack-based, agent-native, Rust-fast.
 
 ![CI](https://github.com/egoisth777/grex/actions/workflows/ci.yml/badge.svg)
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)
 
 ## What is grex?
 
-`grex` is a pack-based, agent-native, Rust-fast orchestrator for cross-platform
-dev-environment setup. It turns your machine bootstrap into a declarative,
-reproducible graph of git-backed "packs" that can be synced, updated, and torn
-down with a single uniform command surface.
+`grex` manages trees of git repositories as a single addressable graph. Each
+node is a "pack" — a plain git repo plus a `.grex/` contract — and every pack
+is a meta-pack by construction (zero children = leaf, N children = orchestrator
+of N more packs, recursively). One uniform command surface (`sync`, `add`,
+`rm`, `update`, `status`, `import`, `doctor`, `teardown`, `exec`, `run`,
+`serve`) operates over the whole graph regardless of depth.
 
 ## Pack
 
@@ -47,14 +49,14 @@ powershell -c "irm https://github.com/egoisth777/grex/releases/latest/download/g
 Both installer one-liners are a **convenience path — they do NOT verify
 attestations**. For a verified install (SLSA build provenance via
 `gh attestation verify`), see
-[`docs/release.md` §Verified install](./docs/release.md#verified-install-recommended-for-security-sensitive-environments).
+[`man/release.md` §Verified install](./man/release.md#verified-install-recommended-for-security-sensitive-environments).
 
 Pre-built binaries ship for 5 targets: `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`,
 `x86_64-pc-windows-msvc`. Anything else falls back to `cargo install grex-cli`.
 
 Both installer one-liners resolve to the latest GitHub Release, built by
-`cargo-dist` on every `v*.*.*` tag push (see [`docs/release.md`](./docs/release.md)).
+`cargo-dist` on every `v*.*.*` tag push (see [`man/release.md`](./man/release.md)).
 
 ### Man pages
 
@@ -136,12 +138,26 @@ Universal flags on every verb: `--json`, `--plain`, `--dry-run`,
 
 M1 scaffold. See `milestone.md` for the roadmap.
 
-## Documentation
+## Documentation site
 
-- Hosted mdBook site: <https://egoisth777.github.io/grex/> <!-- TODO: verify at M8-1 tag cut (URL resolves once Pages is enabled on the repo) -->
-- API reference (post-M8-2 publish): <https://docs.rs/grex-core> / <https://docs.rs/grex-mcp>
-- Local build: `bash docs/build.sh` (or `docs\build.ps1` on Windows) — requires
-  `cargo install mdbook --locked`.
+The hosted documentation lives at <https://egoisth777.github.io/grex/>. It is
+built from [`man/`](./man/) (the human-readable doc home — `*.1` man pages plus
+authored markdown reference) by an mdBook site rooted at
+[`grex-doc/`](./grex-doc/). The site deploys to GitHub Pages on every
+`v*.*.*` tag push via
+[`.github/workflows/doc-site.yml`](./.github/workflows/doc-site.yml).
+
+API reference (post crates.io publish): <https://docs.rs/grex-core> /
+<https://docs.rs/grex-mcp>.
+
+Local preview:
+
+```sh
+cargo install mdbook mdbook-linkcheck --locked
+cargo run -p xtask -- doc-site-prep
+mdbook build grex-doc/
+mdbook serve grex-doc/   # http://localhost:3000
+```
 
 ### Source-of-truth design docs
 
@@ -157,7 +173,7 @@ entries categorised by Added / Changed / Deprecated / Removed / Fixed / Security
 
 ## Versioning
 
-See [`docs/semver.md`](./docs/semver.md) — what MAJOR / MINOR / PATCH mean for the
+See [`man/semver.md`](./man/semver.md) — what MAJOR / MINOR / PATCH mean for the
 four public surfaces (manifest schema, CLI surface, MCP tool surface, `pack.yaml`
 schema) plus the deprecation policy.
 
