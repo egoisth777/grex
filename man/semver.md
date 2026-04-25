@@ -159,7 +159,7 @@ are explicitly out-of-scope:
 
 ## See also
 
-- [`CHANGELOG.md`](../CHANGELOG.md) — per-release entries with categorised
+- [`CHANGELOG.md`](https://github.com/egoisth777/grex/blob/main/CHANGELOG.md) — per-release entries with categorised
   changes.
 - [`.omne/cfg/manifest.md`](../.omne/cfg/manifest.md) — normative manifest /
   lockfile schema.

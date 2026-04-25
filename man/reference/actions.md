@@ -76,7 +76,7 @@ Create or update a symlink, with optional backup of any existing dst.
 
 **Errors**: src missing, dst parent missing, privilege denied, `SymlinkAutoKindUnresolvable` (see above), `SymlinkCreateAfterBackupFailed` (see above).
 
-**Duplicate `dst` within a pack**: two or more `symlink` actions in the same pack whose resolved `dst` paths are equal is a **plan-phase validation error** (`ActionArgsInvalid`), raised before any action executes. On case-insensitive filesystems (Windows, macOS default APFS) the comparison is ASCII-case-folded so `C:\Users\a\x` and `c:\users\a\X` are detected as duplicates. Cross-pack collisions on the same `dst` are handled separately by workspace-level conflict detection. See [pack-spec.md §Validation rules](./pack-spec.md#validation-rules).
+**Duplicate `dst` within a pack**: two or more `symlink` actions in the same pack whose resolved `dst` paths are equal is a **plan-phase validation error** (`ActionArgsInvalid`), raised before any action executes. On case-insensitive filesystems (Windows, macOS default APFS) the comparison is ASCII-case-folded so `C:\Users\a\x` and `c:\users\a\X` are detected as duplicates. Cross-pack collisions on the same `dst` are handled separately by workspace-level conflict detection. See [pack-spec.md §Validation rules](../concepts/pack-spec.md#validation-rules).
 
 ### 2. `env`
 
@@ -240,7 +240,7 @@ Shell escape. Runs a command. **Array form by default** (no shell interpretation
 
 **Rollback**: none (grex cannot know how to undo arbitrary commands). Pack authors wanting true rollback must pair with a teardown action.
 
-**stderr capture on failure**: when `exec` returns a non-zero status (and `on_fail: error`), grex records the failure as `ExecNonZero` and attaches a **truncated** copy of the command's stderr — capped at 2 KiB — to the manifest `action_halted` event. The cap bounds manifest event size to stay below the fd-lock append atomicity ceiling (see [manifest.md §Atomic append](./manifest.md#atomic-append)). Full stderr is printed to the terminal regardless; only the manifest copy is truncated.
+**stderr capture on failure**: when `exec` returns a non-zero status (and `on_fail: error`), grex records the failure as `ExecNonZero` and attaches a **truncated** copy of the command's stderr — capped at 2 KiB — to the manifest `action_halted` event. The cap bounds manifest event size to stay below the fd-lock append atomicity ceiling (see [manifest.md §Atomic append](../concepts/manifest.md#atomic-append)). Full stderr is printed to the terminal regardless; only the manifest copy is truncated.
 
 ## Observed-pattern → primitive mapping
 
