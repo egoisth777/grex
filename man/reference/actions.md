@@ -1,6 +1,6 @@
 # actions
 
-7 Tier 1 action primitives. Grounded in observed real-world script patterns (see [goals.md](./goals.md) grounded-reality table). Each is a native Rust built-in registered as an `ActionPlugin` at compile time.
+7 Tier 1 action primitives. Grounded in observed real-world script patterns (see [goals.md](../concepts/goals.md) grounded-reality table). Each is a native Rust built-in registered as an `ActionPlugin` at compile time.
 
 ## Action invocation shape
 

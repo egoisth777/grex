@@ -12,24 +12,24 @@ from an LLM-driven agent speaking MCP.
   `ls`, `status`, `sync`, `update`, `doctor`, `serve`, `import`, `run`, and
   `exec`. Universal flags `--json`, `--plain`, `--dry-run`, `--parallel <N>`,
   and `--filter <EXPR>` apply on every verb — see
-  [CLI reference](./cli.md).
+  [CLI reference](./reference/cli.md).
 - A **declarative pack contract** — any git repo plus a `.grex/` directory
   with a `pack.yaml` becomes a grex pack. Three built-in pack-types cover
   the common cases; a plugin trait lets you add more without patching the
-  core. See [pack model](./pack-spec.md) and [plugin API](./plugin-api.md).
+  core. See [pack model](./concepts/pack-spec.md) and [plugin API](./reference/plugin-api.md).
 - A **reproducible manifest** — `grex.jsonl` captures intent, `grex.lock.jsonl`
   captures resolved state, both newline-delimited JSON with a `schema_version`
-  field on every row. Full details in [manifest](./manifest.md).
+  field on every row. Full details in [manifest](./concepts/manifest.md).
 - An **embedded MCP server** — `grex serve` speaks native MCP 2025-06-18 over
   stdio. Every non-`serve` verb is a tool call. No custom JSON-RPC dialect,
-  no `grex.*` namespace, no batching. See [MCP server](./mcp.md).
+  no `grex.*` namespace, no batching. See [MCP server](./reference/mcp.md).
 - **Parallel execution with a Lean4-verified invariant** — the scheduler
   holds a bounded semaphore, a per-pack `.grex-lock`, and an `fd-lock`
   manifest guard. Invariant I1 (no double lock) is mechanised in Lean4.
-  See [concurrency](./concurrency.md).
+  See [concurrency](./concepts/concurrency.md).
 - A **migration path** from legacy `REPOS.json` + `.scripts/` meta-repos via
   `grex import --from-repos-json` — both systems can coexist during the
-  transition. See [migration](./migration.md).
+  transition. See [migration](./guides/migration.md).
 
 ## Delivery milestones (M1–M7 shipped)
 
@@ -67,13 +67,15 @@ Release (M8-1 cargo-dist wiring).
 
 ## Where to go next
 
-- **New to grex?** Start at [goals](./goals.md), then
-  [architecture](./architecture.md), then [pack model](./pack-spec.md).
-- **Integrating grex into an agent?** Jump to [MCP server](./mcp.md) and the
-  [CLI reference](./cli.md).
+- **New to grex?** Start at [goals](./concepts/goals.md), then
+  [architecture](./concepts/architecture.md), then
+  [pack model](./concepts/pack-spec.md).
+- **Integrating grex into an agent?** Jump to [MCP server](./reference/mcp.md)
+  and the [CLI reference](./reference/cli.md).
 - **Working on grex itself?** See the
-  [engineering handbook](./engineering.md),
-  [linter rules](./linter.md), and [test plan](./test-plan.md).
+  [engineering handbook](./guides/engineering.md),
+  [linter rules](./internals/linter.md), and
+  [test plan](./guides/test-plan.md).
 - **API reference?** Canonical rustdoc lives at
   [docs.rs/grex-core](https://docs.rs/grex-core) and
   [docs.rs/grex-mcp](https://docs.rs/grex-mcp).

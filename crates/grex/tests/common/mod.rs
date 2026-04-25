@@ -28,7 +28,7 @@ pub const VERBS: &[&str] = &[
 /// exits with a severity-derived code, so its dedicated coverage lives in
 /// `crates/grex/tests/doctor_cli.rs`. `sync` is excluded as of
 /// feat-m8-release: the bare-invocation fall-through now emits a
-/// `usage` error envelope and exits 2 (see `docs/src/cli-json.md`
+/// `usage` error envelope and exits 2 (see `man/reference/cli-json.md`
 /// §"Missing `<pack_root>`"); its dedicated coverage lives in
 /// `crates/grex/tests/json_output.rs::sync_without_pack_root_json_emits_usage_error`
 /// and the E2E suite. Use this slice for parametric tests that actually
