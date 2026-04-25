@@ -1,18 +1,24 @@
 //! `cargo xtask` — internal build-tooling binary.
 //!
-//! Currently exposes a single subcommand:
+//! Subcommands:
 //!
 //! * `gen-man` — regenerate every Unix man page under `man/` from the
 //!   `clap::Command` tree built by `grex-cli`. The output is a passive
 //!   projection of the derive tree in `grex-cli::cli::args`; we never
 //!   edit the `.1` files by hand. CI's `man-drift` job enforces this
 //!   by diffing the committed outputs against a freshly generated set.
+//! * `doc-site-prep` (v1.0.1+) — copy `man/**/*.md` into `grex-doc/src/`
+//!   so `mdbook build grex-doc/` can render the documentation site
+//!   without symlinks (Windows-hostile). Skips `*.1` man-page binaries
+//!   and any pre-existing authored files in `grex-doc/src/`
+//!   (`SUMMARY.md`, `introduction.md`).
 //!
 //! Usage:
 //!
 //! ```sh
 //! cargo xtask gen-man                    # write to <workspace>/man/
 //! cargo xtask gen-man --out-dir /tmp/m   # write elsewhere
+//! cargo xtask doc-site-prep              # copy man/**/*.md → grex-doc/src/
 //! ```
 //!
 //! Command naming:
@@ -52,6 +58,11 @@ enum Cmd {
     /// Regenerate man pages under `<workspace-root>/man/` from the
     /// `clap::Command` tree in `grex-cli`.
     GenMan(GenManArgs),
+    /// Copy `man/**/*.md` into `grex-doc/src/` so `mdbook build
+    /// grex-doc/` can render the documentation site. Skips `*.1` and
+    /// the hand-authored `SUMMARY.md` / `introduction.md` already in
+    /// `grex-doc/src/`. Idempotent (overwrites; never appends).
+    DocSitePrep(DocSitePrepArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -61,10 +72,23 @@ struct GenManArgs {
     out_dir: Option<PathBuf>,
 }
 
+#[derive(clap::Args, Debug)]
+struct DocSitePrepArgs {
+    /// Source directory holding the `man/**/*.md` tree.
+    /// Defaults to `<workspace-root>/man`.
+    #[arg(long, value_name = "DIR")]
+    src_dir: Option<PathBuf>,
+    /// Destination directory rooted at the mdBook `src/`.
+    /// Defaults to `<workspace-root>/grex-doc/src`.
+    #[arg(long, value_name = "DIR")]
+    out_dir: Option<PathBuf>,
+}
+
 fn main() -> Result<()> {
     let xt = Xtask::parse();
     match xt.cmd {
         Cmd::GenMan(a) => gen_man(a),
+        Cmd::DocSitePrep(a) => doc_site_prep(a),
     }
 }
 
@@ -155,5 +179,73 @@ fn write_man(cmd: &clap::Command, path: &std::path::Path) -> Result<()> {
     let mut buf: Vec<u8> = Vec::new();
     man.render(&mut buf).context("render man page")?;
     fs::write(path, buf).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+/// Filenames inside `grex-doc/src/` that are hand-authored and must NOT
+/// be overwritten by `doc-site-prep`. Everything else under
+/// `grex-doc/src/` is treated as derived content from `man/**/*.md`.
+const DOC_SITE_AUTHORED: &[&str] = &["SUMMARY.md", "introduction.md"];
+
+/// Copy `man/**/*.md` into `grex-doc/src/`, preserving subdirectory
+/// structure. Idempotent — overwrites existing copies, never appends.
+///
+/// Skipped on the source side:
+/// * `*.1` — generated troff man pages (binaries to mdBook).
+/// * `README.md` — `man/README.md` is the directory entry point; the
+///   mdBook site has its own `introduction.md`.
+///
+/// Skipped on the destination side:
+/// * Files in [`DOC_SITE_AUTHORED`] are never overwritten — they are
+///   the mdBook site's own scaffolding.
+fn doc_site_prep(args: DocSitePrepArgs) -> Result<()> {
+    let root = workspace_root();
+    let src = args.src_dir.unwrap_or_else(|| root.join("man"));
+    let out = args.out_dir.unwrap_or_else(|| root.join("grex-doc").join("src"));
+
+    if !src.is_dir() {
+        anyhow::bail!("doc-site-prep: source dir does not exist: {}", src.display());
+    }
+    fs::create_dir_all(&out).with_context(|| format!("create out_dir {}", out.display()))?;
+
+    let mut copied = 0usize;
+    for entry in walkdir::WalkDir::new(&src).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // Skip non-markdown and the directory entry-point file.
+        if !name.ends_with(".md") || name == "README.md" {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&src)
+            .with_context(|| format!("strip_prefix on {}", path.display()))?;
+        // Guard against clobbering hand-authored mdBook scaffolding.
+        // `DOC_SITE_AUTHORED` is matched on the *full* relative path so
+        // a future `man/SUMMARY.md` (unlikely) wouldn't be silently
+        // dropped — only the literal `SUMMARY.md` / `introduction.md`
+        // at the destination root are protected.
+        if rel.parent().map(|p| p.as_os_str().is_empty()).unwrap_or(true)
+            && DOC_SITE_AUTHORED.contains(&name)
+        {
+            continue;
+        }
+        let dst = out.join(rel);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create parent {}", parent.display()))?;
+        }
+        fs::copy(path, &dst)
+            .with_context(|| format!("copy {} -> {}", path.display(), dst.display()))?;
+        copied += 1;
+    }
+
+    println!(
+        "doc-site-prep: copied {copied} markdown file(s) from {} into {}",
+        src.display(),
+        out.display()
+    );
     Ok(())
 }
