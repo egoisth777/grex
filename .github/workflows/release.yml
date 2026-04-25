@@ -320,7 +320,7 @@ jobs:
 
           # Idempotency: refuse to overwrite an existing release. Re-tagging
           # breaks provenance and every cached installer script (see
-          # docs/release.md §Rollback). Delete the tag + release manually if
+          # man/release.md §Rollback). Delete the tag + release manually if
           # you really want to re-cut.
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::error::release '$TAG' already exists — aborting (delete manually to re-cut)"

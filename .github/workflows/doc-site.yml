@@ -1,0 +1,92 @@
+name: doc-site
+
+# Build the `grex-doc/` mdBook site (sourced from `man/**/*.md`) on every
+# PR that touches the doc tree, and deploy to GitHub Pages on every
+# `v*.*.*` tag push. Replaces the legacy `.github/workflows/docs.yml`,
+# which built the now-removed `docs/` source tree.
+#
+# Prereq (one-time, maintainer-owned): repo Settings → Pages → Source =
+# "GitHub Actions" must be enabled before the v1.0.1 tag push. See
+# `openspec/changes/feat-v1.0.1-doc-site/proposal.md` for context.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - "man/**"
+      - "grex-doc/**"
+      - "crates/xtask/**"
+      - ".github/workflows/doc-site.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: mdbook build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Fast PR feedback: cancel superseded build runs on the same ref.
+    concurrency:
+      group: doc-site-build-${{ github.ref }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: doc-site
+
+      - name: Install mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: latest
+
+      - name: Install mdbook-linkcheck preprocessor
+        # peaceiris/actions-mdbook does NOT install preprocessors. The
+        # linkcheck preprocessor is wired into grex-doc/book.toml and
+        # `mdbook build` will fail with "preprocessor not found"
+        # without it.
+        run: cargo install mdbook-linkcheck --locked
+
+      - name: doc-site-prep (copy man/**/*.md into grex-doc/src/)
+        run: cargo run --quiet -p xtask -- doc-site-prep
+
+      - name: mdbook build grex-doc/
+        run: mdbook build grex-doc/
+
+      - name: Upload Pages artefact
+        # `mdbook-linkcheck` is configured with two backends and writes
+        # output under `grex-doc/book/html/`. Upload that subdir as the
+        # Pages artefact so GitHub serves it as the site root.
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: grex-doc/book/html
+
+  deploy:
+    name: deploy to GitHub Pages
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Documented GitHub Pages deploy pattern: serialise on the shared
+    # `pages` group and never cancel an in-flight deploy.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
