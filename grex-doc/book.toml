@@ -14,7 +14,6 @@ title = "grex documentation v1.0.1"
 description = "User-facing documentation for grex — nested meta-repo manager. Pack-based, agent-native, Rust-fast."
 authors = ["egoisth777"]
 language = "en"
-multilingual = false
 src = "src"
 
 [output.html]
