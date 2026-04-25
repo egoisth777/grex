@@ -18,7 +18,6 @@ src = "src"
 
 [output.html]
 git-repository-url = "https://github.com/egoisth777/grex"
-git-repository-icon = "fa-github"
 edit-url-template = "https://github.com/egoisth777/grex/edit/main/man/{path}"
 default-theme = "navy"
 preferred-dark-theme = "navy"
@@ -49,5 +48,3 @@ exclude = [
     "crates/.*",
     "openspec/.*",
 ]
-
-[preprocessor.linkcheck]

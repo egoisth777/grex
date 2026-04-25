@@ -46,7 +46,10 @@ jobs:
       - name: Install mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: latest
+          # Pinned (not `latest`) so future Font Awesome / template
+          # churn upstream cannot silently break the doc-site build.
+          # Bump deliberately + verify locally before raising.
+          mdbook-version: '0.4.40'
 
       - name: Install mdbook-linkcheck preprocessor
         # peaceiris/actions-mdbook does NOT install preprocessors. The
