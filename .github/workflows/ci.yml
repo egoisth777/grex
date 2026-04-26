@@ -156,7 +156,7 @@ jobs:
 
   # Gate: MCP protocol conformance (L6) — external-oracle gate.
   # Runs `mcp-validator` (Janix-ai) against a release build of `grex serve`
-  # at protocol `2025-06-18`. See `docs/ci/mcp-conformance.md` for pin
+  # at protocol `2025-06-18`. See `man/ci/mcp-conformance.md` for pin
   # rationale, bypass procedure, and local repro steps.
   #
   # Self-contained job — owns its own `cargo build --release` so `needs:` is
@@ -171,7 +171,7 @@ jobs:
   # than upstream directly so arbitrary upstream commits (or a compromised /
   # deleted upstream) cannot execute code in CI — the SHA is the same, but
   # the host repo is one we control. See
-  # `docs/ci/mcp-conformance.md` §"Supply-chain hardening" for rationale.
+  # `man/ci/mcp-conformance.md` §"Supply-chain hardening" for rationale.
   #
   # PyPI publication of `mcp-validator==0.3.1` is NOT available (PyPI only
   # lists `0.1.1` as of the 2026-04-22 lookup), so the git+SHA install path
@@ -201,7 +201,7 @@ jobs:
         # (a fork of `Janix-ai/mcp-validator` pinned at the same SHA) to
         # close the supply-chain ACE risk of running an external repo's
         # code under CI credentials. Mirror refresh procedure +
-        # rationale: `docs/ci/mcp-conformance.md` §"Supply-chain hardening".
+        # rationale: `man/ci/mcp-conformance.md` §"Supply-chain hardening".
         #
         # Upstream at tag v0.3.1 ships NEITHER `setup.py` NOR
         # `pyproject.toml`, so `pip install git+URL` is NOT supported —

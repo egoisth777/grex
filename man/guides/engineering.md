@@ -104,7 +104,7 @@ typos
 cargo deny check
 ```
 
-Details in [linter.md](./linter.md).
+Details in [linter.md](../internals/linter.md).
 
 ## CI matrix (`.github/workflows/ci.yml`)
 

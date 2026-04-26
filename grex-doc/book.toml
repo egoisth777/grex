@@ -1,0 +1,50 @@
+# grex-doc — mdBook config for the user-facing v1 documentation site.
+#
+# Sources live under `man/` (the human-readable doc home — `*.1` man
+# pages plus authored markdown). `cargo run -p xtask -- doc-site-prep`
+# copies every `man/**/*.md` into `grex-doc/src/` (preserving subdir
+# structure), then `mdbook build grex-doc/` renders the site into
+# `grex-doc/book/`. Output is gitignored.
+#
+# Deployed to GitHub Pages on every `v*.*.*` tag push by
+# `.github/workflows/doc-site.yml`.
+
+[book]
+title = "grex documentation v1.0.1"
+description = "User-facing documentation for grex — nested meta-repo manager. Pack-based, agent-native, Rust-fast."
+authors = ["egoisth777"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/egoisth777/grex"
+edit-url-template = "https://github.com/egoisth777/grex/edit/main/man/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 1
+
+# mdbook-linkcheck — fails the build on broken internal links.
+# External (HTTP) link checking is intentionally disabled to avoid CI
+# flakes on transient network outages; see
+# `openspec/changes/feat-v1.0.1-doc-site/design.md` §"linkcheck preprocessor scope".
+#
+# `exclude` patterns:
+# * `\.omne/cfg/.*`     — agent-readable design-doc tree, git-ignored
+#                         (not present on a fresh clone, so linkcheck
+#                         cannot resolve the path even though authors
+#                         have it locally).
+# * `crates/.*`         — links into Rust source from the doc tree;
+#                         GitHub renders them, but linkcheck can't
+#                         walk out of `grex-doc/src/`.
+# * `openspec/.*`       — same reasoning as crates/.
+[output.linkcheck]
+follow-web-links = false
+warning-policy = "warn"
+exclude = [
+    "\\.omne/cfg/.*",
+    "crates/.*",
+    "openspec/.*",
+]

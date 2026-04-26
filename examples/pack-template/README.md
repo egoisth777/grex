@@ -39,9 +39,9 @@ grex add git@github.com:egoisth777/grex-pack-template.git
 ```
 
 See the mdBook "Pack template" chapter (source:
-[`docs/src/pack-template.md`](../../docs/src/pack-template.md)) for the
-ownership / publishing contract between the in-tree copy and the external
-mirror.
+[`man/reference/pack-template.md`](../../man/reference/pack-template.md))
+for the ownership / publishing contract between the in-tree copy and the
+external mirror.
 
 ## Structure
 

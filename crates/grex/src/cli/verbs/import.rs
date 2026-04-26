@@ -56,7 +56,7 @@ fn emit_human(plan: &ImportPlan, dry_run: bool) {
 
 /// Canonical `import` JSON shape. Must remain byte-equal to the MCP
 /// handler's output (`crates/grex-mcp/src/tools/import.rs::render_plan_json`)
-/// and match `docs/src/cli-json.md §import`. Any field rename or
+/// and match `man/reference/cli-json.md §import`. Any field rename or
 /// addition MUST land in all three places in the same commit.
 ///
 /// Shape: `{dry_run, imported[], skipped[], failed[]}`. No `summary`

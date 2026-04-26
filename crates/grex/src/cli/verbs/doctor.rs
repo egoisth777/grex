@@ -44,7 +44,7 @@ fn print_table(report: &DoctorReport) {
 
 /// Canonical `doctor` JSON shape. Must remain byte-equal to the MCP
 /// handler's output (`crates/grex-mcp/src/tools/doctor.rs::render_report_json`)
-/// and match `docs/src/cli-json.md §doctor`. Any field rename or
+/// and match `man/reference/cli-json.md §doctor`. Any field rename or
 /// addition MUST land in all three places in the same commit.
 fn render_json(report: &DoctorReport) -> String {
     let findings: Vec<serde_json::Value> = report

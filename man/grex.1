@@ -1,12 +1,12 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH grex 1  "grex 1.0.0" 
+.TH grex 1  "grex 1.0.1" 
 .SH NAME
-grex \- Pack\-based dev\-env orchestrator
+grex \- grex — nested meta\-repo manager. Pack\-based, agent\-native, Rust\-fast.
 .SH SYNOPSIS
 \fBgrex\fR [\fB\-\-json\fR] [\fB\-\-plain\fR] [\fB\-\-dry\-run\fR] [\fB\-\-filter\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-Pack\-based dev\-env orchestrator
+grex manages trees of git repositories as a single addressable graph. Each node is a "pack" — a plain git repo plus a `.grex/` contract — and every pack is a meta\-pack by construction (zero children = leaf, N children = orchestrator of N more packs, recursively). One uniform command surface (`sync`, `add`, `rm`, `update`, `status`, `import`, `doctor`, `teardown`, `exec`, `run`, `serve`) operates over the whole graph regardless of depth.
 .SH OPTIONS
 .TP
 \fB\-\-json\fR
@@ -22,7 +22,7 @@ Show planned actions without executing them
 Filter packs by expression
 .TP
 \fB\-h\fR, \fB\-\-help\fR
-Print help
+Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Print version
@@ -70,4 +70,4 @@ Tear down a pack tree (reverse of `sync`/`install`)
 grex\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
-v1.0.0
+v1.0.1

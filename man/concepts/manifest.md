@@ -57,7 +57,7 @@ Semantics:
 
 - `action_started` is written under the manifest lock **before** the action runs.
 - `action_completed` is written under the manifest lock **after** the action returns `Ok`.
-- `action_halted` is written when the action returns `Err`, carrying a compact failure reason plus (for `exec`) a stderr tail capped at 2 KiB (see [actions.md §exec](./actions.md#7-exec)).
+- `action_halted` is written when the action returns `Err`, carrying a compact failure reason plus (for `exec`) a stderr tail capped at 2 KiB (see [actions.md §exec](../reference/actions.md#7-exec)).
 - An `action_started` with no matching `action_completed` / `action_halted` indicates a crash mid-action. The startup recovery scan (see [concurrency.md §Recovery scan](./concurrency.md#recovery-scan)) reports these; cleanup is `grex doctor` territory (M4+).
 
 `ManifestLock` is acquired **per-action** (not per-sync), so a long sync with many actions interleaves lock acquire/release rather than holding the global lock end-to-end.

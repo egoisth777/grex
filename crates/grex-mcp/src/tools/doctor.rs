@@ -77,7 +77,7 @@ fn report_envelope(report: &DoctorReport) -> CallToolResult {
 }
 
 /// Canonical `doctor` JSON shape. Shared with the CLI `--json` surface;
-/// the exact same fields must appear in `docs/src/cli-json.md`.
+/// the exact same fields must appear in `man/reference/cli-json.md`.
 pub(crate) fn render_report_json(report: &DoctorReport) -> serde_json::Value {
     let findings: Vec<_> = report
         .findings

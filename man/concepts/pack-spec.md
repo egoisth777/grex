@@ -58,7 +58,7 @@ children:
 
 ### `actions` list
 
-Each entry is a YAML object with exactly one known action key (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) or a plugin-registered name. The value under the key is the action's arg-object, per that action's schema (see [actions.md](./actions.md)).
+Each entry is a YAML object with exactly one known action key (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) or a plugin-registered name. The value under the key is the action's arg-object, per that action's schema (see [actions.md](../reference/actions.md)).
 
 ### Targets / platform overrides
 

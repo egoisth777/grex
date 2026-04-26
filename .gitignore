@@ -19,3 +19,6 @@ Thumbs.db
 lean/build/
 lean/.lake/
 lean/lake-packages/
+
+# mdBook site output (grex-doc/ — built artefact, deployed by doc-site.yml)
+grex-doc/book/

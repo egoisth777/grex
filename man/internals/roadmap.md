@@ -4,7 +4,7 @@ Content scope by release. Timeline is ordering + dependencies, not dates.
 
 ## v1 — Pack-based orchestrator, stable core
 
-Ships all 7 philosophy principles (see [goals.md](./goals.md)).
+Ships all 7 philosophy principles (see [goals.md](../concepts/goals.md)).
 
 ### Core always compiled
 - Manifest (JSONL intent log).

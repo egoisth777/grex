@@ -3,7 +3,7 @@
 How to cut a `grex` release. Covers the GitHub Release (binaries via
 cargo-dist) and the crates.io publish steps. Rollback procedure at the end.
 
-Audience: maintainers. Users should install per [README.md §Install](../README.md#install).
+Audience: maintainers. Users should install per [README.md §Install](https://github.com/egoisth777/grex/blob/main/README.md#install).
 
 ## Prerequisites
 

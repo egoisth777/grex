@@ -129,7 +129,7 @@ fn success_envelope(plan: &ImportPlan, dry_run: bool) -> CallToolResult {
 }
 
 /// Canonical `import` JSON shape. Shared with the CLI `--json` surface;
-/// the exact same fields must appear in `docs/src/cli-json.md`.
+/// the exact same fields must appear in `man/reference/cli-json.md`.
 ///
 /// Shape: `{dry_run, imported[], skipped[], failed[]}`. No `summary`
 /// wrapper — callers derive counts from the three arrays directly.
