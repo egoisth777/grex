@@ -45,7 +45,7 @@ plugin-inventory = ["dep:inventory"]
 # FsExecutor, plus the `reg_key` predicate probe (M4-C) in
 # `execute::predicate`. Minimal-feature build — we only touch string values.
 [target.'cfg(windows)'.dependencies]
-winreg = { version = "0.55", default-features = false }
+winreg = { version = "0.56", default-features = false }
 
 [dev-dependencies]
 tempfile = { workspace = true }
