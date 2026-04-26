@@ -7,7 +7,7 @@
 //!
 //! When you intentionally cut a new release, update the constant below.
 
-const EXPECTED_WORKSPACE_VERSION: &str = "1.0.2";
+const EXPECTED_WORKSPACE_VERSION: &str = "1.0.3";
 
 #[test]
 fn workspace_version_is_pinned() {

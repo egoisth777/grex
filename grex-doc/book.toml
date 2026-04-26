@@ -10,7 +10,7 @@
 # `.github/workflows/doc-site.yml`.
 
 [book]
-title = "grex documentation v1.0.1"
+title = "grex documentation"
 description = "User-facing documentation for grex — nested meta-repo manager. Pack-based, agent-native, Rust-fast."
 authors = ["egoisth777"]
 language = "en"
