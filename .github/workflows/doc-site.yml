@@ -68,7 +68,7 @@ jobs:
         # `mdbook-linkcheck` is configured with two backends and writes
         # output under `grex-doc/book/html/`. Upload that subdir as the
         # Pages artefact so GitHub serves it as the site root.
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: grex-doc/book/html
 
