@@ -70,7 +70,7 @@ cargo publish --wait-for-publish --timeout 300 -p grex-cli
 
 Order rationale: `grex-plugins-builtin` and `grex-mcp` both depend on
 `grex-core`; `grex-cli` depends on all three. See
-[`openspec/changes/feat-m8-release/crates-io-names.md`](../openspec/changes/feat-m8-release/crates-io-names.md)
+[`openspec/changes/feat-m8-release/crates-io-names.md`](https://github.com/egoisth777/grex/blob/main/openspec/changes/feat-m8-release/crates-io-names.md)
 §2 for the dep graph.
 
 **Smoke test post-publish:**

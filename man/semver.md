@@ -161,9 +161,9 @@ are explicitly out-of-scope:
 
 - [`CHANGELOG.md`](https://github.com/egoisth777/grex/blob/main/CHANGELOG.md) — per-release entries with categorised
   changes.
-- [`.omne/cfg/manifest.md`](../.omne/cfg/manifest.md) — normative manifest /
+- [`.omne/cfg/manifest.md`](https://github.com/egoisth777/grex/blob/main/.omne/cfg/manifest.md) — normative manifest /
   lockfile schema.
-- [`.omne/cfg/cli.md`](../.omne/cfg/cli.md) — v1 frozen verb contract.
-- [`.omne/cfg/mcp.md`](../.omne/cfg/mcp.md) — MCP server surface.
-- [`.omne/cfg/pack-spec.md`](../.omne/cfg/pack-spec.md) — `pack.yaml` schema
+- [`.omne/cfg/cli.md`](https://github.com/egoisth777/grex/blob/main/.omne/cfg/cli.md) — v1 frozen verb contract.
+- [`.omne/cfg/mcp.md`](https://github.com/egoisth777/grex/blob/main/.omne/cfg/mcp.md) — MCP server surface.
+- [`.omne/cfg/pack-spec.md`](https://github.com/egoisth777/grex/blob/main/.omne/cfg/pack-spec.md) — `pack.yaml` schema
   and built-in pack-types.
