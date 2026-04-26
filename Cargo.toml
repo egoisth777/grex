@@ -127,7 +127,7 @@ targets = [
 ]
 pr-run-mode = "plan"
 github-attestations = true
-include = ["CHANGELOG.md", "README.md", "LICENSE*", "man/"]
+include = ["CHANGELOG.md", "README.md", "LICENSE", "LICENSE-APACHE", "LICENSE-MIT", "man/"]
 # Pin runners explicitly — ubuntu-20.04 was retired 2025-04. Map Linux jobs to
 # ubuntu-22.04 (covers glibc compatibility for older distros while staying
 # within GitHub-hosted supported images). macOS/Windows left to cargo-dist
