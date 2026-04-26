@@ -24,7 +24,7 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 globset = { workspace = true }
 inventory = { version = "0.3", optional = true }
 async-trait = "0.1"
