@@ -275,6 +275,10 @@ fn partial_line_append_then_concurrent_preserves_prior() {
 fn high_thread_count_stress() {
     const THREADS: usize = 64;
     const PER_THREAD: usize = 10;
+    #[cfg(windows)]
+    const STRESS_DEADLINE: Duration = Duration::from_secs(90);
+    #[cfg(not(windows))]
+    const STRESS_DEADLINE: Duration = Duration::from_secs(30);
 
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
@@ -308,7 +312,7 @@ fn high_thread_count_stress() {
     assert_eq!(ids.len(), total, "no duplicates under heavy contention");
     // Loose stability bound: 64×10 = 640 appends should complete under a
     // generous ceiling even on slow CI. Not a perf assertion.
-    assert!(elapsed < Duration::from_secs(30), "stress run took too long: {elapsed:?}");
+    assert!(elapsed < STRESS_DEADLINE, "stress run took too long: {elapsed:?}");
 }
 
 // ---------------------------------------------------------------------------

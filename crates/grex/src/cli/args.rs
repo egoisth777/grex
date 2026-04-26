@@ -1,7 +1,17 @@
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "grex", version, about = "Pack-based dev-env orchestrator", long_about = None)]
+#[command(
+    name = "grex",
+    version,
+    about = "grex — nested meta-repo manager. Pack-based, agent-native, Rust-fast.",
+    long_about = "grex manages trees of git repositories as a single addressable graph. \
+        Each node is a \"pack\" — a plain git repo plus a `.grex/` contract — and every \
+        pack is a meta-pack by construction (zero children = leaf, N children = orchestrator \
+        of N more packs, recursively). One uniform command surface (`sync`, `add`, `rm`, \
+        `update`, `status`, `import`, `doctor`, `teardown`, `exec`, `run`, `serve`) operates \
+        over the whole graph regardless of depth."
+)]
 pub struct Cli {
     #[command(flatten)]
     pub global: GlobalFlags,

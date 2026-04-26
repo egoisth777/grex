@@ -8,7 +8,7 @@ stdio for JSON-RPC framing, so `--json` is not applicable there.
 This chapter is the **v1 JSON contract**. Field names are stable across
 PATCH / MINOR releases; new fields may be added (readers must ignore
 unknown keys per the manifest wire invariant). Breaking changes require
-a MAJOR bump and a deprecation cycle — see [`semver.md`](./semver.md).
+a MAJOR bump and a deprecation cycle — see [`semver.md`](../semver.md).
 
 ## Two envelope families
 

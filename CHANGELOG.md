@@ -1,7 +1,7 @@
 # Changelog
 
 <!--
-  Versioning policy: see ./docs/semver.md.
+  Versioning policy: see ./man/semver.md.
   Section meanings (Keep-a-Changelog 1.1.0):
     - Added       — new features / surfaces.
     - Changed     — changes to existing behaviour.
@@ -15,7 +15,7 @@ All notable changes to `grex` are documented in this file.
 
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-See [`docs/semver.md`](./docs/semver.md) for what MAJOR / MINOR / PATCH mean in terms
+See [`man/semver.md`](./man/semver.md) for what MAJOR / MINOR / PATCH mean in terms
 of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` schema.
 
 ## [Unreleased]
@@ -31,6 +31,50 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 ### Fixed
 
 ### Security
+
+## [1.0.1] - 2026-04-24
+
+Documentation surface restructure plus a positioning rewrite. No runtime /
+CLI / MCP / `pack.yaml` behaviour changes — surface and metadata only.
+
+### Added
+
+- **Documentation site** at <https://egoisth777.github.io/grex/>, built from
+  [`man/`](./man/) by an mdBook site rooted at [`grex-doc/`](./grex-doc/).
+  Deployed to GitHub Pages on every `v*.*.*` tag push by
+  [`.github/workflows/doc-site.yml`](./.github/workflows/doc-site.yml).
+- `xtask doc-site-prep` subcommand — copies `man/**/*.md` into
+  `grex-doc/src/` so `mdbook build grex-doc/` can render the site without
+  symlinks (Windows-friendly).
+- `mdbook-linkcheck` preprocessor wired into `grex-doc/book.toml` — internal
+  link rot fails the build.
+- `crates/grex/tests/positioning_test.rs` — guards the v1 tagline ("nested
+  meta-repo manager") on three surfaces (clap `about`, `man/grex.1`, README
+  first 30 lines).
+- `crates/xtask/tests/version_test.rs` — guards the workspace version
+  (asserts `env!("CARGO_PKG_VERSION") == "1.0.1"`).
+- New top-level [`man/README.md`](./man/README.md) — entry point for `man/`,
+  indexes the 15 generated `.1` pages and the bucketed authored reference.
+
+### Changed
+
+- **Repositioning**: tagline reframed from "Cross-platform dev-environment
+  orchestrator" to **"nested meta-repo manager. Pack-based, agent-native,
+  Rust-fast."** across `README.md`, all four crate `Cargo.toml` `description`
+  fields, `crates/grex/src/cli/args.rs` clap `about`, and the regenerated
+  `man/grex.1` NAME line.
+- Migrated `docs/` → `man/` (single human-readable doc home). Authored
+  reference content is bucketed under `man/concepts/`, `man/reference/`,
+  `man/guides/`, `man/internals/`, `man/ci/`. `release.md`, `semver.md`,
+  and `introduction.md` stay at `man/` root for findability.
+- Workspace version bumped `1.0.0` → `1.0.1`.
+
+### Removed
+
+- `docs/` directory deleted entirely (`book.toml`, `build.{sh,ps1}`, `src/`,
+  `src-authored/`, `ci/`). Content migrated under `man/`.
+- `.github/workflows/docs.yml` deleted (built the now-removed `docs/` source
+  tree; superseded by `.github/workflows/doc-site.yml`).
 
 ## [1.0.0] - 2026-04-23
 
@@ -58,7 +102,7 @@ plus the M8-6 / M8-7 completeness work. Section previously tracked as
   `{"status": "unimplemented", "verb": "<name>"}`; `sync` / `teardown`
   emit a `SyncReport`-shaped document. `serve` is excluded (it owns
   stdio for JSON-RPC). Schemas are documented in
-  [`docs/src/cli-json.md`](./docs/src/cli-json.md). Resolves M8-6.
+  [`man/reference/cli-json.md`](./man/reference/cli-json.md). Resolves M8-6.
 
 - **M1 — cargo workspace scaffold**: 4-crate cargo workspace (`grex-core`,
   `grex-mcp`, `grex`, test harness), `clap`-driven CLI skeleton with the full
@@ -154,7 +198,7 @@ plus the M8-6 / M8-7 completeness work. Section previously tracked as
 
 ### Deprecated
 
-- Nothing deprecated in 1.0.0. See [`docs/semver.md`](./docs/semver.md) for the
+- Nothing deprecated in 1.0.0. See [`man/semver.md`](./man/semver.md) for the
   deprecation policy going forward (one MINOR cycle of warnings before removal
   in a MAJOR).
 
@@ -189,5 +233,6 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/egoisth777/grex/releases/tag/v1.0.1
 [1.0.0]: https://github.com/egoisth777/grex/releases/tag/v1.0.0

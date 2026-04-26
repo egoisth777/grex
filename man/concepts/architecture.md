@@ -97,7 +97,7 @@ grex/
 
 ## Core trait sketches
 
-Full contracts in [plugin-api.md](./plugin-api.md). Condensed here:
+Full contracts in [plugin-api.md](../reference/plugin-api.md). Condensed here:
 
 ```rust
 use async_trait::async_trait;
