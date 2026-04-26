@@ -32,6 +32,25 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.0.2] - 2026-04-25
+
+Doc-site quality fix. No runtime / CLI / MCP / `pack.yaml` behaviour
+changes — surface and metadata only.
+
+### Fixed
+
+- Five 404s on the live doc-site caused by markdown links into repo-only
+  paths (`.omne/cfg/*`, `openspec/changes/...`) that mdBook rendered as
+  `.html` siblings. Rewritten as `https://github.com/.../blob/main/...`
+  source links so they resolve regardless of where the page is rendered.
+
+### Changed
+
+- Landing page (`introduction.md`, sync'd to `grex-doc/src/introduction.md`)
+  rewritten to lead with the locked positioning ("nested meta-repo
+  manager"), a 30-second quickstart, and a tighter "read next" index.
+  Removed M1–M7 internal milestone changelog from the public landing.
+
 ## [1.0.1] - 2026-04-24
 
 Documentation surface restructure plus a positioning rewrite. No runtime /
