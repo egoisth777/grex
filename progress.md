@@ -1,7 +1,24 @@
 # progress — grex
 
 ## Where we are
-**v1.1.0 SHIPPED (2026-04-27).** PR #50 squash-merged to `main` at `e54dc64`; tag `v1.1.0` (tag SHA `1b537c0`) pushed; cargo-dist `release.yml` (run [24984990441](https://github.com/egoisth777/grex/actions/runs/24984990441)) emitted GitHub Release [v1.1.0](https://github.com/egoisth777/grex/releases/tag/v1.1.0) with 16 assets (5 archive targets + installers + checksums + dist-manifest). All 4 crates published to crates.io topologically (`grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`), each at `1.1.0`. Local `cargo install grex-cli --force --version 1.1.0` upgraded `~/.cargo/bin/grex.exe` from 1.0.0 → 1.1.0. End-to-end validation against `E:\repos\code` exposed a real legacy/flat-sibling collision (auto-migration WARN-skipped non-destructively as designed; subsequent `tree walk` exits code 3 because flat-sibling child `algo-leet` lacks its own `.grex/pack.yaml` — workspace-side state, not a v1.1.0 regression). PRs #51 #52 still open as post-1.1.0 follow-ups. v1.1.0 history below.
+**v1.1.0 SHIPPED (2026-04-27); v1.2.0 OPENSPEC DRAFTED.** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Real-workspace validation surfaced a remaining gap: `grex sync` requires every child to carry its own `.grex/pack.yaml` — plain-git children (the grex-org bootstrap pattern) cannot be walked end-to-end. v1.2.0 openspec drafted at `openspec/changes/feat-v1.2.0-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children. PR #<NN> open vs `main`. PR #51 + #52 (post-1.1.0 follow-ups) still open. Detailed v1.1.0 ship + v1.1.x follow-up history below.
+
+## Endpoint (2026-04-27, feat/v1.2.0-plain-git-children — openspec drafted)
+- Branch: `feat/v1.2.0-plain-git-children` at `<commit-sha>`; PR #<NN> open vs `main`. Markdown-only (proposal + design + tasks + 2 pack-spec mirror updates).
+- **Trigger:** v1.1.0 ship validation against `E:\repos\code` (user's real 14-child workspace) showed `tree walk failed: pack manifest not found at .\algo-leet\.grex\pack.yaml`. Even after v1.1.0's flat-sibling fix, sync still requires every child to carry its own `.grex/pack.yaml`. Plain-git children (the grex-org bootstrap pattern grex was designed to productize) are excluded.
+- **Locked decisions (user, 2026-04-27):**
+  1. Approach A (lenient mode): walker synthesizes `scripted`-no-hooks pack manifest in-memory when child has `.git/` but no `.grex/pack.yaml`
+  2. SemVer MINOR (1.1.0 → 1.2.0; additive, no break)
+  3. Branch + openspec NOW; impl in follow-up PR after openspec review
+- **Code blast radius (impl PR):**
+  - `crates/grex-core/src/tree/walker.rs` — add synthetic-manifest fallback in load step
+  - `crates/grex-core/src/lockfile/...` — add `synthetic: bool` field
+  - `crates/grex-core/src/doctor.rs` — handle synthetic packs as OK
+  - `crates/grex/src/cli/verbs/ls.rs` — surface `~` marker
+  - New e2e: `crates/grex/tests/plain_git_children_sync.rs`
+- **Acceptance criteria:** existing 703 tests pass; new e2e passes; `grex sync E:\repos\code` walks 14 plain-git children + idempotent re-sync clean.
+- **Pack-spec callout added:** `grex-doc/src/concepts/pack-spec.md` + `man/concepts/pack-spec.md` now note "Planned for v1.2.0" placeholder.
+- **Next action:** review openspec PR → merge → branch impl → execute tasks.md → impl PR → tag v1.2.0 → publish 4 crates.
 
 ## Endpoint (2026-04-27, v1.1.0 SHIPPED)
 - **Squash-merge:** PR #50 merged via `gh pr merge 50 --squash --delete-branch`; squash SHA on `main` = `e54dc64596b3e9090c68e5712974b6d443912343` ([commit](https://github.com/egoisth777/grex/commit/e54dc64596b3e9090c68e5712974b6d443912343)). `feat/v1.1.0-flat-children-layout` deleted.
