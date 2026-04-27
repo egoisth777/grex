@@ -757,7 +757,18 @@ fn migrate_legacy_workspace(pack_root: &Path) -> Vec<WorkspaceMigration> {
         }
     };
     let mut migrations = Vec::new();
-    for entry in entries.flatten() {
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    target: "grex::sync::migrate",
+                    "skipping unreadable entry under `{}`: {e}",
+                    legacy_root.display(),
+                );
+                continue;
+            }
+        };
         let Ok(ft) = entry.file_type() else { continue };
         // file_type avoids symlink-following; legitimate v1.0.x children
         // were always real directories, so anything else is skipped.
@@ -1935,7 +1946,18 @@ fn walk_for_backups_inner(dir: &Path, report: &mut RecoveryReport, depth: u32) {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
+    for entry_result in entries {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    target: "grex::sync::recover",
+                    "skipping unreadable entry under `{}`: {e}",
+                    dir.display(),
+                );
+                continue;
+            }
+        };
         let path = entry.path();
         let name = entry.file_name();
         let Some(name_str) = name.to_str() else { continue };
