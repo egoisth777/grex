@@ -40,7 +40,12 @@ use crate::pack::{ChildRef, PackManifest};
 ///   Rejected entries are labelled by the URL (since the user never
 ///   wrote a `path` to attribute against) and the `path` field of the
 ///   error carries the derived tail.
-pub struct ChildPathValidator;
+///
+/// Visibility: `pub(crate)` — the validator is registered in
+/// [`super::run_all`] and reached via [`crate::pack::PackManifest::validate_plan`].
+/// External consumers do not need to instantiate the struct directly;
+/// promoting to `pub` later is a non-breaking additive change.
+pub(crate) struct ChildPathValidator;
 
 impl Validator for ChildPathValidator {
     fn name(&self) -> &'static str {
@@ -95,7 +100,9 @@ enum Attribution {
 /// when set, else the URL-tail derivation), so a child with explicit
 /// `path: foo` and a sibling with URL `https://x/foo.git` (no
 /// `path:`) collide.
-pub struct DupChildPathValidator;
+///
+/// Visibility: `pub(crate)` — see [`ChildPathValidator`] rationale.
+pub(crate) struct DupChildPathValidator;
 
 impl Validator for DupChildPathValidator {
     fn name(&self) -> &'static str {

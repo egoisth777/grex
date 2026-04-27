@@ -32,7 +32,7 @@ pub mod cycle;
 pub mod depends_on;
 pub mod dup_symlink;
 
-pub use child_path::{ChildPathValidator, DupChildPathValidator};
+pub(crate) use child_path::{ChildPathValidator, DupChildPathValidator};
 pub use cycle::CycleValidator;
 pub use depends_on::DependsOnValidator;
 pub use dup_symlink::DuplicateSymlinkValidator;
