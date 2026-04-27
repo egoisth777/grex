@@ -4,7 +4,9 @@
 **Spec**: [`proposal.md`](./proposal.md) · [`design.md`](./design.md)
 **SSOT**: [`grex-doc/src/semver.md`](../../../grex-doc/src/semver.md) (MINOR justification) · [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) §"Validation rules" line 176 (bare-name rule)
 
-Two PRs: this one (openspec only, no code) + the implementation PR that lands after openspec review.
+Two PRs: this one (openspec only, no code) + the implementation PR that lands after openspec review. **(Superseded — collapsed into a single combined PR #50; both phase headings retained below for traceability.)**
+
+> **Note on hardcoded line numbers below.** The sub-change task descriptions cite specific line numbers in `sync.rs` / `pack/mod.rs` / `tree/walker.rs` as they stood at impl-time. Those numbers will rot as the files evolve; treat them as historical anchors and rely on the function/symbol names (`resolve_workspace`, `scan_recovery`, `effective_path`, `Walker::resolve_destination`) for navigation. Cleanup pass to convert all line refs to symbol-anchor refs is tracked as a TODO for the next openspec sweep.
 
 ---
 
@@ -21,7 +23,7 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 
 ---
 
-## PR-2 — implementation (cut off post-merge `main`)
+## Implementation tasks (originally planned as a separate PR-2; collapsed into PR #50)
 
 ### Sub-change 4a — Code: drop `.grex/workspace/` default + fix backup-scan anchor
 

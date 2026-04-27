@@ -8,17 +8,17 @@
 
 Three independent signals all point to the same defect: the runtime currently appends `.grex/workspace/` to the parent pack root before resolving children, but every authoritative source-of-truth says children must resolve as **flat siblings** of the parent pack root.
 
-1. **Positioning misalignment.** Locked tagline (`memory/grex_positioning.md`): grex is a *nested meta-repo manager*. Real users layout their meta-repo with the parent at `E:\repos\code` and child repos as direct subdirectories `E:\repos\code\<child>`. The current default forces them into `E:\repos\code\.grex\workspace\<child>`, which is neither how anyone organises a multi-repo workspace nor what the spec advertises.
+1. **Positioning misalignment.** Locked tagline (see the README "What is grex" section): grex is a *nested meta-repo manager*. Real users layout their meta-repo with the parent at `E:\repos\code` and child repos as direct subdirectories `E:\repos\code\<child>`. The current default forces them into `E:\repos\code\.grex\workspace\<child>`, which is neither how anyone organises a multi-repo workspace nor what the spec advertises. (The same tagline lives in the agent-side `memory/grex_positioning.md` note, but that file is in the distro layer — not in this repo.)
 
 2. **Migration-doc contradiction.** [`grex-doc/src/guides/migration.md`](../../../grex-doc/src/guides/migration.md) walks users through `grex import` → `grex sync .` with no relocation step. The doc is correct; the runtime is wrong. Today's session reproduced this end-to-end against the user's real workspace at `E:\repos\code` and got:
 
-   ```
+   ```text
    tree walk failed: pack manifest not found at .\.grex\workspace\algo-leet\.grex\pack.yaml
    ```
 
    The child `algo-leet` exists at `E:\repos\code\algo-leet\.grex\pack.yaml` — sync looked in the wrong place because `resolve_workspace()` injected `.grex\workspace\` between root and child name.
 
-3. **Test-fixture contradiction.** [`crates/grex-core/tests/meta_recursion.rs`](../../../crates/grex-core/tests/meta_recursion.rs) already constructs its fixture as flat siblings (`root/parent` + `root/child-a`). The tests pass today only because they pass an explicit `--workspace` override that bypasses the broken default. The fixture proves the maintainers' mental model matches the spec; only the default code path disagrees.
+3. **Test-fixture contradiction.** [`crates/grex-core/tests/meta_recursion.rs`](../../../crates/grex-core/tests/meta_recursion.rs) already constructs its fixtures as flat siblings of the parent's pack root: the parent lives at `<tmp>/root/.grex/pack.yaml` and each child lives at `<tmp>/root/<child>/.grex/pack.yaml`, exactly the layout this PR makes the runtime default. The tests reach those children via `MetaPlugin::child_root` (`pack_root.join(child.effective_path())`) — the same join the post-v1.1.0 walker uses — proving the maintainers' mental model already matches the spec; only the sync default code path disagreed.
 
 ## What changes (4 sub-changes)
 
@@ -42,8 +42,7 @@ Three independent signals all point to the same defect: the runtime currently ap
 
 - [`grex-doc/src/concepts/pack-spec.md`](../../../grex-doc/src/concepts/pack-spec.md) — already says bare-name; add an explicit *"children resolve as flat siblings of the parent pack root"* sentence.
 - [`grex-doc/src/guides/migration.md`](../../../grex-doc/src/guides/migration.md) — already correct; verify the steps end-to-end after the refactor.
-- [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) — mirror update.
-- [`.omne/cfg/pack-spec.md`](../../../.omne/cfg/pack-spec.md) — mirror update.
+- [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) — mirror update. (The agent-side mirror at `.omne/cfg/pack-spec.md` is in the distro layer — not in this repo — and is regenerated from the canonical `man/` copy.)
 - [`crates/grex/src/cli/args.rs`](../../../crates/grex/src/cli/args.rs) — `--workspace` help text drops the `.grex/workspace` reference; states the default is the pack root itself.
 
 ### 4d. Workspace version bump 1.0.3 → 1.1.0 + version-test bump + CHANGELOG
@@ -86,7 +85,7 @@ Three independent signals all point to the same defect: the runtime currently ap
 - [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) §"Validation rules" line 176 — declares the bare-name rule that this PR finally enforces.
 - [`grex-doc/src/guides/migration.md`](../../../grex-doc/src/guides/migration.md) — describes the intended flat-sibling workflow already; the runtime catches up.
 - [PR #49](https://github.com/egoisth777/grex/pull/49) — immediate predecessor (doc-site 404 fix + workflow decouple); v1.1.0 branches off post-merge `main`.
-- `memory/grex_positioning.md` — locked tagline ("nested meta-repo manager") that motivates the layout choice.
+- The README "What is grex" section — "nested meta-repo manager" tagline that motivates the layout choice. (The same line is mirrored in the agent-side `memory/grex_positioning.md` note, which lives in the distro layer rather than this repo.)
 - [`openspec/changes/feat-v1.0.1-doc-site/proposal.md`](../feat-v1.0.1-doc-site/proposal.md) — format / tone reference for this proposal.
 
 ## Justification for MINOR (not PATCH, not MAJOR)

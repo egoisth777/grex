@@ -10,13 +10,13 @@
 - [`crates/grex-core/src/sync.rs:643-649`](../../../crates/grex-core/src/sync.rs) — `resolve_workspace()` default appends `.grex/workspace`.
 - [`crates/grex-core/src/sync.rs:1656`](../../../crates/grex-core/src/sync.rs) — `scan_recovery()` independently hardcodes the same path for backup-file scanning.
 
-No spec ever advertised `.grex/workspace/`. No fixture uses it. No doc references it as the intended layout. The two lines simply leaked an early prototype's directory choice into the public default.
+No spec ever advertised `.grex/workspace/`. No fixture uses it. (Post-impl: [`crates/grex/src/cli/args.rs`](../../../crates/grex/src/cli/args.rs) `--workspace` help text was rewritten to advertise the new default — "Defaults to the parent pack's root directory; children resolve as flat siblings.") The two lines simply leaked an early prototype's directory choice into the public default.
 
 ## Layout: before vs after
 
 The user's real workspace at `E:\repos\code` has 14 children, e.g.:
 
-```
+```text
 E:\repos\code\
 ├── .grex\
 │   └── pack.yaml             (parent — meta pack listing 14 children)
@@ -95,7 +95,7 @@ Variant placement: new `PackValidationError::ChildPathInvalid { child_name: Stri
 Three independent reasons, any one sufficient:
 
 1. **Cycle detection edge cases**. Path-traversal lets the same git repo materialise at multiple absolute paths through different traversal routes. The `(url, ref)` cycle key still works, but the *display path* used in error messages becomes ambiguous, and the user-facing message "cycle detected via `child-a` → `child-b`" loses its locality.
-2. **`git rm -r .grex` cleanup invariant**. Today users can `git rm -r .grex/workspace` to wipe all clones. Path-traversal breaks this invariant: child clones can land outside the cleanup target.
+2. **`rm -rf .grex/workspace` cleanup invariant**. Today users can `rm -rf .grex/workspace` (plain shell — child clones live there as nested working trees and are not tracked by the parent's git, so `git rm` does not apply) to wipe all clones. Path-traversal breaks this invariant: child clones can land outside the cleanup target.
 3. **`grex doctor` scan-bound**. Doctor walks the workspace to verify manifest consistency. With path-traversal allowed, the walk has no upper bound — it could escape into the user's home directory.
 
 Bare-name keeps all three properties intact for a one-line cost (the regex check).
