@@ -1,4 +1,4 @@
-# feat-v1.2.0-plain-git-children — design
+# feat-v1.1.1-plain-git-children — design
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
@@ -133,10 +133,11 @@ A solves the user's actual case (declared meta-pack with plain-git children) wit
 
 ## SemVer impact
 
-**MINOR** (1.1.0 → 1.2.0). Justification:
+**PATCH** (1.1.0 → 1.1.1). Justification:
 
+- **User override callout**: this change is technically additive (new walker code path + new lockfile field), which under strict SemVer would warrant a MINOR bump. The user has explicitly chosen PATCH for this release. Future additive features should reassess MINOR vs PATCH on a per-change basis.
 - Walker behaviour change is **additive** — the new code path activates only on `ManifestNotFound + dest_has_git_repo` (a state the v1.1.0 walker treated as a hard error). Workspaces that worked under v1.1.0 continue to work identically.
-- `LockEntry::synthetic` is `#[serde(default)]` additive — v1.1.0 lockfiles parse cleanly under v1.2.0; v1.2.0 lockfiles parse cleanly under v1.1.0 (extra field ignored by older serde-renaming-into-struct readers, modulo serde's `deny_unknown_fields` which we do not use on `LockEntry`).
+- `LockEntry::synthetic` is `#[serde(default)]` additive — v1.1.0 lockfiles parse cleanly under v1.1.1; v1.1.1 lockfiles parse cleanly under v1.1.0 (extra field ignored by older serde-renaming-into-struct readers, modulo serde's `deny_unknown_fields` which we do not use on `LockEntry`). Older readers therefore stay compatible.
 - Doctor / ls surface changes are output-only; no consumer of structured output (JSON) gets a *removed* field.
 - No CLI verb removed; no flag removed; no MCP tool schema field removed.
 

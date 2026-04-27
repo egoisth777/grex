@@ -1,4 +1,4 @@
-# feat-v1.2.0-plain-git-children — tasks
+# feat-v1.1.1-plain-git-children — tasks
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`design.md`](./design.md)
@@ -10,10 +10,10 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 
 ## Stage 0 — openspec PR (this branch)
 
-- [ ] 0.1 Land openspec triplet under `openspec/changes/feat-v1.2.0-plain-git-children/` (proposal + design + tasks).
-- [ ] 0.2 Add v1.2.0 placeholder callout to `grex-doc/src/concepts/pack-spec.md` and `man/concepts/pack-spec.md` (mirror).
-- [ ] 0.3 Update `progress.md` with the v1.2.0 openspec endpoint + refreshed "Where we are" block.
-- [ ] 0.4 PR description references the locked decisions (approach A; SemVer MINOR; openspec-then-impl staging).
+- [ ] 0.1 Land openspec triplet under `openspec/changes/feat-v1.1.1-plain-git-children/` (proposal + design + tasks).
+- [ ] 0.2 Add v1.1.1 placeholder callout to `grex-doc/src/concepts/pack-spec.md` and `man/concepts/pack-spec.md` (mirror).
+- [ ] 0.3 Update `progress.md` with the v1.1.1 openspec endpoint + refreshed "Where we are" block.
+- [ ] 0.4 PR description references the locked decisions (approach A; SemVer PATCH per user override; openspec-then-impl staging).
 - [ ] 0.5 Required CI gates green (typos, build × 3, etc.) — markdown-only, should pass trivially.
 
 ---
@@ -22,7 +22,7 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 
 ### 1a — branch + scaffold
 
-- [ ] 1a.1 Branch `feat/v1.2.0-impl` off post-merge `main`.
+- [ ] 1a.1 Branch `feat/v1.1.1-impl` off post-merge `main`.
 - [ ] 1a.2 Confirm `cargo test --workspace` baseline green at HEAD before any code changes (sanity check).
 
 ### 1b — walker synthesis fallback
@@ -63,15 +63,15 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 
 ### 1g — docs
 
-- [ ] 1g.1 Replace v1.2.0 placeholder callout in `man/concepts/pack-spec.md` and `grex-doc/src/concepts/pack-spec.md` with the full "Plain-git children" subsection (no recursion, sync = git pull only, no hooks, `.grex/pack.yaml` not required, synthetic-marker visibility).
+- [ ] 1g.1 Replace v1.1.1 placeholder callout in `man/concepts/pack-spec.md` and `grex-doc/src/concepts/pack-spec.md` with the full "Plain-git children" subsection (no recursion, sync = git pull only, no hooks, `.grex/pack.yaml` not required, synthetic-marker visibility).
 - [ ] 1g.2 Refresh `man/guides/migration.md`: `grex import --from-repos-json` + `grex sync` now works end-to-end on plain-git children. Drop any v1.1.0-era caveats about per-child pack.yaml being mandatory.
 - [ ] 1g.3 Mirror migration.md changes to `grex-doc/src/guides/migration.md` (handled by `cargo xtask doc-site-prep` if the doc-site-prep flow is still copy-only; verify).
 
 ### 1h — version bump + CHANGELOG
 
-- [ ] 1h.1 Workspace bump 1.1.0 → 1.2.0: `Cargo.toml` `[workspace.package].version`, `[workspace.dependencies]` (`grex-core`, `grex-mcp`, `grex-plugins-builtin`), `crates/xtask/Cargo.toml` `grex-cli` dep.
-- [ ] 1h.2 `crates/xtask/tests/version_test.rs` bump assertion: `"1.1.0"` → `"1.2.0"`.
-- [ ] 1h.3 `CHANGELOG.md` `[1.2.0] - 2026-04-2X` section under `[Unreleased]` with bullets: synthetic plain-git children walk; `LockEntry.synthetic` field; doctor/ls surface; e2e test added.
+- [ ] 1h.1 Workspace bump 1.1.0 → 1.1.1: `Cargo.toml` `[workspace.package].version`, `[workspace.dependencies]` (`grex-core`, `grex-mcp`, `grex-plugins-builtin`), `crates/xtask/Cargo.toml` `grex-cli` dep.
+- [ ] 1h.2 `crates/xtask/tests/version_test.rs` bump assertion: `"1.1.0"` → `"1.1.1"`.
+- [ ] 1h.3 `CHANGELOG.md` `[1.1.1] - 2026-04-2X` section under `[Unreleased]` with bullets: synthetic plain-git children walk; `LockEntry.synthetic` field; doctor/ls surface; e2e test added.
 
 ### 1i — gates (impl PR)
 
@@ -80,8 +80,8 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - [ ] 1i.3 `cargo test --workspace` green (existing 703 + new tests from 1b/1c/1d/1e/1f).
 - [ ] 1i.4 `cargo run -p xtask -- gen-man` drift-free (no CLI surface change beyond ls marker; verify man page diff is intentional or zero).
 - [ ] 1i.5 `cargo run -p xtask -- doc-site-prep && mdbook build grex-doc/` exits 0 with zero warnings.
-- [ ] 1i.6 `cargo metadata --format-version 1 --no-deps | jq -r '.packages[].version' | sort -u` returns only `1.2.0`.
-- [ ] 1i.7 `dist plan` (cargo-dist) green at v1.2.0.
+- [ ] 1i.6 `cargo metadata --format-version 1 --no-deps | jq -r '.packages[].version' | sort -u` returns only `1.1.1`.
+- [ ] 1i.7 `dist plan` (cargo-dist) green at v1.1.1.
 - [ ] 1i.8 MCP conformance gate green.
 
 ### 1j — manual real-world verification
@@ -95,9 +95,9 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 ### 1k — ship
 
 - [ ] 1k.1 Squash-merge impl PR → `main`.
-- [ ] 1k.2 Tag `v1.2.0` (annotated, on the squash commit). Push.
+- [ ] 1k.2 Tag `v1.1.1` (annotated, on the squash commit). Push.
 - [ ] 1k.3 Wait for `release.yml` (cargo-dist) to publish GitHub Release with archives + installers.
 - [ ] 1k.4 Publish 4 crates topologically: `grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`. Wait for index propagation between each.
-- [ ] 1k.5 Verify `crates.io` `max_version: 1.2.0` for all 4.
-- [ ] 1k.6 `cargo install grex-cli --force --version 1.2.0` then re-run real-world sync (1j) to confirm published binary matches local validation.
-- [ ] 1k.7 Update `progress.md` with v1.2.0 SHIPPED endpoint.
+- [ ] 1k.5 Verify `crates.io` `max_version: 1.1.1` for all 4.
+- [ ] 1k.6 `cargo install grex-cli --force --version 1.1.1` then re-run real-world sync (1j) to confirm published binary matches local validation.
+- [ ] 1k.7 Update `progress.md` with v1.1.1 SHIPPED endpoint.

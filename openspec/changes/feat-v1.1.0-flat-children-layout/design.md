@@ -110,7 +110,7 @@ Rejected for three reasons:
 2. **Support burden**. Every future bug report would need to know which mode the reporter was in. The flag value would creep into every diagnostic output.
 3. **No real users to protect**. v1.0.0 published 2026-04-23 (3 days ago at the time of this proposal); the population that deliberately built `.grex/workspace/`-rooted layouts is approximately 0. There is no backward-compatibility burden worth the cost of the opt-in.
 
-If a future use-case emerges (which would be surprising — see "Positioning" memory note), adding `children_root:` later is a strict superset of the v1.1.0 behaviour and can be slotted in as a v1.2.0 MINOR.
+If a future use-case emerges (which would be surprising — see "Positioning" memory note), adding `children_root:` later is a strict superset of the v1.1.0 behaviour and can be slotted in as a v1.1.1 PATCH (or future MINOR).
 
 ## Out-of-scope for this PR
 

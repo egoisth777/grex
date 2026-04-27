@@ -82,7 +82,7 @@ Gitignored. Holds per-pack runtime cache (lock markers, resolved deps, per-platf
 
 ## The 3 built-in pack-types
 
-> **Planned for v1.2.0:** Plain git repositories without their own `.grex/pack.yaml` will be treated as synthetic `scripted` packs (no hooks, sync = `git pull` only). This makes grex able to manage existing repo trees without requiring per-child pack.yaml ceremony. See [`openspec/changes/feat-v1.2.0-plain-git-children/`](../../../openspec/changes/feat-v1.2.0-plain-git-children/) for the spec. Until v1.2.0 ships, every child must carry its own `.grex/pack.yaml`.
+> **Planned for v1.1.1:** Plain git repositories without their own `.grex/pack.yaml` will be treated as synthetic `scripted` packs (no hooks, sync = `git pull` only). This makes grex able to manage existing repo trees without requiring per-child pack.yaml ceremony. See [`openspec/changes/feat-v1.1.1-plain-git-children/`](../../../openspec/changes/feat-v1.1.1-plain-git-children/) for the spec. Until v1.1.1 ships, every child must carry its own `.grex/pack.yaml`.
 
 ### `meta`
 

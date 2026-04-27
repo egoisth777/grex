@@ -1,7 +1,7 @@
-# feat-v1.2.0-plain-git-children — sync-walk plain git repos as scripted-no-hooks children
+# feat-v1.1.1-plain-git-children — sync-walk plain git repos as scripted-no-hooks children
 
 **Status**: draft
-**Milestone**: v1.2.0
+**Milestone**: v1.1.1
 **Depends on**: v1.1.0 (already shipped — squash `e54dc64`, tag `v1.1.0`, all 4 crates live on crates.io)
 
 ## Why
@@ -92,7 +92,7 @@ Closest to user mental model ("sync everything git-like under here"), but loses 
 3. `grex doctor` reports synthetic packs as `OK (synthetic)`, not as missing-manifest errors.
 4. `grex ls` distinguishes synthetic from declared (visible marker on synthetic entries).
 5. Existing 703 tests still pass with no behavioural regressions on packs that DO have `.grex/pack.yaml`.
-6. Real-world: `cargo install grex-cli --force --version 1.2.0` then `grex sync E:\repos\code` walks all 14 plain-git children end-to-end, exits 0, idempotent re-sync clean.
+6. Real-world: `cargo install grex-cli --force --version 1.1.1` then `grex sync E:\repos\code` walks all 14 plain-git children end-to-end, exits 0, idempotent re-sync clean.
 7. Workspace where `pack.yaml` types are mixed (meta + declarative + scripted real packs, plus synthetic-scripted plain-git children) all coexist in the same walk without error.
 8. Mixed-tree e2e: a meta pack with one declared `children:` entry that resolves to a plain-git repo (no own `.grex/pack.yaml`) walks successfully.
 
@@ -100,7 +100,7 @@ Closest to user mental model ("sync everything git-like under here"), but loses 
 
 - [`progress.md`](../../../progress.md) §"Endpoint (2026-04-27, v1.1.0 SHIPPED)" — v1.1.0 ship + the `E:\repos\code` exit-3 evidence that triggered this proposal.
 - [`man/guides/migration.md`](../../../man/guides/migration.md) — referenced by impl PR for the migration-story refresh.
-- [`grex-doc/src/concepts/pack-spec.md`](../../../grex-doc/src/concepts/pack-spec.md) §"The 3 built-in pack-types" — the v1.2.0 callout placeholder lands here.
+- [`grex-doc/src/concepts/pack-spec.md`](../../../grex-doc/src/concepts/pack-spec.md) §"The 3 built-in pack-types" — the v1.1.1 callout placeholder lands here.
 - [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) §"The 3 built-in pack-types" — same callout, mirrored.
 - `crates/grex-core/src/tree/walker.rs :: Walker::handle_child` — fallback insertion point (load step).
 - `crates/grex-core/src/tree/loader.rs :: FsPackLoader::load` — `TreeError::ManifestNotFound` site that the synthesis path bypasses for plain-git children.
