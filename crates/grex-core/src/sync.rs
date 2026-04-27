@@ -872,9 +872,12 @@ fn cleanup_legacy_workspace_root(legacy_root: &Path) {
 
 /// Compute the default workspace path when `override_` is absent.
 ///
-/// The default is the pack root directory itself, so child packs resolve
-/// as flat siblings of the parent pack root. See
-/// `openspec/changes/feat-v1.1.0-flat-children-layout/` for rationale.
+/// The default is the pack root directory itself, so child packs
+/// resolve as flat siblings of the parent pack root. The rationale —
+/// alignment with the long-standing pack-spec rule that
+/// `children[].path` is a bare name — lives in the pack-spec
+/// "Validation rules" section (`man/concepts/pack-spec.md` /
+/// `grex-doc/src/concepts/pack-spec.md`).
 fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> PathBuf {
     if let Some(p) = override_ {
         return p.to_path_buf();

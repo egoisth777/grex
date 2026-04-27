@@ -1,8 +1,8 @@
 # feat-v1.1.0-flat-children-layout — drop hardcoded `.grex/workspace/` child layout; resolve children as flat siblings
 
-**Status**: draft
+**Status**: implemented (impl stacked on top of openspec commit `c220fb2`; review-fix sweep stacked on `e119ab0`)
 **Milestone**: v1.1.0 (post-v1.0.3)
-**Depends on**: v1.0.3 (current `main` HEAD `78f1c38`) — this branch contains openspec only; the implementation PR rebases onto post-merge `main`.
+**Depends on**: v1.0.3 (`main` at `c3b00a4`) — openspec, implementation, and post-review fixes all live on a single branch (`feat/v1.1.0-flat-children-layout` / PR #50). Original plan was a two-PR split (openspec → impl); collapsed into one branch once the review made post-impl fixes urgent.
 
 ## Why
 
@@ -35,7 +35,7 @@ Three independent signals all point to the same defect: the runtime currently ap
 - Add `child_path_validator` under [`crates/grex-core/src/pack/validate/`](../../../crates/grex-core/src/pack/validate/) wired into `run_all`.
 - Regex: `^[a-z][a-z0-9-]*$` (matches the existing `name` rule).
 - Reject (with clear error message): `path: ../escape`, `path: foo/bar`, `path: foo\bar`, `path: .`, `path: ..`, `path: ""`, `path: /abs`.
-- New `PackValidationError` variant `ChildPathInvalid { name, path, reason }`.
+- New `PackValidationError` variant `ChildPathInvalid { child_name, path, reason }`. (Field is `child_name` rather than `name` — the `name` slot was already taken by other validators' error variants and the `child_` prefix matches the existing taxonomy.)
 - [`crates/grex-core/src/pack/mod.rs:165-172`](../../../crates/grex-core/src/pack/mod.rs) `effective_path()` keeps its current shape (it returns the string verbatim); validation runs *before* it is called, so by the time it runs, `path` has already passed the regex.
 
 ### 4c. Doc updates — clarify flat-sibling resolution

@@ -37,7 +37,7 @@ Only MCP-standard methods are accepted.
              "capabilities":{}}}
 ← {"jsonrpc":"2.0","id":1,
    "result":{"protocolVersion":"2025-06-18",
-             "serverInfo":{"name":"grex","version":"1.0.0"},
+             "serverInfo":{"name":"grex","version":"<workspace-version>"},
              "capabilities":{"tools":{"listChanged":false}}}}
 → {"jsonrpc":"2.0","method":"notifications/initialized"}
 ```

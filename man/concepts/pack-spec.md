@@ -56,7 +56,7 @@ children:
     ref: v1.2.0          # optional; branch, tag, or SHA. Default: remote HEAD.
 ```
 
-Children resolve as **flat siblings** of the parent pack root: a parent at `~/code/.grex/pack.yaml` with a child `path: themes` materialises that child at `~/code/themes/.grex/pack.yaml`. The bare-name rule on `path` (see [Validation rules](#validation-rules)) is enforced at plan phase since v1.1.0; values containing `/`, `\`, `.`, `..`, or that fail the `^[a-z][a-z0-9-]*$` regex are rejected with a `ChildPathInvalid` error.
+Children resolve as **flat siblings** of the parent pack root: a parent at `~/code/.grex/pack.yaml` with a child `path: themes` materialises that child at `~/code/themes/.grex/pack.yaml`. The bare-name rule on `path` is enforced at plan phase since v1.1.0 — see [Validation rules](#validation-rules) for the regex and rejection shape.
 
 ### `actions` list
 
