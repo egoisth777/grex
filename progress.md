@@ -4,7 +4,7 @@
 **v1.1.0 SHIPPED (2026-04-27); v1.2.0 OPENSPEC DRAFTED.** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Real-workspace validation surfaced a remaining gap: `grex sync` requires every child to carry its own `.grex/pack.yaml` — plain-git children (the grex-org bootstrap pattern) cannot be walked end-to-end. v1.2.0 openspec drafted at `openspec/changes/feat-v1.2.0-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children. PR #<NN> open vs `main`. PR #51 + #52 (post-1.1.0 follow-ups) still open. Detailed v1.1.0 ship + v1.1.x follow-up history below.
 
 ## Endpoint (2026-04-27, feat/v1.2.0-plain-git-children — openspec drafted)
-- Branch: `feat/v1.2.0-plain-git-children` at `<commit-sha>`; PR #<NN> open vs `main`. Markdown-only (proposal + design + tasks + 2 pack-spec mirror updates).
+- Branch: `feat/v1.2.0-plain-git-children` at `42506b8`; PR #<NN> open vs `main`. Markdown-only (proposal + design + tasks + 2 pack-spec mirror updates).
 - **Trigger:** v1.1.0 ship validation against `E:\repos\code` (user's real 14-child workspace) showed `tree walk failed: pack manifest not found at .\algo-leet\.grex\pack.yaml`. Even after v1.1.0's flat-sibling fix, sync still requires every child to carry its own `.grex/pack.yaml`. Plain-git children (the grex-org bootstrap pattern grex was designed to productize) are excluded.
 - **Locked decisions (user, 2026-04-27):**
   1. Approach A (lenient mode): walker synthesizes `scripted`-no-hooks pack manifest in-memory when child has `.git/` but no `.grex/pack.yaml`
