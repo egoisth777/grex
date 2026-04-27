@@ -27,10 +27,12 @@ use thiserror::Error;
 use super::PackManifest;
 use crate::tree::PackGraph;
 
+pub mod child_path;
 pub mod cycle;
 pub mod depends_on;
 pub mod dup_symlink;
 
+pub(crate) use child_path::{ChildPathValidator, DupChildPathValidator};
 pub use cycle::CycleValidator;
 pub use depends_on::DependsOnValidator;
 pub use dup_symlink::DuplicateSymlinkValidator;
@@ -73,6 +75,36 @@ pub enum PackValidationError {
         /// The unresolved `depends_on` entry (a pack name or url).
         required: String,
     },
+
+    /// A `children[].path` value violates the bare-name rule
+    /// (`^[a-z][a-z0-9-]*$`, no separators, no `.` / `..`, no empty).
+    /// Enforced since v1.1.0 — see the `child_path` module's
+    /// `ChildPathValidator` (internal).
+    #[error("pack child `{child_name}` has invalid path `{path}`: {reason}")]
+    ChildPathInvalid {
+        /// Label of the offending child (its `path` field, or `url` as
+        /// fallback).
+        child_name: String,
+        /// The rejected literal `path` value.
+        path: String,
+        /// One-line explanation of which sub-rule failed.
+        reason: String,
+    },
+
+    /// Two or more `children[]` entries within the same parent
+    /// resolve to the same `effective_path()`. Without this gate the
+    /// second clone would silently overwrite the first's working
+    /// tree, or — once both have a `.git` — collide on the
+    /// dest-already-exists fast path and skip-fetch the wrong upstream.
+    /// Enforced since v1.1.0 — see the `child_path` module's
+    /// `DupChildPathValidator` (internal).
+    #[error("pack has duplicate children resolving to `{path}`: {urls:?}")]
+    ChildPathDuplicate {
+        /// The shared resolved path that two or more children claim.
+        path: String,
+        /// URLs of every colliding child, in declaration order.
+        urls: Vec<String>,
+    },
 }
 
 /// A single plan-phase validator.
@@ -95,13 +127,18 @@ pub trait Validator {
 ///
 /// 1. [`DuplicateSymlinkValidator`] — two symlinks with the same literal
 ///    `dst`.
+/// 2. `ChildPathValidator` (internal) — every `children[].path` matches
+///    the bare-name regex (since v1.1.0).
+/// 3. `DupChildPathValidator` (internal) — no two `children[]` entries
+///    within the same parent share an `effective_path()` (since v1.1.0).
 ///
 /// Later slices extend this list; callers should prefer
 /// [`PackManifest::validate_plan`] over instantiating validators manually,
 /// so the default set stays discoverable.
 #[must_use]
 pub fn run_all(pack: &PackManifest) -> Vec<PackValidationError> {
-    let validators: [&dyn Validator; 1] = [&DuplicateSymlinkValidator];
+    let validators: [&dyn Validator; 3] =
+        [&DuplicateSymlinkValidator, &ChildPathValidator, &DupChildPathValidator];
     let mut errs = Vec::new();
     for v in validators {
         errs.extend(v.check(pack));

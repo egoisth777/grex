@@ -25,7 +25,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::git::GitBackend;
-use crate::pack::{ChildRef, PackManifest};
+use crate::pack::validate::child_path::check_one as check_child_path;
+use crate::pack::{ChildRef, PackManifest, PackValidationError};
 
 use super::error::TreeError;
 use super::graph::{EdgeKind, PackEdge, PackGraph, PackNode};
@@ -84,6 +85,12 @@ impl<'a> Walker<'a> {
     pub fn walk(&self, root_pack_path: &Path) -> Result<PackGraph, TreeError> {
         let mut state = BuildState::default();
         let root_manifest = self.loader.load(root_pack_path)?;
+        // Pre-walk path-traversal gate: reject any malicious
+        // `children[].path` (or URL-derived tail) BEFORE any clone fires.
+        // Closes the v1.1.0 flat-sibling exploit window where a `path:
+        // ../escape` would materialise a child outside the pack root
+        // before plan-phase validation could see it.
+        validate_children_paths(&root_manifest)?;
         let root_commit_sha = probe_head_sha(self.backend, root_pack_path);
         let root_id = state.push_node(PackNode {
             id: 0,
@@ -101,6 +108,12 @@ impl<'a> Walker<'a> {
 
     /// Recursive step. `stack` carries the pack identifiers currently on
     /// the walk path — pushed on entry, popped on return.
+    ///
+    /// Each loaded manifest's `children[]` is path-traversal-validated
+    /// before any of those children are resolved on disk; the entry
+    /// point pre-validates the root manifest, so by the time
+    /// `walk_recursive` runs for a child, that child's own `children[]`
+    /// is what needs gating before the next descent.
     fn walk_recursive(
         &self,
         parent_id: usize,
@@ -154,6 +167,11 @@ impl<'a> Walker<'a> {
         let dest = self.resolve_destination(child, state)?;
         let child_manifest = self.loader.load(&dest)?;
         verify_child_name(&child_manifest.name, child, &dest)?;
+        // Validate this child's own `children[]` before its descent
+        // resolves any of them on disk. Mirrors the root-manifest gate
+        // in `walk`; together they ensure no clone can fire for a
+        // grandchild whose parent declared a traversal-bearing path.
+        validate_children_paths(&child_manifest)?;
 
         let commit_sha = probe_head_sha(self.backend, &dest);
         let child_id = state.push_node(PackNode {
@@ -288,6 +306,27 @@ fn find_node_id_by_name_or_url(nodes: &[PackNode], dep: &str) -> Option<usize> {
     } else {
         nodes.iter().find(|n| n.name == dep).map(|n| n.id)
     }
+}
+
+/// Run the path-traversal gate on `manifest.children`. Returns the
+/// first offending child as a [`TreeError::ChildPathInvalid`] so the
+/// walker aborts before any clone of the offending sibling fires.
+///
+/// Surfacing only the first offender (rather than aggregating) matches
+/// the walker's fail-fast posture — the plan-phase
+/// [`crate::pack::validate::ChildPathValidator`] still runs against the
+/// whole graph post-walk via `validate_graph`, so authors who clear
+/// the traversal exploit see the full diagnostic batch on the next
+/// invocation.
+fn validate_children_paths(manifest: &PackManifest) -> Result<(), TreeError> {
+    for child in &manifest.children {
+        if let Some(PackValidationError::ChildPathInvalid { child_name, path, reason }) =
+            check_child_path(child)
+        {
+            return Err(TreeError::ChildPathInvalid { child_name, path, reason });
+        }
+    }
+    Ok(())
 }
 
 /// Decide whether a `depends_on` entry is a URL rather than a bare name.

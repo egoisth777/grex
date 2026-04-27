@@ -28,6 +28,7 @@
 //! variant set.
 
 use std::borrow::Cow;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -68,7 +69,8 @@ pub struct SyncOptions {
     /// When `false`, skip plan-phase validators (manifest + graph). Debug
     /// escape hatch; production callers should leave this `true`.
     pub validate: bool,
-    /// Override workspace directory. `None` → `<pack_root>/.grex/workspace`.
+    /// Override workspace directory. `None` → the parent pack root itself
+    /// (children resolve as flat siblings of the parent pack root).
     pub workspace: Option<PathBuf>,
     /// Global ref override (`grex sync --ref <sha|branch|tag>`). When
     /// `Some`, every child pack clone/checkout uses this ref instead of
@@ -235,6 +237,48 @@ pub struct SyncReport {
     /// the sync proceeds. CLI renderers should surface a warning so the
     /// operator can decide whether to run a future `grex doctor` verb.
     pub pre_run_recovery: Option<RecoveryReport>,
+    /// One entry per child whose legacy `.grex/workspace/<name>/` layout
+    /// was relocated (or considered for relocation) on this sync. Empty
+    /// when no legacy directory was found — the common case for any
+    /// workspace built fresh on v1.1.0+. CLI renderers should surface
+    /// the list so operators see what changed.
+    pub workspace_migrations: Vec<WorkspaceMigration>,
+}
+
+/// One legacy-layout migration attempt. `outcome` distinguishes the
+/// move-succeeded case from the don't-clobber-user-data case so CLI
+/// renderers can present different advice to the operator.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceMigration {
+    /// Source path under the legacy `.grex/workspace/<name>/` location,
+    /// rendered relative to the pack root for log readability.
+    pub from: PathBuf,
+    /// Destination flat-sibling path `<pack_root>/<name>/`, relative to
+    /// the pack root.
+    pub to: PathBuf,
+    /// What happened.
+    pub outcome: MigrationOutcome,
+}
+
+/// Outcome of one legacy-layout migration attempt.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    /// Legacy directory was renamed onto the flat-sibling slot.
+    Migrated,
+    /// Both legacy and flat-sibling slots existed. Skipped — the user
+    /// must inspect and reconcile manually so we never silently delete
+    /// either.
+    SkippedBothExist,
+    /// Flat-sibling slot already had a non-grex file or directory in
+    /// the way. Skipped — refusing to clobber user data even when the
+    /// legacy slot is plainly the source of truth.
+    SkippedDestOccupied,
+    /// `fs::rename` failed (e.g. cross-volume, ACL denied). The legacy
+    /// directory is still in place; surfaced so the operator can move
+    /// it manually.
+    Failed { error: String },
 }
 
 /// Rich context attached to a [`SyncError::Halted`] variant.
@@ -384,8 +428,9 @@ impl Clone for SyncError {
 /// * If `pack_root` is a directory the walker looks for
 ///   `<pack_root>/.grex/pack.yaml`.
 /// * If `pack_root` ends in `.yaml` / `.yml` it is loaded verbatim.
-/// * Workspace defaults to `<pack_root>/.grex/workspace` when `opts.workspace`
-///   is `None`.
+/// * Workspace defaults to the pack root directory itself when
+///   `opts.workspace` is `None`. Children resolve as flat siblings of the
+///   parent pack root (since v1.1.0).
 ///
 /// # Errors
 ///
@@ -424,9 +469,14 @@ pub fn run(
     // `globset` crate version does not leak into `SyncOptions`.
     let only_set = compile_only_globset(opts.only_patterns.as_ref())?;
 
+    // Auto-migrate legacy `.grex/workspace/<name>/` layout BEFORE the
+    // walker resolves children. Idempotent: a fresh v1.1.0+ workspace
+    // sees no legacy directory and the function no-ops.
+    let workspace_migrations = migrate_legacy_workspace(pack_root);
+
     let graph =
         walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
-    let prep = prepare_run_context(pack_root, &graph)?;
+    let prep = prepare_run_context(pack_root, &graph, &workspace)?;
     log_force_flag(opts.force);
 
     let mut report = SyncReport {
@@ -435,6 +485,7 @@ pub fn run(
         halted: None,
         event_log_warnings: Vec::new(),
         pre_run_recovery: prep.pre_run_recovery,
+        workspace_migrations,
     };
 
     let mut next_lock = prep.prior_lock.clone();
@@ -487,13 +538,24 @@ struct RunContext {
 /// Build the per-run context: traversal order, vars env, event/lockfile
 /// paths, prior lockfile state, bootstrap registry, and (optionally) a
 /// pre-run recovery scan. Kept narrow so [`run`] stays small.
-fn prepare_run_context(pack_root: &Path, graph: &PackGraph) -> Result<RunContext, SyncError> {
+///
+/// `workspace` is the resolved workspace directory (post `--workspace`
+/// override) so the recovery scan looks for `.grex.bak` artefacts under
+/// the actual on-disk location children were materialised at — not
+/// under the pack root, which differs from the workspace whenever the
+/// CLI's `--workspace` flag is used. Pre-fix this anchoring drift
+/// caused recovery scans to miss every backup left under an override
+/// workspace.
+fn prepare_run_context(
+    pack_root: &Path,
+    graph: &PackGraph,
+    workspace: &Path,
+) -> Result<RunContext, SyncError> {
     let event_log = event_log_path(pack_root);
     let lock_path = event_lock_path(&event_log);
     let vars = VarEnv::from_os();
     let order = post_order(graph);
-    let pre_run_recovery =
-        scan_recovery(&pack_root_dir(pack_root), &event_log).ok().filter(|r| !r.is_empty());
+    let pre_run_recovery = scan_recovery(workspace, &event_log).ok().filter(|r| !r.is_empty());
     let lockfile_path = lockfile_path(pack_root);
     let prior_lock = load_prior_lock(&lockfile_path)?;
     let registry = Arc::new(Registry::bootstrap());
@@ -639,13 +701,188 @@ fn workspace_lock_err(ws_lock_path: &Path, reason: &str) -> SyncError {
     }
 }
 
+/// Single source of truth for the legacy workspace directory name.
+/// Pre-`v1.1.0` `resolve_workspace` joined `.grex/workspace/` onto the
+/// pack root by default; the auto-migration in
+/// [`migrate_legacy_workspace`] is the only place that legacy literal
+/// is allowed to appear in `crates/grex-core/src/`. The grep gate in
+/// the v1.1.0 release checklist allows this one constant.
+const LEGACY_WORKSPACE_DIR: &str = ".grex/workspace";
+
+/// Auto-migrate any legacy `.grex/workspace/<name>/` child layout left
+/// over from v1.0.x to the v1.1.0 flat-sibling layout. Idempotent: a
+/// fresh workspace built on v1.1.0+ sees no `.grex/workspace/`
+/// directory and the function no-ops.
+///
+/// Per-child outcomes:
+///
+/// * **Both legacy + flat-sibling exist** → `SkippedBothExist`. The
+///   user needs to inspect (perhaps the legacy is stale, perhaps it is
+///   the source of truth); we never silently delete either.
+/// * **Flat-sibling slot occupied by a non-grex file or non-empty dir**
+///   → `SkippedDestOccupied`. Refuse to clobber user data.
+/// * **Legacy exists, flat-sibling absent** → `Migrated` via atomic
+///   `fs::rename`. Same-volume move is the common case (the migration
+///   stays inside `pack_root`); cross-volume failures surface as
+///   `Failed { error }` with the OS message so the operator can move
+///   manually.
+/// * **Legacy absent** → silent no-op (not recorded in the report).
+///
+/// After all per-child decisions: orphan `.grex.sync.lock` under the
+/// legacy workspace is removed (best-effort) and the empty
+/// `.grex/workspace/` directory is rmdir'd (best-effort). Both are
+/// soft-failures: leaving them on disk is harmless, surfacing the
+/// errors as a sync abort would be over-strict.
+///
+/// Discovery is by directory listing, not by parent-manifest parse —
+/// migration must work even when the parent manifest itself was
+/// rewritten between versions. A child counts as "legacy" iff
+/// `<pack_root>/<LEGACY_WORKSPACE_DIR>/<name>/.git` exists (i.e. it is
+/// an actual git working tree, not stray metadata).
+fn migrate_legacy_workspace(pack_root: &Path) -> Vec<WorkspaceMigration> {
+    let root = pack_root_dir(pack_root);
+    let legacy_root = root.join(LEGACY_WORKSPACE_DIR);
+    if !legacy_root.is_dir() {
+        return Vec::new();
+    }
+    let entries = match fs::read_dir(&legacy_root) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(
+                target: "grex::sync::migrate",
+                "legacy workspace `{}` unreadable: {e}",
+                legacy_root.display(),
+            );
+            return Vec::new();
+        }
+    };
+    let mut migrations = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        // file_type avoids symlink-following; legitimate v1.0.x children
+        // were always real directories, so anything else is skipped.
+        if ft.is_symlink() || !ft.is_dir() {
+            continue;
+        }
+        let name_os = entry.file_name();
+        let Some(name) = name_os.to_str() else { continue };
+        // Only act on entries that look like real cloned children (have
+        // a `.git`). The legacy workspace lock file (`.grex.sync.lock`)
+        // is not a directory and is filtered out by the dir check above;
+        // we clean it up explicitly after the migration loop completes.
+        let from_abs = entry.path();
+        if !from_abs.join(".git").exists() {
+            continue;
+        }
+        let to_abs = root.join(name);
+        let from_rel = PathBuf::from(LEGACY_WORKSPACE_DIR).join(name);
+        let to_rel = PathBuf::from(name);
+        let outcome = decide_and_migrate(&from_abs, &to_abs);
+        log_migration(&from_rel, &to_rel, &outcome);
+        migrations.push(WorkspaceMigration { from: from_rel, to: to_rel, outcome });
+    }
+    cleanup_legacy_workspace_root(&legacy_root);
+    migrations
+}
+
+/// Decide what to do with one legacy child + perform the move when
+/// safe. Returns the outcome to record on the [`WorkspaceMigration`].
+fn decide_and_migrate(from: &Path, to: &Path) -> MigrationOutcome {
+    let dest_exists = to.exists();
+    let dest_is_grex_repo = dest_exists && to.join(".git").exists();
+    if dest_is_grex_repo {
+        // Both legacy and flat-sibling are git repos. Refuse to choose
+        // between them; let the user resolve.
+        return MigrationOutcome::SkippedBothExist;
+    }
+    if dest_exists {
+        // Some other entry occupies the flat-sibling slot — a stray
+        // file, an empty dir, an unrelated dir. Treat as user data and
+        // leave both in place.
+        return MigrationOutcome::SkippedDestOccupied;
+    }
+    match fs::rename(from, to) {
+        Ok(()) => MigrationOutcome::Migrated,
+        Err(e) => MigrationOutcome::Failed { error: e.to_string() },
+    }
+}
+
+/// Emit one structured log line per migration so users see exactly what
+/// happened during the upgrade. Severity matches outcome: success is
+/// `info`, skips and failures are `warn` so they surface in the default
+/// log level without forcing operators to crank verbosity.
+fn log_migration(from: &Path, to: &Path, outcome: &MigrationOutcome) {
+    let from_disp = from.display();
+    let to_disp = to.display();
+    match outcome {
+        MigrationOutcome::Migrated => {
+            tracing::info!(
+                target: "grex::sync::migrate",
+                "migrated: legacy={from_disp} -> new={to_disp}",
+            );
+        }
+        MigrationOutcome::SkippedBothExist => {
+            tracing::warn!(
+                target: "grex::sync::migrate",
+                "skipped: both legacy={from_disp} and new={to_disp} exist; resolve manually",
+            );
+        }
+        MigrationOutcome::SkippedDestOccupied => {
+            tracing::warn!(
+                target: "grex::sync::migrate",
+                "skipped: destination={to_disp} occupied; leaving legacy={from_disp} in place",
+            );
+        }
+        MigrationOutcome::Failed { error } => {
+            tracing::warn!(
+                target: "grex::sync::migrate",
+                "failed: legacy={from_disp} -> new={to_disp}: {error}",
+            );
+        }
+    }
+}
+
+/// Best-effort cleanup of the legacy workspace root after migration:
+/// remove the orphan `.grex.sync.lock` (always safe — the v1.1.0
+/// workspace lock lives at `<pack_root>/.grex.sync.lock`) and try to
+/// rmdir the now-empty `.grex/workspace/` directory. Errors are logged
+/// at trace level only — both leftovers are harmless.
+fn cleanup_legacy_workspace_root(legacy_root: &Path) {
+    let orphan_lock = legacy_root.join(".grex.sync.lock");
+    if orphan_lock.exists() {
+        if let Err(e) = fs::remove_file(&orphan_lock) {
+            tracing::warn!(
+                target: "grex::sync::migrate",
+                "could not remove orphan lock `{}`: {e}",
+                orphan_lock.display(),
+            );
+        } else {
+            tracing::info!(
+                target: "grex::sync::migrate",
+                "removed orphan lock `{}`",
+                orphan_lock.display(),
+            );
+        }
+    }
+    // `remove_dir` only succeeds when the directory is empty — exactly
+    // what we want; if any unmigrated child remains, the legacy root
+    // stays put for the operator to inspect.
+    let _ = fs::remove_dir(legacy_root);
+}
+
 /// Compute the default workspace path when `override_` is absent.
+///
+/// The default is the pack root directory itself, so child packs
+/// resolve as flat siblings of the parent pack root. The rationale —
+/// alignment with the long-standing pack-spec rule that
+/// `children[].path` is a bare name — lives in the pack-spec
+/// "Validation rules" section (`man/concepts/pack-spec.md` /
+/// `grex-doc/src/concepts/pack-spec.md`).
 fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> PathBuf {
     if let Some(p) = override_ {
         return p.to_path_buf();
     }
-    let anchor = pack_root_dir(pack_root);
-    anchor.join(".grex").join("workspace")
+    pack_root_dir(pack_root)
 }
 
 /// If `pack_root` points at a yaml file, use its parent; otherwise use it.
@@ -1462,7 +1699,7 @@ pub fn teardown(
 
     let graph =
         walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
-    let prep = prepare_run_context(pack_root, &graph)?;
+    let prep = prepare_run_context(pack_root, &graph, &workspace)?;
 
     let mut report = SyncReport {
         graph,
@@ -1470,6 +1707,11 @@ pub fn teardown(
         halted: None,
         event_log_warnings: Vec::new(),
         pre_run_recovery: prep.pre_run_recovery,
+        // teardown does not run the legacy-layout migration — by the time
+        // a user is tearing down, the layout has already been migrated
+        // (or was never legacy in the first place). Surfacing an empty
+        // list keeps the report shape symmetric with `run()`.
+        workspace_migrations: Vec::new(),
     };
 
     // feat-m6 B1: mirror `run()` — resolve `--parallel`, build a
@@ -1633,12 +1875,15 @@ impl RecoveryReport {
     }
 }
 
-/// Walk `pack_root` and the manifest log to find crash-recovery artifacts.
+/// Walk `workspace` and the manifest log to find crash-recovery artifacts.
 ///
 /// Inspects:
 ///
-/// * `<pack_root>/.grex/workspace/**` (and the pack_root itself) for
-///   `.grex.bak` orphans and timestamped `.grex.bak.<ts>` tombstones.
+/// * `workspace` for `.grex.bak` orphans and timestamped `.grex.bak.<ts>`
+///   tombstones. The workspace IS where children materialise (whether
+///   the default flat-sibling layout under the pack root, or an
+///   explicit `--workspace` override directory) so this single bounded
+///   walk covers every backup site.
 /// * `event_log` (the manifest JSONL) for `ActionStarted` entries that
 ///   have no matching `ActionCompleted` / `ActionHalted` successor.
 ///
@@ -1647,17 +1892,16 @@ impl RecoveryReport {
 /// succeed. Call sites that want to surface scan failures should read
 /// the manifest directly.
 ///
+/// Pre-`v1.1.0` post-review fix this anchored at `pack_root_dir(pack_root)`,
+/// which missed every backup under a `--workspace` override.
+///
 /// # Errors
 ///
 /// Returns [`SyncError::Validation`] only when the manifest read itself
 /// reports corruption. Filesystem traversal errors are swallowed.
-pub fn scan_recovery(pack_root: &Path, event_log: &Path) -> Result<RecoveryReport, SyncError> {
+pub fn scan_recovery(workspace: &Path, event_log: &Path) -> Result<RecoveryReport, SyncError> {
     let mut report = RecoveryReport::default();
-    let workspace_root = pack_root.join(".grex").join("workspace");
-    walk_for_backups(&workspace_root, &mut report);
-    // Also scan the pack root itself — symlink destinations often live at
-    // the top of the tree (e.g. `~/.config/foo`).
-    walk_for_backups(pack_root, &mut report);
+    walk_for_backups(workspace, &mut report);
     if event_log.exists() {
         match read_all(event_log) {
             Ok(events) => {
@@ -1709,9 +1953,17 @@ fn walk_for_backups_inner(dir: &Path, report: &mut RecoveryReport, depth: u32) {
             }
         }
         // Recurse only into real directories (not symlinks, to avoid
-        // traversing into the workspace's cloned repos).
-        let Ok(meta) = entry.metadata() else { continue };
-        if meta.is_dir() {
+        // traversing into the workspace's cloned repos via aliased
+        // paths). `entry.file_type()` does NOT follow symlinks (unlike
+        // `entry.metadata()` which would dereference and report the
+        // target's type — defeating the very check this guards). The
+        // symlink-skip is also explicit so the intent is recoverable
+        // from the source: backup-recovery never crosses a symlink.
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
             walk_for_backups_inner(&path, report, depth + 1);
         }
     }

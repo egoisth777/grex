@@ -32,6 +32,103 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.1.0] - 2026-04-26
+
+Behaviour change at runtime + zero schema/API break. Brings the
+default child-resolution path into alignment with the long-standing
+pack-spec rule (`children[].path` is a bare name, children resolve as
+flat siblings of the parent pack root). See
+`openspec/changes/feat-v1.1.0-flat-children-layout/` for the full
+rationale.
+
+### Changed
+
+- `grex sync` resolves bare-name `children[].path` as **flat siblings**
+  of the parent pack root. Previous default appended `.grex/workspace/`
+  between the parent and the child name; that prefix is removed. A
+  parent pack at `~/code/.grex/pack.yaml` with `children: [{ path: foo }]`
+  now materialises the child at `~/code/foo/.grex/pack.yaml`. Aligns
+  with the locked positioning ("nested meta-repo manager") and the
+  `import` → `sync` workflow described in
+  [`man/guides/migration.md`](./man/guides/migration.md).
+- `--workspace` CLI flag still accepts a manual override; only the
+  default changes. Help text updated on `sync` and `teardown` to drop
+  the `.grex/workspace` reference.
+
+### Added
+
+- **Auto-migration of legacy `.grex/workspace/<name>/` layout on first
+  `grex sync` after upgrade.** Detects the old workspace layout, moves
+  each child to its flat-sibling slot via atomic `fs::rename`, removes
+  the orphan `.grex.sync.lock` left at the legacy location, and rmdir's
+  the now-empty `.grex/workspace/`. Migration is idempotent (a fresh
+  v1.1.0+ workspace sees no legacy directory and the pass no-ops) and
+  refuses to clobber pre-existing user data at the flat-sibling slot.
+  Per-child outcomes (`migrated`, `skipped_both_exist`,
+  `skipped_dest_occupied`, `failed`) surface in the sync report on
+  both text and `--json` output channels so operators see exactly what
+  happened during the upgrade. **No user action required for default
+  workspaces.**
+- Plan-phase validator (`ChildPathValidator`, internal) enforces the
+  bare-name rule on `children[].path`. Invalid values (`/`, `\`, `..`,
+  `.`, empty, uppercase, digit-led, regex mismatch) — and URL-derived
+  tails when `path:` is omitted — are rejected at sync time with a
+  `ChildPathInvalid { child_name, path, reason }` error variant. The
+  walker also runs the same predicate pre-clone so a malicious
+  `path: ../escape` cannot materialise a directory outside the pack
+  root before plan-phase validation fires.
+- Plan-phase validator (`DupChildPathValidator`, internal) rejects
+  any pack whose `children[]` contains two entries resolving to the
+  same effective path. Surfaces as
+  `PackValidationError::ChildPathDuplicate { path, urls }`.
+- `grex import --from-repos-json` validates each row's `path` against
+  the same bare-name rule before writing the manifest. Invalid rows
+  land in `ImportPlan::failed` with a clear reason; no `Event::Add`
+  is appended for them.
+
+### Fixed
+
+- `scan_recovery` now anchors at the resolved workspace (post
+  `--workspace` override), not at `pack_root`. Previously every
+  `.grex.bak` orphan under an override workspace was missed.
+- `walk_for_backups_inner` uses `entry.file_type()` instead of
+  `entry.metadata()` so the recursion guard truly does NOT follow
+  symlinks (and skips them explicitly).
+
+### Migration notes
+
+- **Auto-migration handles the common case.** Workspaces with a
+  legacy `.grex/workspace/<name>/` layout are relocated automatically
+  on the first `grex sync` after upgrade. The migration step prints
+  one log line per child (text mode) or a `workspace_migrations`
+  array entry (`--json` mode) so the upgrade is auditable.
+- **Concurrency caveat across the upgrade boundary.** Do not run two
+  `grex` versions concurrently against the same workspace during
+  upgrade. v1.0.x writes its lock at
+  `<pack_root>/.grex/workspace/.grex.sync.lock`; v1.1.0 writes
+  `<pack_root>/.grex.sync.lock`. The two paths are in different
+  namespaces, so the cross-version overlap is **not** serialised by
+  either lock. The auto-migration cleans the legacy lock as part of
+  the first 1.1.0 sync — once that completes, every subsequent run
+  is on the new lock path.
+- Authors of `pack.yaml` files that used `children[].path: foo/bar`
+  must convert to a bare name. The same regex as `pack.name`
+  (`^[a-z][a-z0-9-]*$`) is enforced.
+
+## [1.0.3] - 2026-04-26
+
+Doc-site quality fix. No runtime / CLI / MCP / `pack.yaml` behaviour
+changes — surface and metadata only.
+
+### Fixed
+
+- `grex-doc/book.toml` `title` no longer hardcodes `v1.0.1`. mdBook
+  does not auto-inject the workspace `Cargo.toml` version, and a
+  static title is the right call for a doc-site that gets republished
+  on every tag. Title shortened to `"grex documentation"`. Live
+  `<title>` no longer drifts behind the latest release. Commit
+  `399a1b1`.
+
 ## [1.0.2] - 2026-04-25
 
 Doc-site quality fix. No runtime / CLI / MCP / `pack.yaml` behaviour
@@ -252,6 +349,9 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/egoisth777/grex/releases/tag/v1.1.0
+[1.0.3]: https://github.com/egoisth777/grex/releases/tag/v1.0.3
+[1.0.2]: https://github.com/egoisth777/grex/releases/tag/v1.0.2
 [1.0.1]: https://github.com/egoisth777/grex/releases/tag/v1.0.1
 [1.0.0]: https://github.com/egoisth777/grex/releases/tag/v1.0.0
