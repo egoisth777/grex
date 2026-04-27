@@ -304,8 +304,7 @@ fn walker_rejects_traversal_in_grandchild_pack_pre_clone() {
     // Walker must clone mid (legitimate) but reject before cloning
     // `<ws>/../grand`.
     let root_yaml = pack_yaml_with_children("root", &[("git://host/mid.git", "mid", None)]);
-    let mid_yaml =
-        pack_yaml_with_children("mid", &[("git://host/grand.git", "../grand", None)]);
+    let mid_yaml = pack_yaml_with_children("mid", &[("git://host/grand.git", "../grand", None)]);
     let loader = MockLoader::new()
         .with(root.clone(), parse_pack(&root_yaml))
         .with(mid.clone(), parse_pack(&mid_yaml));

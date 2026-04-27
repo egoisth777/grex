@@ -312,9 +312,7 @@ fn print_workspace_migrations(migrations: &[grex_core::sync::WorkspaceMigration]
                 eprintln!("[migrated] legacy={from} -> new={to}");
             }
             MigrationOutcome::SkippedBothExist => {
-                eprintln!(
-                    "[skipped]  legacy={from} AND new={to} both exist; resolve manually",
-                );
+                eprintln!("[skipped]  legacy={from} AND new={to} both exist; resolve manually",);
             }
             MigrationOutcome::SkippedDestOccupied => {
                 eprintln!("[skipped]  destination={to} occupied; legacy={from} kept");

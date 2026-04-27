@@ -66,8 +66,12 @@ impl Validator for ChildPathValidator {
 /// Validate one child: explicit `path:` is checked verbatim; otherwise
 /// the URL-tail derivation is checked. Returns `None` when the child's
 /// effective path is acceptable.
+///
+/// Visibility: `pub(crate)` — used by the walker pre-clone gate and the
+/// duplicate-path validator within this crate; promoting later is a
+/// non-breaking additive change.
 #[must_use]
-pub fn check_one(child: &ChildRef) -> Option<PackValidationError> {
+pub(crate) fn check_one(child: &ChildRef) -> Option<PackValidationError> {
     let (effective, attribution) = match child.path.as_deref() {
         Some(p) => (p.to_string(), Attribution::Explicit(p.to_string())),
         None => (child.effective_path(), Attribution::UrlDerived(child.url.clone())),
@@ -77,11 +81,7 @@ pub fn check_one(child: &ChildRef) -> Option<PackValidationError> {
         Attribution::Explicit(label) => (label.clone(), label),
         Attribution::UrlDerived(url) => (url, effective),
     };
-    Some(PackValidationError::ChildPathInvalid {
-        child_name,
-        path,
-        reason: reason.to_string(),
-    })
+    Some(PackValidationError::ChildPathInvalid { child_name, path, reason: reason.to_string() })
 }
 
 enum Attribution {
@@ -331,10 +331,8 @@ mod tests {
 
     #[test]
     fn dup_validator_passes_on_distinct_paths() {
-        let pack = pack_with_children(&[
-            ("https://x/a.git", Some("a")),
-            ("https://x/b.git", Some("b")),
-        ]);
+        let pack =
+            pack_with_children(&[("https://x/a.git", Some("a")), ("https://x/b.git", Some("b"))]);
         assert!(DupChildPathValidator.check(&pack).is_empty());
     }
 

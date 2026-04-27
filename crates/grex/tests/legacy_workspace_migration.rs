@@ -102,7 +102,8 @@ fn build_legacy_layout() -> LegacyLayout {
     // Parent meta pack — mirrors what import + a hand-edit would
     // produce. The new walker resolves children at flat-sibling slots
     // (post-migration the migrated dirs land there).
-    let mut parent_yaml = String::from("schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n");
+    let mut parent_yaml =
+        String::from("schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n");
     for (name, url) in names.iter().zip(clone_urls.iter()) {
         parent_yaml.push_str(&format!("  - url: {url}\n    path: {name}\n"));
     }
@@ -116,36 +117,22 @@ fn build_legacy_layout() -> LegacyLayout {
     LegacyLayout { _tmp: tmp, root, child_names: names }
 }
 
-#[test]
-fn auto_migrates_legacy_workspace_layout_on_first_sync() {
-    let layout = build_legacy_layout();
-    let legacy_root = layout.root.join(".grex").join("workspace");
-
-    // Sanity — pre-sync we are in legacy shape.
+/// Pre-sync invariant: legacy slots populated, flat-sibling slots
+/// empty, orphan lock present.
+fn assert_pre_sync_legacy_shape(layout: &LegacyLayout, legacy_root: &Path) {
     for name in layout.child_names {
         assert!(legacy_root.join(name).join(".git").is_dir(), "fixture must seed legacy `{name}`");
         assert!(
             !layout.root.join(name).exists(),
-            "fixture must NOT pre-create flat-sibling `{name}`"
+            "fixture must NOT pre-create flat-sibling `{name}`",
         );
     }
     assert!(legacy_root.join(".grex.sync.lock").is_file());
+}
 
-    // Run sync. This both auto-migrates AND walks the now-flat tree.
-    let assertion = grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
-    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
-
-    // Migration log lines surface to stderr (text mode).
-    for name in layout.child_names {
-        assert!(
-            stderr.contains("[migrated]")
-                && stderr.contains(name),
-            "stderr must announce migration for `{name}`; got:\n{stderr}",
-        );
-    }
-
-    // Children landed at flat-sibling slots; legacy slots are gone.
+/// Post-sync invariant: legacy slots gone, flat-sibling slots have
+/// `.git`, orphan lock removed, legacy workspace dir rmdir'd.
+fn assert_post_migration_shape(layout: &LegacyLayout, legacy_root: &Path) {
     for name in layout.child_names {
         assert!(
             layout.root.join(name).join(".git").is_dir(),
@@ -156,29 +143,38 @@ fn auto_migrates_legacy_workspace_layout_on_first_sync() {
             "legacy slot `{name}` must be removed after rename",
         );
     }
-
-    // Orphan lock removed; legacy workspace dir rmdir'd.
     assert!(
         !legacy_root.join(".grex.sync.lock").exists(),
         "orphan lock at legacy location must be removed by migration",
     );
-    assert!(
-        !legacy_root.exists(),
-        "empty `.grex/workspace/` must be rmdir'd by migration cleanup",
-    );
+    assert!(!legacy_root.exists(), "empty `.grex/workspace/` must be rmdir'd by migration cleanup");
+}
 
-    // Sync proceeded — every child name appears in the step log.
+#[test]
+fn auto_migrates_legacy_workspace_layout_on_first_sync() {
+    let layout = build_legacy_layout();
+    let legacy_root = layout.root.join(".grex").join("workspace");
+    assert_pre_sync_legacy_shape(&layout, &legacy_root);
+
+    // First sync: auto-migrates AND walks the now-flat tree.
+    let assertion = grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
+    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
     for name in layout.child_names {
         assert!(
+            stderr.contains("[migrated]") && stderr.contains(name),
+            "stderr must announce migration for `{name}`; got:\n{stderr}",
+        );
+        assert!(
             stdout.contains(name),
-            "sync stdout must mention child `{name}`; got:\n{stdout}\n--- stderr ---\n{stderr}"
+            "sync stdout must mention child `{name}`; got:\n{stdout}\n--- stderr ---\n{stderr}",
         );
     }
+    assert_post_migration_shape(&layout, &legacy_root);
 
     // Re-run is idempotent: no legacy dir to migrate, no `[migrated]`
     // lines. Sync still completes successfully.
-    let assertion2 =
-        grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
+    let assertion2 = grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
     let stderr2 = String::from_utf8(assertion2.get_output().stderr.clone()).unwrap();
     assert!(
         !stderr2.contains("[migrated]"),

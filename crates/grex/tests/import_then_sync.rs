@@ -215,12 +215,7 @@ fn sync_with_workspace_override_routes_children_to_override_dir() {
 
     grex()
         .current_dir(&layout.root)
-        .args([
-            "sync",
-            ".",
-            "--workspace",
-            override_ws.to_str().unwrap(),
-        ])
+        .args(["sync", ".", "--workspace", override_ws.to_str().unwrap()])
         .assert()
         .success();
 

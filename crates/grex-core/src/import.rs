@@ -160,10 +160,7 @@ pub fn import_from_repos_json(
         // landed as `Event::Add` rows that only failed at sync
         // time. Fail-fast at import is a much friendlier signal.
         if let Some(reason) = reject_reason(&path) {
-            plan.failed.push(ImportFailure {
-                path,
-                error: format!("invalid `path`: {reason}"),
-            });
+            plan.failed.push(ImportFailure { path, error: format!("invalid `path`: {reason}") });
             continue;
         }
         if existing.contains(&path) {
@@ -546,8 +543,7 @@ mod tests {
                 {"url": "u", "path": "foo\\bar"}
             ]"#,
         );
-        let plan =
-            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
+        let plan = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
         assert_eq!(plan.imported.len(), 0);
         assert_eq!(plan.failed.len(), 5);
     }
