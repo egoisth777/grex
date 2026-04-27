@@ -27,10 +27,12 @@ use thiserror::Error;
 use super::PackManifest;
 use crate::tree::PackGraph;
 
+pub mod child_path;
 pub mod cycle;
 pub mod depends_on;
 pub mod dup_symlink;
 
+pub use child_path::ChildPathValidator;
 pub use cycle::CycleValidator;
 pub use depends_on::DependsOnValidator;
 pub use dup_symlink::DuplicateSymlinkValidator;
@@ -73,6 +75,21 @@ pub enum PackValidationError {
         /// The unresolved `depends_on` entry (a pack name or url).
         required: String,
     },
+
+    /// A `children[].path` value violates the bare-name rule
+    /// (`^[a-z][a-z0-9-]*$`, no separators, no `.` / `..`, no empty).
+    /// Enforced since v1.1.0 — see
+    /// [`child_path::ChildPathValidator`].
+    #[error("pack child `{child_name}` has invalid path `{path}`: {reason}")]
+    ChildPathInvalid {
+        /// Label of the offending child (its `path` field, or `url` as
+        /// fallback).
+        child_name: String,
+        /// The rejected literal `path` value.
+        path: String,
+        /// One-line explanation of which sub-rule failed.
+        reason: String,
+    },
 }
 
 /// A single plan-phase validator.
@@ -95,13 +112,15 @@ pub trait Validator {
 ///
 /// 1. [`DuplicateSymlinkValidator`] — two symlinks with the same literal
 ///    `dst`.
+/// 2. [`ChildPathValidator`] — every `children[].path` matches the
+///    bare-name regex (since v1.1.0).
 ///
 /// Later slices extend this list; callers should prefer
 /// [`PackManifest::validate_plan`] over instantiating validators manually,
 /// so the default set stays discoverable.
 #[must_use]
 pub fn run_all(pack: &PackManifest) -> Vec<PackValidationError> {
-    let validators: [&dyn Validator; 1] = [&DuplicateSymlinkValidator];
+    let validators: [&dyn Validator; 2] = [&DuplicateSymlinkValidator, &ChildPathValidator];
     let mut errs = Vec::new();
     for v in validators {
         errs.extend(v.check(pack));
