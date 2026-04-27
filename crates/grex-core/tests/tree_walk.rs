@@ -316,10 +316,18 @@ fn walker_rejects_traversal_in_grandchild_pack_pre_clone() {
 
     // Mid clones (legitimate); grand never does.
     let calls = backend.calls();
+    let mid_clones = calls
+        .iter()
+        .filter(|c| matches!(c, BackendCall::Clone { url, .. } if url.contains("mid")))
+        .count();
     let grand_clones = calls
         .iter()
         .filter(|c| matches!(c, BackendCall::Clone { url, .. } if url.contains("grand")))
         .count();
+    assert_eq!(
+        mid_clones, 1,
+        "mid is a legitimate intermediate child and MUST be cloned exactly once; got: {calls:?}",
+    );
     assert_eq!(grand_clones, 0, "no clone may fire for grandchild traversal; got: {calls:?}");
 }
 

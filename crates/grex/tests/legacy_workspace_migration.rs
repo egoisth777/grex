@@ -33,6 +33,16 @@ fn init_git_identity() {
         std::env::set_var("GIT_AUTHOR_EMAIL", "test@grex.local");
         std::env::set_var("GIT_COMMITTER_NAME", "grex-test");
         std::env::set_var("GIT_COMMITTER_EMAIL", "test@grex.local");
+        // Isolate from the developer's global / system git config so
+        // `init.defaultBranch`, `commit.gpgsign`, `core.autocrlf`, etc.
+        // can't leak into the fixture and turn the test
+        // non-deterministic across machines. `git` treats a missing
+        // path here as "no config", which is exactly what we want.
+        let null_cfg = std::env::temp_dir().join("grex-test-empty-gitconfig");
+        let _ = std::fs::write(&null_cfg, b"");
+        std::env::set_var("GIT_CONFIG_GLOBAL", &null_cfg);
+        std::env::set_var("GIT_CONFIG_SYSTEM", &null_cfg);
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
     });
 }
 
@@ -161,9 +171,13 @@ fn auto_migrates_legacy_workspace_layout_on_first_sync() {
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
     let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
     for name in layout.child_names {
+        // Tighter than `stderr.contains("[migrated]") && stderr.contains(name)`:
+        // require both substrings on the SAME line so an unrelated
+        // `[migrated]` line for some other child can't satisfy this
+        // assertion for `name`.
         assert!(
-            stderr.contains("[migrated]") && stderr.contains(name),
-            "stderr must announce migration for `{name}`; got:\n{stderr}",
+            stderr.lines().any(|line| line.contains("[migrated]") && line.contains(name)),
+            "stderr must announce migration for `{name}` on a single line; got:\n{stderr}",
         );
         assert!(
             stdout.contains(name),

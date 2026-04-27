@@ -36,6 +36,18 @@ fn init_git_identity() {
         std::env::set_var("GIT_AUTHOR_EMAIL", "test@grex.local");
         std::env::set_var("GIT_COMMITTER_NAME", "grex-test");
         std::env::set_var("GIT_COMMITTER_EMAIL", "test@grex.local");
+        // Isolate from the developer's global / system git config so
+        // `init.defaultBranch`, `commit.gpgsign`, `core.autocrlf`, etc.
+        // can't leak into the fixture and turn the test
+        // non-deterministic across machines. `git` treats a missing
+        // path here as "no config", which is exactly what we want.
+        let null_cfg = std::env::temp_dir().join("grex-test-empty-gitconfig");
+        // Best-effort touch; if the file already exists from a prior
+        // run that's fine — empty content is the only requirement.
+        let _ = std::fs::write(&null_cfg, b"");
+        std::env::set_var("GIT_CONFIG_GLOBAL", &null_cfg);
+        std::env::set_var("GIT_CONFIG_SYSTEM", &null_cfg);
+        std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
     });
 }
 
