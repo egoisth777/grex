@@ -62,16 +62,16 @@ fn seed_manifest(workspace: &Path, pack_id: &str) {
     fs::create_dir_all(workspace.join(pack_id)).unwrap();
 }
 
-/// Write a valid empty managed block for `pack_id`.
+/// Write a valid workspace-level managed block for `pack_id`.
 fn seed_clean_gitignore(workspace: &Path, pack_id: &str) {
-    let gi = workspace.join(pack_id).join(".gitignore");
-    let body = format!("# >>> grex:{id} >>>\n# <<< grex:{id} <<<\n", id = pack_id);
+    let gi = workspace.join(".gitignore");
+    let body = format!("# >>> grex:{id} >>>\n.grex-lock\n# <<< grex:{id} <<<\n", id = pack_id);
     fs::write(gi, body).unwrap();
 }
 
 /// Write a drifted managed block (unexpected pattern line).
 fn seed_drifted_gitignore(workspace: &Path, pack_id: &str) {
-    let gi = workspace.join(pack_id).join(".gitignore");
+    let gi = workspace.join(".gitignore");
     let body = format!("# >>> grex:{id} >>>\ndrifted-pattern\n# <<< grex:{id} <<<\n", id = pack_id);
     fs::write(gi, body).unwrap();
 }
