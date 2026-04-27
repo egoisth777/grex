@@ -164,7 +164,7 @@ jobs:
         # useless as a glob. Each matrix entry ships exactly one target, so
         # `join(matrix.targets, '_')` yields the single target triple and the
         # glob matches every per-target artefact (tar.xz, zip, sha256, etc).
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: "target/distrib/*${{ join(matrix.targets, '_') }}*"
       - id: cargo-dist
