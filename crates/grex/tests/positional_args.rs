@@ -9,20 +9,24 @@ use predicates::prelude::*;
 
 #[test]
 fn add_with_url_only_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
     grex()
+        .current_dir(dir.path())
         .args(["add", "https://example.com/repo.git"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("unimplemented"));
+        .stdout(predicate::str::contains("added"));
 }
 
 #[test]
 fn add_with_url_and_path_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
     grex()
+        .current_dir(dir.path())
         .args(["add", "https://example.com/repo.git", "my-path"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("unimplemented"));
+        .stdout(predicate::str::contains("my-path"));
 }
 
 #[test]
@@ -112,7 +116,13 @@ fn exec_without_args_currently_succeeds() {
 /// `grex add ""` currently parses. Semantic URL validation belongs to M2/M3.
 #[test]
 fn add_empty_url_currently_succeeds() {
-    grex().args(["add", ""]).assert().success().stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex()
+        .current_dir(dir.path())
+        .args(["add", "", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("DRY-RUN: would add"));
 }
 
 #[test]

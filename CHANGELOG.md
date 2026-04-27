@@ -24,6 +24,10 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Changed
 
+- Routed `grex import --from-repos-json` manifest writes through the shared
+  add registration path, keeping import and `grex add` on one event
+  construction flow without changing the manifest schema.
+
 ### Deprecated
 
 ### Removed

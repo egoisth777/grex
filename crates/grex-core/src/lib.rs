@@ -4,6 +4,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod add;
 pub mod doctor;
 pub mod env;
 pub mod execute;
