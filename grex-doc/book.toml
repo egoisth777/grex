@@ -17,6 +17,7 @@ language = "en"
 src = "src"
 
 [output.html]
+site-url = "https://egoisth777.github.io/grex/"
 git-repository-url = "https://github.com/egoisth777/grex"
 edit-url-template = "https://github.com/egoisth777/grex/edit/main/man/{path}"
 default-theme = "navy"
