@@ -18,6 +18,7 @@
 //! rewired without API churn because callers only observe `ImportPlan`.
 
 use crate::manifest::{self, Event, PackId, SCHEMA_VERSION};
+use crate::pack::validate::child_path::reject_reason;
 use chrono::Utc;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -151,6 +152,20 @@ pub fn import_from_repos_json(
 
     for entry in raw {
         let path = entry.path.clone();
+        // Bare-name validation BEFORE any manifest write — refuses to
+        // ingest a `path` that would later trip
+        // `ChildPathValidator` (separators, `.` / `..`, regex
+        // mismatch, empty). Without this gate, `migration.md`'s
+        // promise that import "validates" was untrue: bad rows
+        // landed as `Event::Add` rows that only failed at sync
+        // time. Fail-fast at import is a much friendlier signal.
+        if let Some(reason) = reject_reason(&path) {
+            plan.failed.push(ImportFailure {
+                path,
+                error: format!("invalid `path`: {reason}"),
+            });
+            continue;
+        }
         if existing.contains(&path) {
             plan.skipped.push(ImportSkip { path, reason: SkipReason::PathCollision });
             continue;
@@ -483,6 +498,58 @@ mod tests {
         write_json(&input, "not json at all");
         let err = import_from_repos_json(&input, &manifest, ImportOpts::default()).unwrap_err();
         assert!(matches!(err, ImportError::Parse { .. }));
+    }
+
+    #[test]
+    fn import_rejects_path_with_separator_into_failed() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let manifest = dir.path().join("grex.jsonl");
+        write_json(
+            &input,
+            r#"[
+                {"url": "https://x/a.git", "path": "../escape"},
+                {"url": "https://x/b.git", "path": "good"}
+            ]"#,
+        );
+        let plan =
+            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
+        assert_eq!(plan.imported.len(), 1, "only the good row imports");
+        assert_eq!(plan.imported[0].path, "good");
+        assert_eq!(plan.failed.len(), 1, "the traversal-bearing row goes to failed");
+        assert_eq!(plan.failed[0].path, "../escape");
+        assert!(
+            plan.failed[0].error.contains("separator"),
+            "error must explain the rejection: {}",
+            plan.failed[0].error,
+        );
+        // Manifest must NOT contain a row for `../escape`.
+        let events = manifest::read_all(&manifest).unwrap();
+        assert!(
+            events.iter().all(|e| !matches!(e, Event::Add { path, .. } if path == "../escape")),
+            "no Event::Add may be written for a rejected path",
+        );
+    }
+
+    #[test]
+    fn import_rejects_dot_dotdot_uppercase_empty() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let manifest = dir.path().join("grex.jsonl");
+        write_json(
+            &input,
+            r#"[
+                {"url": "u", "path": "."},
+                {"url": "u", "path": ".."},
+                {"url": "u", "path": "Foo"},
+                {"url": "u", "path": ""},
+                {"url": "u", "path": "foo\\bar"}
+            ]"#,
+        );
+        let plan =
+            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
+        assert_eq!(plan.imported.len(), 0);
+        assert_eq!(plan.failed.len(), 5);
     }
 
     #[test]
