@@ -2,7 +2,7 @@
 # MUST read and import
 Read @.omne/schemas/rules.md
 Serve @.omne/lib/ as the single source of truth
-
+MUST use powershell as the default shell tool
 # DON'ts
 1. Never read the code, delegate to subagent
 2. Never write the code, delegate to subagent
