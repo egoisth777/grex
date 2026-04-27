@@ -1,24 +1,21 @@
 # progress — grex
 
 ## Where we are
-**v1.1.0 SHIPPED (2026-04-27); v1.1.1 OPENSPEC DRAFTED.** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Real-workspace validation surfaced a remaining gap: `grex sync` requires every child to carry its own `.grex/pack.yaml` — plain-git children (the grex-org bootstrap pattern) cannot be walked end-to-end. v1.1.1 openspec drafted at `openspec/changes/feat-v1.1.1-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children. PR #<NN> open vs `main`. PR #51 + #52 (post-1.1.0 follow-ups) still open. Detailed v1.1.0 ship + v1.1.x follow-up history below.
+**v1.1.0 SHIPPED; v1.1.1 OPENSPEC DRAFTED + REBASED; main backlog DRAINED (2026-04-27).** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Tech-debt pair #34/#35 closed via PRs #52/#51 (both merged to main). Eight Dependabot PRs merged (#39-#46), two deferred + closed (#47 sha2 0.11 MSRV blocker; #48 gix 0.81 multi-crate scope). #54 typos rephrase merged on main. CLAUDE.md `MUST use powershell as default shell tool` rule landed on main via #55. v1.1.1 openspec triplet at `openspec/changes/feat-v1.1.1-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children; impl pending (Stage 1a–1k). Branch rebased onto fresh `main` (post-#55), 3 commits ahead. Detailed v1.1.0 ship + v1.1.x follow-up history below.
 
-## Endpoint (2026-04-27, feat/v1.1.1-plain-git-children — openspec drafted)
-- Branch: `feat/v1.1.1-plain-git-children` at `42506b8`; PR #<NN> open vs `main`. Markdown-only (proposal + design + tasks + 2 pack-spec mirror updates).
-- **Trigger:** v1.1.0 ship validation against `E:\repos\code` (user's real 14-child workspace) showed `tree walk failed: pack manifest not found at .\algo-leet\.grex\pack.yaml`. Even after v1.1.0's flat-sibling fix, sync still requires every child to carry its own `.grex/pack.yaml`. Plain-git children (the grex-org bootstrap pattern grex was designed to productize) are excluded.
-- **Locked decisions (user, 2026-04-27):**
-  1. Approach A (lenient mode): walker synthesizes `scripted`-no-hooks pack manifest in-memory when child has `.git/` but no `.grex/pack.yaml`
-  2. SemVer PATCH (user override; feature would normally be MINOR) (1.1.0 → 1.1.1; additive, no break)
-  3. Branch + openspec NOW; impl in follow-up PR after openspec review
-- **Code blast radius (impl PR):**
-  - `crates/grex-core/src/tree/walker.rs` — add synthetic-manifest fallback in load step
-  - `crates/grex-core/src/lockfile/...` — add `synthetic: bool` field
-  - `crates/grex-core/src/doctor.rs` — handle synthetic packs as OK
-  - `crates/grex/src/cli/verbs/ls.rs` — surface `~` marker
-  - New e2e: `crates/grex/tests/plain_git_children_sync.rs`
-- **Acceptance criteria:** existing 703 tests pass; new e2e passes; `grex sync E:\repos\code` walks 14 plain-git children + idempotent re-sync clean.
-- **Pack-spec callout added:** `grex-doc/src/concepts/pack-spec.md` + `man/concepts/pack-spec.md` now note "Planned for v1.1.1" placeholder.
-- **Next action:** review openspec PR → merge → branch impl → execute tasks.md → impl PR → tag v1.1.1 → publish 4 crates.
+## Endpoint (2026-04-27, feat/v1.1.1-plain-git-children — rebased onto fresh main)
+- Branch: `feat/v1.1.1-plain-git-children` at `11d2dd5`, rebased onto `origin/main` `3cf9c27`. 3 commits ahead (openspec draft + endpoint backfill + v1.2.0→v1.1.1 rename). Markdown-only.
+- **main SHA:** `3cf9c27cbe35805356003f3514caf2b1b04a3a14` (`docs(claude): require powershell as default shell tool (#55)`).
+- **main backlog drained today (2026-04-27):**
+  - **Tech debt:** PR #52 closed #34 (doctor `expected_patterns_for_pack`); PR #51 closed #35 (import via shared `add::run` core). Both squash-merged.
+  - **Dependabot batch merged:** #39 setup-python, #40 deploy-pages, #41 attest-build-provenance, #42 upload-pages-artifact, #43 download-artifact, #44 winreg, #45 clap_mangen 0.3.0 (with man regen), #46 thiserror 2.0 (with `{r#ref}` → `{ref}` fix).
+  - **Dependabot deferred:** #47 sha2 0.11 — closed; MSRV 1.85 raise blocker (waits for ecosystem consensus). #48 gix 0.81 — closed; multi-crate scope (needs `gix-worktree-state` 0.17→0.28 + `sha1` feature flip + `with_ref_name` API audit).
+  - **Doc/typos:** #54 typos rephrase on `progress.md` — merged (overlapping fix on v1.1.1 absorbed during rebase).
+  - **CLAUDE.md:** #55 powershell rule — squash-merged via this session's chore branch.
+- **v1.1.1 openspec status:** triplet stable at `openspec/changes/feat-v1.1.1-plain-git-children/{proposal,design,tasks}.md`. Approach A locked: walker synthesizes `scripted`-no-hooks pack manifest in-memory when child has `.git/` but no `.grex/pack.yaml`. SemVer PATCH per user override (additive, no break).
+- **Impl pending (Stage 1a–1k):** walker fallback + lockfile `synthetic: bool` field + doctor synthetic-OK handling + `ls` `~` marker + new e2e `plain_git_children_sync.rs`. Acceptance: existing 703 tests pass; `grex sync E:\repos\code` walks 14 plain-git children idempotently.
+- **Rebase note:** v1.1.1's commit `52b929b` (typos fix) absorbed during rebase since main #54 covered the same lines; resulting tree clean. Force-with-lease push complete.
+- **Next action:** start Stage 1a (walker synthetic-manifest fallback) on this branch; bump `Cargo.toml` 1.1.0 → 1.1.1 at Stage 1h; impl PR → tag v1.1.1 → publish 4 crates.
 
 ## Endpoint (2026-04-27, v1.1.0 SHIPPED)
 - **Squash-merge:** PR #50 merged via `gh pr merge 50 --squash --delete-branch`; squash SHA on `main` = `e54dc64596b3e9090c68e5712974b6d443912343` ([commit](https://github.com/egoisth777/grex/commit/e54dc64596b3e9090c68e5712974b6d443912343)). `feat/v1.1.0-flat-children-layout` deleted.
