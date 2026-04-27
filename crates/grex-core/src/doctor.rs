@@ -22,6 +22,9 @@ use std::path::{Path, PathBuf};
 
 use crate::fs::gitignore::{read_managed_block, upsert_managed_block, GitignoreError};
 use crate::manifest::{self, Event, ManifestError, PackState};
+use crate::plugin::pack_type::default_managed_gitignore_patterns;
+
+const GITIGNORE_EXT_KEY: &str = "x-gitignore";
 
 /// Which check produced this finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -239,8 +242,8 @@ fn apply_fixes(
 
     for (pack_id, _detail) in to_fix {
         let Some(state) = packs.get(&pack_id) else { continue };
-        let gi_path = workspace.join(&state.path).join(".gitignore");
-        let expected = expected_patterns_for_pack(state);
+        let gi_path = workspace.join(".gitignore");
+        let expected = expected_patterns_for_pack(workspace, state);
         let patterns_ref: Vec<&str> = expected.iter().map(String::as_str).collect();
         upsert_managed_block(&gi_path, &state.id, &patterns_ref)
             .map_err(DoctorError::GitignoreFix)?;
@@ -291,39 +294,66 @@ pub fn check_manifest_schema(manifest_path: &Path) -> (CheckResult, Option<Vec<E
     }
 }
 
-/// Expected managed-block patterns for a single pack. M5-2 wrote this
-/// as a constant slice; until a richer list lands we keep the contract
-/// small and explicit: every pack's managed block holds its own path so
-/// the parent workspace ignores its working tree.
+/// Expected managed-block patterns for a single pack.
 ///
-/// TODO(m8): populate this list once plugin packs emit their own
-/// pattern sets — tracked by issue #34. Until then any pack that writes
-/// patterns via the M5-2 writer would be misreported as drift; this is
-/// acceptable for M7-4b scope (declarative packs only, no patterns).
-fn expected_patterns_for_pack(_state: &PackState) -> Vec<String> {
-    // M7-4 contract: the doctor is anchored on M5-2's default
-    // managed-block body. We don't re-define the content here; the
-    // spec guarantees the default list, and this helper exists so the
-    // set is computed from pack state rather than hard-coded at call
-    // sites. The default list is "no patterns beyond the markers" —
-    // pack-type plugins push their own patterns via the M5-2 writer.
-    Vec::new()
+/// The built-in pack-type plugins (`meta`, `declarative`, `scripted`) all
+/// call `pack_type::apply_gitignore`, which writes the grex default
+/// patterns first, then appends authored `x-gitignore` entries from the
+/// pack manifest without duplicating defaults. Unknown pack types are
+/// plugin-owned; doctor has no v1 contract for their emitted patterns.
+fn expected_patterns_for_pack(workspace: &Path, state: &PackState) -> Vec<String> {
+    if !is_builtin_pack_type(&state.pack_type) {
+        return Vec::new();
+    }
+
+    let mut expected: Vec<String> =
+        default_managed_gitignore_patterns().iter().map(|p| (*p).to_string()).collect();
+
+    for pattern in authored_gitignore_patterns(workspace, state) {
+        if !expected.iter().any(|p| p == &pattern) {
+            expected.push(pattern);
+        }
+    }
+
+    expected
 }
 
-/// Check 2 — gitignore sync. For every pack whose on-disk path has a
-/// managed block, compare the body to the expected pattern list.
+fn is_builtin_pack_type(pack_type: &str) -> bool {
+    matches!(pack_type, "meta" | "declarative" | "scripted")
+}
+
+fn authored_gitignore_patterns(workspace: &Path, state: &PackState) -> Vec<String> {
+    let pack_yaml = workspace.join(&state.path).join(".grex").join("pack.yaml");
+    let Ok(contents) = std::fs::read_to_string(pack_yaml) else {
+        return Vec::new();
+    };
+    let Ok(pack) = crate::pack::parse(&contents) else {
+        return Vec::new();
+    };
+    let Some(raw) = pack.extensions.get(GITIGNORE_EXT_KEY) else {
+        return Vec::new();
+    };
+    let Some(seq) = raw.as_sequence() else {
+        return Vec::new();
+    };
+    seq.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
+}
+
+/// Check 2 — gitignore sync. For every pack with a managed block in
+/// the workspace `.gitignore`, compare the body to the expected pattern
+/// list.
 pub fn check_gitignore_sync(
     workspace: &Path,
     packs: &std::collections::HashMap<String, PackState>,
 ) -> CheckResult {
     let mut findings = Vec::new();
-    // Stable iteration order — users want deterministic output.
+    // Stable iteration order - users want deterministic output.
     let ordered: BTreeMap<_, _> = packs.iter().collect();
+    let gi_path = workspace.join(".gitignore");
     for (id, state) in ordered {
-        let gi_path = workspace.join(&state.path).join(".gitignore");
         match read_managed_block(&gi_path, id) {
             Ok(Some(actual)) => {
-                let expected = expected_patterns_for_pack(state);
+                let expected = expected_patterns_for_pack(workspace, state);
                 if actual != expected {
                     findings.push(Finding {
                         check: CheckKind::GitignoreSync,
@@ -567,6 +597,10 @@ mod tests {
     }
 
     fn seed_pack(workspace: &Path, id: &str) {
+        seed_pack_with_type(workspace, id, "declarative");
+    }
+
+    fn seed_pack_with_type(workspace: &Path, id: &str, pack_type: &str) {
         let m = workspace.join("grex.jsonl");
         append_event(
             &m,
@@ -575,12 +609,18 @@ mod tests {
                 id: id.into(),
                 url: format!("https://example/{id}"),
                 path: id.into(),
-                pack_type: "declarative".into(),
+                pack_type: pack_type.into(),
                 schema_version: SCHEMA_VERSION.into(),
             },
         )
         .unwrap();
         fs::create_dir_all(workspace.join(id)).unwrap();
+    }
+
+    fn write_pack_yaml(workspace: &Path, id: &str, yaml: &str) {
+        let dir = workspace.join(id).join(".grex");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("pack.yaml"), yaml).unwrap();
     }
 
     // --- Unit: manifest schema ---
@@ -630,11 +670,57 @@ mod tests {
     // --- Unit: gitignore sync ---
 
     #[test]
+    fn expected_patterns_for_pack_populates_builtin_defaults() {
+        for pack_type in ["meta", "declarative", "scripted"] {
+            let d = tempdir().unwrap();
+            seed_pack_with_type(d.path(), pack_type, pack_type);
+            let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+            let packs = manifest::fold(events);
+            let state = packs.get(pack_type).unwrap();
+            assert_eq!(
+                expected_patterns_for_pack(d.path(), state),
+                vec![".grex-lock".to_string()],
+                "pack type: {pack_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn expected_patterns_for_pack_merges_authored_extensions_for_builtins() {
+        for pack_type in ["meta", "declarative", "scripted"] {
+            let d = tempdir().unwrap();
+            let id = format!("{pack_type}-pack");
+            let authored = format!("{pack_type}-cache/");
+            seed_pack_with_type(d.path(), &id, pack_type);
+            write_pack_yaml(
+                d.path(),
+                &id,
+                &format!(
+                    "schema_version: \"1\"\nname: {id}\ntype: {pack_type}\nx-gitignore:\n  - \".grex-lock\"\n  - {authored}\n",
+                ),
+            );
+            let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+            let packs = manifest::fold(events);
+            let state = packs.get(&id).unwrap();
+            assert_eq!(
+                expected_patterns_for_pack(d.path(), state),
+                vec![".grex-lock".to_string(), authored],
+                "pack type: {pack_type}"
+            );
+        }
+    }
+
+    #[test]
     fn gitignore_clean_block_is_ok() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        // Upsert the expected empty block.
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &[]).unwrap();
+        // Upsert the expected workspace-level block.
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
         let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
@@ -645,14 +731,34 @@ mod tests {
     fn gitignore_drift_is_warning_and_autofixable() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        // Write a drifted block body — nonempty where expected is empty.
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &["unexpected-line"])
-            .unwrap();
+        // Write a drifted workspace-level block body.
+        upsert_managed_block(&d.path().join(".gitignore"), "a", &["unexpected-line"]).unwrap();
         let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
         assert_eq!(r.worst(), Severity::Warning);
         assert!(r.findings.iter().any(|f| f.auto_fixable));
+    }
+
+    #[test]
+    fn gitignore_authored_patterns_are_not_reported_as_drift() {
+        let d = tempdir().unwrap();
+        seed_pack(d.path(), "a");
+        write_pack_yaml(
+            d.path(),
+            "a",
+            "schema_version: \"1\"\nname: a\ntype: declarative\nx-gitignore:\n  - target/\n  - \"*.log\"\n",
+        );
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            &[".grex-lock", "target/", "*.log"],
+        )
+        .unwrap();
+        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let packs = manifest::fold(events);
+        let r = check_gitignore_sync(d.path(), &packs);
+        assert_eq!(r.worst(), Severity::Ok);
     }
 
     // --- Unit: on-disk drift ---
@@ -770,7 +876,12 @@ mod tests {
     fn run_doctor_clean_workspace_exits_zero() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &[]).unwrap();
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
         let report = run_doctor(d.path(), &DoctorOpts::default()).unwrap();
         assert_eq!(report.exit_code(), 0);
     }
@@ -779,7 +890,7 @@ mod tests {
     fn run_doctor_gitignore_drift_exits_one() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &["drift"]).unwrap();
+        upsert_managed_block(&d.path().join(".gitignore"), "a", &["drift"]).unwrap();
         let report = run_doctor(d.path(), &DoctorOpts::default()).unwrap();
         assert_eq!(report.exit_code(), 1);
     }
@@ -788,7 +899,7 @@ mod tests {
     fn run_doctor_fix_heals_gitignore_drift() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &["drift"]).unwrap();
+        upsert_managed_block(&d.path().join(".gitignore"), "a", &["drift"]).unwrap();
         let opts = DoctorOpts { fix: true, lint_config: false };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 0, "fix must zero out exit code");
@@ -858,7 +969,12 @@ mod tests {
     fn run_doctor_config_lint_skipped_by_default() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &[]).unwrap();
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
         // Seed a broken config.yaml; default run must ignore it.
         fs::create_dir_all(d.path().join("openspec")).unwrap();
         fs::write(d.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
@@ -878,7 +994,12 @@ mod tests {
     fn run_doctor_lint_config_flag_reports_config() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        upsert_managed_block(&d.path().join("a").join(".gitignore"), "a", &[]).unwrap();
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
         fs::create_dir_all(d.path().join("openspec")).unwrap();
         fs::write(d.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
         let opts = DoctorOpts { fix: false, lint_config: true };

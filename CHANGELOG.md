@@ -30,6 +30,10 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Fixed
 
+- `grex doctor` now compares and repairs managed `.gitignore` blocks against
+  the patterns emitted by built-in pack types, including the default
+  `.grex-lock` entry and authored `x-gitignore` patterns.
+
 ### Security
 
 ## [1.0.2] - 2026-04-25
