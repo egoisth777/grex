@@ -32,7 +32,7 @@ pub mod cycle;
 pub mod depends_on;
 pub mod dup_symlink;
 
-pub use child_path::ChildPathValidator;
+pub use child_path::{ChildPathValidator, DupChildPathValidator};
 pub use cycle::CycleValidator;
 pub use depends_on::DependsOnValidator;
 pub use dup_symlink::DuplicateSymlinkValidator;
@@ -90,6 +90,20 @@ pub enum PackValidationError {
         /// One-line explanation of which sub-rule failed.
         reason: String,
     },
+
+    /// Two or more `children[]` entries within the same parent
+    /// resolve to the same `effective_path()`. Without this gate the
+    /// second clone would silently overwrite the first's working
+    /// tree, or — once both have a `.git` — collide on the
+    /// dest-already-exists fast path and skip-fetch the wrong upstream.
+    /// Enforced since v1.1.0; see [`child_path::DupChildPathValidator`].
+    #[error("pack has duplicate children resolving to `{path}`: {urls:?}")]
+    ChildPathDuplicate {
+        /// The shared resolved path that two or more children claim.
+        path: String,
+        /// URLs of every colliding child, in declaration order.
+        urls: Vec<String>,
+    },
 }
 
 /// A single plan-phase validator.
@@ -114,13 +128,16 @@ pub trait Validator {
 ///    `dst`.
 /// 2. [`ChildPathValidator`] — every `children[].path` matches the
 ///    bare-name regex (since v1.1.0).
+/// 3. [`DupChildPathValidator`] — no two `children[]` entries within the
+///    same parent share an `effective_path()` (since v1.1.0).
 ///
 /// Later slices extend this list; callers should prefer
 /// [`PackManifest::validate_plan`] over instantiating validators manually,
 /// so the default set stays discoverable.
 #[must_use]
 pub fn run_all(pack: &PackManifest) -> Vec<PackValidationError> {
-    let validators: [&dyn Validator; 2] = [&DuplicateSymlinkValidator, &ChildPathValidator];
+    let validators: [&dyn Validator; 3] =
+        [&DuplicateSymlinkValidator, &ChildPathValidator, &DupChildPathValidator];
     let mut errs = Vec::new();
     for v in validators {
         errs.extend(v.check(pack));

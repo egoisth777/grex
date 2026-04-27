@@ -84,6 +84,50 @@ enum Attribution {
     UrlDerived(String),
 }
 
+/// Validates that within a single parent pack's `children[]` no two
+/// entries resolve to the same `effective_path()`. Two children at
+/// the same on-disk slot would silently overwrite each other (or
+/// worse — once both `.git`s exist, the walker's
+/// `dest_has_git_repo` short-circuit would skip-fetch the wrong
+/// upstream forever after).
+///
+/// Comparison is on the resolved effective path (the literal `path`
+/// when set, else the URL-tail derivation), so a child with explicit
+/// `path: foo` and a sibling with URL `https://x/foo.git` (no
+/// `path:`) collide.
+pub struct DupChildPathValidator;
+
+impl Validator for DupChildPathValidator {
+    fn name(&self) -> &'static str {
+        "child_path_no_duplicates"
+    }
+
+    fn check(&self, pack: &PackManifest) -> Vec<PackValidationError> {
+        use std::collections::BTreeMap;
+        // Bucket URLs by effective path. Skip children that are
+        // already invalid (their `effective_path()` may be garbage);
+        // the bare-name validator surfaces those independently and
+        // duplicate-of-garbage is not a useful additional signal.
+        let mut by_path: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for child in &pack.children {
+            // Re-use the same check as the bare-name validator so
+            // attribution stays consistent: invalid children are
+            // skipped here (their path is meaningless until fixed).
+            if check_one(child).is_some() {
+                continue;
+            }
+            by_path.entry(child.effective_path()).or_default().push(child.url.clone());
+        }
+        let mut errs = Vec::new();
+        for (path, urls) in by_path {
+            if urls.len() >= 2 {
+                errs.push(PackValidationError::ChildPathDuplicate { path, urls });
+            }
+        }
+        errs
+    }
+}
+
 /// Reject `path` with a one-line reason string when it violates the
 /// bare-name rule. Returns `None` when the path is acceptable.
 ///
@@ -252,5 +296,87 @@ mod tests {
         let errs = ChildPathValidator.check(&pack);
         // 3 bad: "foo/bar", "..", "ALSO-BAD". "good" is fine.
         assert_eq!(errs.len(), 3, "errs: {errs:?}");
+    }
+
+    // ---- DupChildPathValidator ----
+
+    fn pack_with_children(entries: &[(&str, Option<&str>)]) -> PackManifest {
+        let children = entries
+            .iter()
+            .map(|(url, path)| ChildRef {
+                url: (*url).to_string(),
+                path: path.map(str::to_string),
+                r#ref: None,
+            })
+            .collect();
+        PackManifest {
+            schema_version: SchemaVersion::current(),
+            name: "p".to_string(),
+            r#type: PackType::Meta,
+            version: None,
+            depends_on: Vec::new(),
+            children,
+            actions: Vec::new(),
+            teardown: None,
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn dup_validator_passes_on_distinct_paths() {
+        let pack = pack_with_children(&[
+            ("https://x/a.git", Some("a")),
+            ("https://x/b.git", Some("b")),
+        ]);
+        assert!(DupChildPathValidator.check(&pack).is_empty());
+    }
+
+    #[test]
+    fn dup_validator_flags_two_children_at_same_explicit_path() {
+        let pack = pack_with_children(&[
+            ("https://x/a.git", Some("foo")),
+            ("https://y/b.git", Some("foo")),
+        ]);
+        let errs = DupChildPathValidator.check(&pack);
+        assert_eq!(errs.len(), 1, "errs: {errs:?}");
+        match &errs[0] {
+            PackValidationError::ChildPathDuplicate { path, urls } => {
+                assert_eq!(path, "foo");
+                assert_eq!(urls.len(), 2);
+                assert!(urls.contains(&"https://x/a.git".to_string()));
+                assert!(urls.contains(&"https://y/b.git".to_string()));
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dup_validator_collides_explicit_path_with_url_tail() {
+        // `path: foo` collides with a sibling whose URL ends in
+        // `/foo.git` and has no explicit path.
+        let pack = pack_with_children(&[
+            ("https://x/foo.git", None),
+            ("https://y/elsewhere.git", Some("foo")),
+        ]);
+        let errs = DupChildPathValidator.check(&pack);
+        assert_eq!(errs.len(), 1, "errs: {errs:?}");
+        match &errs[0] {
+            PackValidationError::ChildPathDuplicate { path, urls } => {
+                assert_eq!(path, "foo");
+                assert_eq!(urls.len(), 2);
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dup_validator_skips_children_with_invalid_path() {
+        // One bad path + one good. Dup validator does not flag
+        // (the bare-name validator owns the bad-path error).
+        let pack = pack_with_children(&[
+            ("https://x/a.git", Some("../escape")),
+            ("https://x/b.git", Some("good")),
+        ]);
+        assert!(DupChildPathValidator.check(&pack).is_empty());
     }
 }
