@@ -3,6 +3,10 @@ ratatui = "ratatui"
 builtins = "builtins"
 builtin = "builtin"
 
+[default.extend-identifiers]
+CONCERNs = "CONCERNs"
+OTHERs = "OTHERs"
+
 [files]
 extend-exclude = [
     "Cargo.lock",
