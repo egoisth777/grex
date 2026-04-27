@@ -32,6 +32,53 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.1.0] - 2026-04-26
+
+Behaviour change at runtime + zero schema/API break. Brings the
+default child-resolution path into alignment with the long-standing
+pack-spec rule (`children[].path` is a bare name, children resolve as
+flat siblings of the parent pack root). See
+`openspec/changes/feat-v1.1.0-flat-children-layout/` for the full
+rationale.
+
+### Changed
+
+- `grex sync` resolves bare-name `children[].path` as **flat siblings**
+  of the parent pack root. Previous default appended `.grex/workspace/`
+  between the parent and the child name; that prefix is removed. A
+  parent pack at `~/code/.grex/pack.yaml` with `children: [{ path: foo }]`
+  now materialises the child at `~/code/foo/.grex/pack.yaml`. Aligns
+  with the locked positioning ("nested meta-repo manager") and the
+  `import` → `sync` workflow described in
+  [`man/guides/migration.md`](./man/guides/migration.md).
+- `--workspace` CLI flag still accepts a manual override; only the
+  default changes. Help text updated on `sync` and `teardown` to drop
+  the `.grex/workspace` reference.
+
+### Added
+
+- Plan-phase validator `ChildPathValidator` enforces the bare-name rule
+  on `children[].path`. Invalid values (`/`, `\`, `..`, `.`, empty,
+  uppercase, digit-led, regex mismatch) are rejected at sync time with
+  a `ChildPathInvalid { child_name, path, reason }` error variant
+  pointing at the offending child + path string.
+
+### Migration notes
+
+- Workspaces with a manually-constructed `.grex/workspace/<name>/`
+  layout must move children to flat siblings of the parent pack root
+  (`mv .grex/workspace/* ./ && rmdir .grex/workspace`). Most users
+  never built that layout deliberately — the spec did not advertise it
+  — so the population affected is expected to be ~0.
+- In-flight syncs that crash across the upgrade boundary may leave an
+  orphan `.grex/workspace/.grex.sync.lock` in the old location. The
+  file is harmless (the new version writes its lock at
+  `<pack_root>/.grex.sync.lock`) but can be removed with `grex doctor`
+  or by hand.
+- Authors of `pack.yaml` files that used `children[].path: foo/bar`
+  must convert to a bare name. The same regex as `pack.name`
+  (`^[a-z][a-z0-9-]*$`) is enforced.
+
 ## [1.0.2] - 2026-04-25
 
 Doc-site quality fix. No runtime / CLI / MCP / `pack.yaml` behaviour
@@ -252,6 +299,7 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/egoisth777/grex/releases/tag/v1.1.0
 [1.0.1]: https://github.com/egoisth777/grex/releases/tag/v1.0.1
 [1.0.0]: https://github.com/egoisth777/grex/releases/tag/v1.0.0

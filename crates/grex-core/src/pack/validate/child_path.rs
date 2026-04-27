@@ -8,14 +8,13 @@
 //!
 //! # Why enforce now
 //!
-//! Before v1.1.0 the runtime appended `.grex/workspace/` between the
-//! parent pack root and `children[].path`, which bounded any
-//! path-traversal attempt inside that subdirectory. v1.1.0 resolves
-//! children as flat siblings of the parent pack root, so a hostile (or
-//! buggy) `path: "../escape"` would now land directly under the parent
-//! root's siblings — far less recoverable. The bare-name rule has been
-//! declared in the spec since v1.0.0; this validator finally enforces
-//! it.
+//! Before v1.1.0 the runtime resolved children inside a fixed
+//! sub-directory of the pack root, which bounded any path-traversal
+//! attempt. v1.1.0 resolves children as flat siblings of the parent
+//! pack root, so a hostile (or buggy) `path: "../escape"` would now
+//! land directly under the parent root's siblings — far less
+//! recoverable. The bare-name rule has been declared in the spec since
+//! v1.0.0; this validator finally enforces it.
 //!
 //! # Why effective_path() is not the right place
 //!

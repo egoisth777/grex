@@ -113,16 +113,14 @@ fn build_layout() -> Layout {
         let url = file_url(&bare);
         // Clone child into root/<name> — exactly the layout grex sync expects
         // post-v1.1.0 (flat siblings of the parent pack root).
-        run_git(
-            &root,
-            &["clone", "-q", url.as_str(), root.join(name).to_str().unwrap()],
-        );
+        run_git(&root, &["clone", "-q", url.as_str(), root.join(name).to_str().unwrap()]);
         clone_urls.push(url);
     }
 
     // Hand-write the parent meta pack.yaml. `grex init` is stubbed, so
     // the test cannot rely on it to produce this file.
-    let mut parent_yaml = String::from("schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n");
+    let mut parent_yaml =
+        String::from("schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n");
     for (name, url) in names.iter().zip(clone_urls.iter()) {
         parent_yaml.push_str(&format!("  - url: {url}\n    path: {name}\n"));
     }
@@ -138,12 +136,7 @@ fn build_layout() -> Layout {
   {{"url": "{}", "path": "{}"}},
   {{"url": "{}", "path": "{}"}}
 ]"#,
-        clone_urls[0],
-        names[0],
-        clone_urls[1],
-        names[1],
-        clone_urls[2],
-        names[2],
+        clone_urls[0], names[0], clone_urls[1], names[1], clone_urls[2], names[2],
     );
     fs::write(root.join("REPOS.json"), repos_json).unwrap();
 
@@ -168,22 +161,15 @@ fn import_writes_manifest_and_sync_walks_flat_siblings() {
         .assert()
         .success();
     assert!(manifest.exists(), "import must produce grex.jsonl");
-    let manifest_lines: Vec<String> = fs::read_to_string(&manifest)
-        .unwrap()
-        .lines()
-        .map(str::to_string)
-        .collect();
+    let manifest_lines: Vec<String> =
+        fs::read_to_string(&manifest).unwrap().lines().map(str::to_string).collect();
     assert_eq!(manifest_lines.len(), 3, "one row per child");
 
     // Step 2: `grex sync .` against the parent pack root. Without the
     // v1.1.0 fix this fails with `pack manifest not found at
     // .grex/workspace/<child>/.grex/pack.yaml`. Post-fix it walks every
     // child as a flat sibling.
-    let assertion = grex()
-        .current_dir(&layout.root)
-        .args(["sync", "."])
-        .assert()
-        .success();
+    let assertion = grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
     let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
     assert!(
