@@ -171,12 +171,30 @@ pub(super) fn emit_json_report(report: &SyncReport, dry_run: bool, verb: &str) {
         })),
         _ => None,
     });
+    let migrations: Vec<serde_json::Value> = report
+        .workspace_migrations
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "from": m.from.display().to_string(),
+                "to": m.to.display().to_string(),
+                "outcome": migration_outcome_tag(&m.outcome),
+                "error": match &m.outcome {
+                    grex_core::sync::MigrationOutcome::Failed { error } => {
+                        serde_json::Value::String(error.clone())
+                    }
+                    _ => serde_json::Value::Null,
+                },
+            })
+        })
+        .collect();
     let doc = serde_json::json!({
         "verb": verb,
         "dry_run": dry_run,
         "steps": steps,
         "halted": halted,
         "event_log_warnings": report.event_log_warnings,
+        "workspace_migrations": migrations,
         "summary": {"total_steps": report.steps.len()},
     });
     if let Ok(s) = serde_json::to_string(&doc) {
@@ -259,6 +277,9 @@ fn print_halted_context(ctx: &HaltedContext) {
 
 fn render_report(report: &SyncReport, dry_run: bool, quiet: bool) {
     if !quiet {
+        if !report.workspace_migrations.is_empty() {
+            print_workspace_migrations(&report.workspace_migrations);
+        }
         if let Some(rec) = &report.pre_run_recovery {
             print_recovery_report(rec);
         }
@@ -274,6 +295,52 @@ fn render_report(report: &SyncReport, dry_run: bool, quiet: bool) {
             SyncError::Halted(ctx) => print_halted_context(ctx),
             other => eprintln!("halted: {other}"),
         }
+    }
+}
+
+/// Surface the legacy-layout migration outcomes one line each so users
+/// see exactly what happened during the v1.0.x → v1.1.0 upgrade. Empty
+/// list does not print (the common case for any workspace built fresh
+/// on v1.1.0+).
+fn print_workspace_migrations(migrations: &[grex_core::sync::WorkspaceMigration]) {
+    use grex_core::sync::MigrationOutcome;
+    for m in migrations {
+        let from = m.from.display();
+        let to = m.to.display();
+        match &m.outcome {
+            MigrationOutcome::Migrated => {
+                eprintln!("[migrated] legacy={from} -> new={to}");
+            }
+            MigrationOutcome::SkippedBothExist => {
+                eprintln!(
+                    "[skipped]  legacy={from} AND new={to} both exist; resolve manually",
+                );
+            }
+            MigrationOutcome::SkippedDestOccupied => {
+                eprintln!("[skipped]  destination={to} occupied; legacy={from} kept");
+            }
+            MigrationOutcome::Failed { error } => {
+                eprintln!("[failed]   legacy={from} -> new={to}: {error}");
+            }
+            // MigrationOutcome is #[non_exhaustive]; future variants
+            // render with a generic tag until they earn dedicated copy.
+            other => eprintln!("[unknown]  legacy={from} -> new={to} ({other:?})"),
+        }
+    }
+}
+
+/// Stable string tag per outcome for `--json` consumers. Lowercase
+/// snake-case so it matches the rest of the CLI JSON envelope.
+fn migration_outcome_tag(o: &grex_core::sync::MigrationOutcome) -> &'static str {
+    use grex_core::sync::MigrationOutcome;
+    match o {
+        MigrationOutcome::Migrated => "migrated",
+        MigrationOutcome::SkippedBothExist => "skipped_both_exist",
+        MigrationOutcome::SkippedDestOccupied => "skipped_dest_occupied",
+        MigrationOutcome::Failed { .. } => "failed",
+        // MigrationOutcome is #[non_exhaustive]; future variants stream
+        // through a generic tag until they earn a stable name.
+        _ => "other",
     }
 }
 
