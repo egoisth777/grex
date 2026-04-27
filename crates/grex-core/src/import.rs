@@ -1,8 +1,8 @@
 //! `grex import` — ingest legacy flat `REPOS.json` into a manifest.
 //!
 //! Parses `[{url, path}, …]`, classifies each entry by a small heuristic
-//! (git URL → `scripted`, empty/path-only → `declarative`), and emits
-//! equivalent `Event::Add` rows into the target manifest while skipping
+//! (git URL → `scripted`, empty/path-only → `declarative`), and dispatches
+//! equivalent add registrations into the target manifest while skipping
 //! any path that already exists.
 //!
 //! Scope (feat-m7-4a):
@@ -10,16 +10,14 @@
 //! * Skip-on-collision (never overwrite).
 //! * `--dry-run` short-circuits before any manifest write.
 //!
-//! Dispatch note: the feat-m7-4 spec calls for dispatch via `add::run`.
-//! `add::run` is still an M1 stub in the `grex` crate, so for M7-4a we
-//! route directly through `manifest::append_event` here — the behaviour
-//! it would produce on a green `add::run` (one `Event::Add` per entry)
-//! is identical. When `add::run` lands a real body, this module can be
-//! rewired without API churn because callers only observe `ImportPlan`.
+//! Dispatch: each accepted entry is dispatched through
+//! [`crate::add::add_pack`], which is the single shared registration
+//! path used by `grex add` and the MCP edge — so `import` and `add`
+//! emit byte-identical `Event::Add` rows for the same input.
 
-use crate::manifest::{self, Event, PackId, SCHEMA_VERSION};
+use crate::add::{add_pack, AddError, AddOpts, AddRequest};
+use crate::manifest;
 use crate::pack::validate::child_path::reject_reason;
-use chrono::Utc;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -188,24 +186,32 @@ pub fn import_from_repos_json(
 }
 
 fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportError> {
-    let ts = Utc::now();
     for entry in &plan.imported {
-        let ev = Event::Add {
-            ts,
-            id: PackId::from(entry.path.clone()),
-            url: entry.url.clone(),
-            path: entry.path.clone(),
-            pack_type: entry.kind.as_str().to_string(),
-            schema_version: SCHEMA_VERSION.to_string(),
-        };
-        manifest::append_event(manifest_path, &ev)?;
+        add_pack(
+            manifest_path,
+            AddRequest {
+                url: entry.url.clone(),
+                path: entry.path.clone(),
+                pack_type: entry.kind.as_str().to_string(),
+            },
+            AddOpts { dry_run: false },
+        )
+        .map_err(add_error_to_import_error)?;
     }
     Ok(())
+}
+
+fn add_error_to_import_error(err: AddError) -> ImportError {
+    match err {
+        AddError::Manifest(err) => ImportError::Manifest(err),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::{Event, SCHEMA_VERSION};
+    use chrono::Utc;
     use tempfile::tempdir;
 
     fn write_json(path: &Path, body: &str) {
@@ -390,6 +396,40 @@ mod tests {
             Event::Add { path, pack_type, .. } => {
                 assert_eq!(path, "b");
                 assert_eq!(pack_type, "declarative");
+            }
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn import_real_run_matches_shared_add_event_fields() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let import_manifest = dir.path().join("grex-import.jsonl");
+        let add_manifest = dir.path().join("grex-add.jsonl");
+        write_json(&input, r#"[{"url": "https://x/y.git", "path": "foo"}]"#);
+
+        import_from_repos_json(&input, &import_manifest, ImportOpts { dry_run: false }).unwrap();
+        crate::add::add_pack(
+            &add_manifest,
+            crate::add::AddRequest {
+                url: "https://x/y.git".into(),
+                path: "foo".into(),
+                pack_type: "scripted".into(),
+            },
+            crate::add::AddOpts { dry_run: false },
+        )
+        .unwrap();
+
+        let import_events = manifest::read_all(&import_manifest).unwrap();
+        let add_events = manifest::read_all(&add_manifest).unwrap();
+        assert_eq!(add_event_fields(&import_events[0]), add_event_fields(&add_events[0]));
+    }
+
+    fn add_event_fields(event: &Event) -> (&str, &str, &str, &str, &str) {
+        match event {
+            Event::Add { id, url, path, pack_type, schema_version, .. } => {
+                (id, url, path, pack_type, schema_version)
             }
             _ => panic!("expected Add"),
         }

@@ -39,7 +39,7 @@ for the stub envelope; no verb-specific shape will ever gain a top-level
 
 ## Stub envelope (unimplemented verbs)
 
-`init`, `add`, `rm`, `ls`, `status`, `update`, `run`, `exec` are still
+`init`, `rm`, `ls`, `status`, `update`, `run`, `exec` are still
 M1 stubs. `--json` emits:
 
 ```json
@@ -54,6 +54,32 @@ The stub envelope is a contract for consumers to detect unfinished verbs
 without parsing the (absent) verb-specific body. When the verb is wired,
 the stub envelope is removed; the verb now emits its verb-specific
 shape. Exit codes are unchanged (stubs exit `0`).
+
+## `add`
+
+Wired. Emits an add registration report:
+
+```json
+{
+  "dry_run": false,
+  "id": "pack-a",
+  "url": "https://example.com/pack-a.git",
+  "path": "pack-a",
+  "type": "scripted",
+  "appended": true
+}
+```
+
+Fields:
+- `dry_run` — bool; mirrors the global `--dry-run` flag.
+- `id` — pack id written to the manifest; currently equal to `path`.
+- `url` — source URL as provided.
+- `path` — workspace-relative pack path, explicit or inferred from URL.
+- `type` — classified pack kind (`scripted` for git-like URLs,
+  `declarative` otherwise).
+- `appended` — bool; `false` only when `dry_run` is `true`.
+
+The MCP `add` tool emits a byte-identical body.
 
 ## `sync` and `teardown`
 

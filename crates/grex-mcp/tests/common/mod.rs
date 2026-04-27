@@ -82,16 +82,21 @@ impl Default for TestFixture {
 ///    into `(read, write)` so the [`Client`] can drive the JSON-RPC line
 ///    protocol directly without pulling in the rmcp typed-message types
 ///    (the L3 / L4 / L5 suites assert on raw envelopes).
-/// 2. `ServerState::for_tests()` reuses the m7-1 helper that produces a
-///    workspace-rooted `Scheduler::new(1)` + empty `Registry`. Stage 4
-///    will swap in a fixture-aware constructor when parity tests need
-///    real pack data; Stage 2's handshake suite never reaches handler
-///    bodies so the default suffices.
+/// 2. `ServerState` is rooted at the per-test fixture so handlers that
+///    touch the manifest (for example `add` / `import`) cannot write into
+///    the repository checkout during parity tests.
 /// 3. The server `JoinHandle` is captured inside [`Client`] so the test
 ///    can `await` it on `shutdown()` and surface any panic.
-pub fn new_duplex_server(_fixture: &TestFixture) -> Client {
+pub fn new_duplex_server(fixture: &TestFixture) -> Client {
     let (server_io, client_io) = tokio::io::duplex(4096);
-    let server = GrexMcpServer::new(ServerState::for_tests());
+    let workspace = fixture.workspace.path().to_path_buf();
+    let state = ServerState::new(
+        grex_core::Scheduler::new(1),
+        grex_core::Registry::default(),
+        workspace.join("grex.jsonl"),
+        workspace,
+    );
+    let server = GrexMcpServer::new(state);
     let server_task = tokio::spawn(async move {
         // Discard the rmcp `ServerInitializeError` — the L2 tests
         // assert on transport-close behaviour via `JoinHandle`, not on
@@ -581,11 +586,9 @@ fn sync_pack_root(fixture: &TestFixture) -> std::path::PathBuf {
 /// built workspace `grex` binary; capture stdout + stderr + exit code
 /// and classify into a [`ParitySignal`].
 ///
-/// Today every verb either prints `"unimplemented"` to stdout (9 stubs +
-/// `sync` without `pack_root`) OR exits non-zero with a structural error
-/// to stderr (`sync` with `pack_root` pointing at a non-`.grex` path).
-/// When CLI `--json` wiring lands the body parses as JSON; until then we
-/// classify on text shape.
+/// The generic parity path classifies the observable outcome: remaining
+/// stubs print `"unimplemented"`, `sync` can return a pack-op error, and
+/// wired verbs such as `add` complete successfully.
 async fn drive_cli(verb: &str, args: &[String], fixture: &TestFixture) -> ParitySignal {
     // `cargo_bin` resolves to `target/debug/grex[.exe]`. `assert_cmd`
     // ensures it is built before the test runs (same wiring m7-1
@@ -624,9 +627,7 @@ async fn drive_cli(verb: &str, args: &[String], fixture: &TestFixture) -> Parity
         ParitySignal::PackOpError
     } else {
         // Clean zero-exit with no "unimplemented" marker = real wired
-        // verb that completed. Only `doctor` currently reaches here
-        // (empty fixture workspace → all-OK report, exit 0). Future
-        // wired verbs will follow suit.
+        // verb that completed.
         ParitySignal::Success
     }
 }
@@ -704,11 +705,9 @@ async fn drive_mcp(verb: &str, fixture: &TestFixture, params: Value) -> ParitySi
 /// Drive both surfaces for `verb` and assert they signal the same
 /// parity outcome.
 ///
-/// **Today (m7-2)**: asserts both surfaces produce the same
-/// [`ParitySignal`] (`Unimplemented` for 10 stubs, `PackOpError` for
-/// `sync` against a missing pack root). This is the strongest contract
-/// reachable without CLI `--json` wiring (see spec §"Known limitations"
-/// entry 5 for the gap).
+/// **Today**: asserts both surfaces produce the same [`ParitySignal`]
+/// (`Unimplemented` for stubs, `Success` for wired verbs such as `add`,
+/// `PackOpError` for `sync` against a missing pack root).
 ///
 /// **Tomorrow (post-m7-4)**: flip the assertion to
 /// `assert_eq!(normalize(cli_json), normalize(mcp_json))` per spec §L3.

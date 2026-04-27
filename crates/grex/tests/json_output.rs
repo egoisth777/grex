@@ -2,7 +2,7 @@
 //
 // M8-6 / issue #35: `--json` is now wired for all 11 non-transport
 // verbs. Stubs emit `{"status":"unimplemented","verb":"<name>"}`;
-// real verbs (`doctor`, `import`, `sync`, `teardown`) emit a verb-specific
+// real verbs (`add`, `doctor`, `import`, `sync`, `teardown`) emit a verb-specific
 // schema mirroring the human output. `serve` is excluded — it owns stdio
 // for JSON-RPC and `--json` is not applicable.
 //
@@ -49,8 +49,21 @@ fn init_json_emits_unimplemented() {
 }
 
 #[test]
-fn add_json_emits_unimplemented() {
-    assert_unimplemented("add", &["https://example.com/repo.git"]);
+fn add_json_emits_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = bin()
+        .current_dir(dir.path())
+        .args(["--json", "add", "https://example.com/repo.git"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("dry_run").and_then(Value::as_bool), Some(false));
+    assert_eq!(v.get("id").and_then(Value::as_str), Some("repo"));
+    assert_eq!(v.get("path").and_then(Value::as_str), Some("repo"));
+    assert_eq!(v.get("type").and_then(Value::as_str), Some("scripted"));
+    assert_eq!(v.get("appended").and_then(Value::as_bool), Some(true));
 }
 
 #[test]
