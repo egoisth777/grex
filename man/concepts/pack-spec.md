@@ -56,6 +56,8 @@ children:
     ref: v1.2.0          # optional; branch, tag, or SHA. Default: remote HEAD.
 ```
 
+Children resolve as **flat siblings** of the parent pack root: a parent at `~/code/.grex/pack.yaml` with a child `path: themes` materialises that child at `~/code/themes/.grex/pack.yaml`. The bare-name rule on `path` is enforced at plan phase since v1.1.0 — see [Validation rules](#validation-rules) for the regex and rejection shape.
+
 ### `actions` list
 
 Each entry is a YAML object with exactly one known action key (`symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`) or a plugin-registered name. The value under the key is the action's arg-object, per that action's schema (see [actions.md](../reference/actions.md)).
@@ -173,7 +175,7 @@ type: scripted
 - `type` must be one of the 3 built-ins (or a registered plugin name when the plugin is loaded).
 - `type` in `.grex/pack.yaml` is the **authoritative** source of truth. Runtime manifest / lockfile entries record `type` as an **observed snapshot** only. On disagreement (manifest `type` ≠ pack.yaml `type`), pack.yaml wins and the manifest is corrected on the next sync. See [manifest.md](./manifest.md#type-field-authority).
 - `name` regex: `^[a-z][a-z0-9-]*$` (letter-led; digits allowed in later positions).
-- `children[].path` must be bare name (no `/` or `\`).
+- `children[].path` must be bare name: same regex as `name`. Rejected: path separators (`/`, `\`), `.`, `..`, the empty string `""`, anything starting with a digit or capital letter, or a leading `/`. The empty-string rejection matters because it would otherwise resolve children at the parent's own pack root and silently overwrite it.
 - Unknown top-level keys rejected unless prefixed with `x-` (user annotations).
 - Unknown action keys rejected unless the plugin is registered.
 - Empty lists are VALID: `actions: []`, `children: []`, `depends_on: []`, `teardown: []` all parse cleanly. Empty `actions` in a `declarative` pack is a no-op install. Empty `children` in a `meta` pack is a no-op sync. Do not reject empty lists.

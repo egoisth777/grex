@@ -18,7 +18,7 @@ path = "src/main.rs"
 clap = { workspace = true }
 clap_mangen = "=0.2.26"
 anyhow = { workspace = true }
-grex-cli = { path = "../grex", version = "1.0.1" }
+grex-cli = { path = "../grex", version = "1.1.0" }
 # Recursive walk of `man/**/*.md` for the `doc-site-prep` subcommand
 # (added in v1.0.1). xtask is unpublished, so the dep weight is internal.
 walkdir = "2"

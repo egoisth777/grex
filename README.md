@@ -77,8 +77,8 @@ install -Dm644 man/*.1 -t ~/.local/share/man/man1/
 sudo install -Dm644 man/*.1 -t /usr/local/share/man/man1/
 ```
 
-Then `man grex`, `man grex-sync`, etc. Fish / zsh completions are out of
-scope for v1.0.0 and tracked for v1.1. See the mdBook
+Then `man grex`, `man grex-sync`, etc. Fish / zsh completions are tracked
+for a future release. See the mdBook
 ["Man pages" chapter](https://egoisth777.github.io/grex/man-pages.html) for
 the auto-generation flow.
 
@@ -102,11 +102,10 @@ grex sync
 ```
 
 The template ships as [`examples/pack-template/`](./examples/pack-template/)
-in-tree. Once grex v1.0.0 ships, a standalone mirror repo will be
-published and you can install via the clone form:
+in-tree. A standalone mirror repo is also published; you can install
+via the clone form:
 
 ```sh
-# Available at v1.0.0+ release; until then use the file:// form above.
 grex add git@github.com:egoisth777/grex-pack-template.git
 grex sync
 ```
@@ -136,7 +135,8 @@ Universal flags on every verb: `--json`, `--plain`, `--dry-run`,
 
 ## Status
 
-M1 scaffold. See `milestone.md` for the roadmap.
+v1.1.0 shipped (2026-04). See [`CHANGELOG.md`](./CHANGELOG.md) for
+release history and `milestone.md` for the long-term roadmap.
 
 ## Documentation site
 

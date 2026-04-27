@@ -61,4 +61,22 @@ pub enum TreeError {
         /// On-disk location of the offending child.
         path: PathBuf,
     },
+
+    /// A `children[].path` (or URL-derived tail) violated the bare-name
+    /// rule. Surfaced by the walker BEFORE any clone of the offending
+    /// child fires so a malicious `path: ../escape` in a parent pack
+    /// cannot materialise a directory outside the pack root. This is a
+    /// security boundary, not a soft validation concern — see
+    /// `crates/grex-core/src/pack/validate/child_path.rs` for the shared
+    /// rejection logic.
+    #[error("pack child `{child_name}` has invalid path `{path}`: {reason}")]
+    ChildPathInvalid {
+        /// Label of the offending child (the explicit `path:` value, or
+        /// the URL-derived tail when `path:` is omitted).
+        child_name: String,
+        /// The rejected literal value.
+        path: String,
+        /// One-line explanation of which sub-rule failed.
+        reason: String,
+    },
 }
