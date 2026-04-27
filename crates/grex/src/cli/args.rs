@@ -102,8 +102,8 @@ pub struct SyncArgs {
     /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Workspace directory for cloned children. Defaults to
-    /// `<pack_root>/.grex/workspace`.
+    /// Override the workspace root. Defaults to the parent pack's root
+    /// directory; children resolve as flat siblings.
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 
@@ -251,7 +251,8 @@ pub struct TeardownArgs {
     /// itself. When omitted, `teardown` prints a usage stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Workspace directory. Defaults to `<pack_root>/.grex/workspace`.
+    /// Override the workspace root. Defaults to the parent pack's root
+    /// directory; children resolve as flat siblings.
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 

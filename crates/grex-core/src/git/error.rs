@@ -47,7 +47,7 @@ pub enum GitError {
     FetchFailed(PathBuf, String),
 
     /// Checkout of a resolved ref failed to apply to the working tree.
-    #[error("checkout of `{r#ref}` failed: {detail}")]
+    #[error("checkout of `{ref}` failed: {detail}")]
     CheckoutFailed {
         /// Ref name (branch, tag, or SHA) that was being checked out.
         r#ref: String,
