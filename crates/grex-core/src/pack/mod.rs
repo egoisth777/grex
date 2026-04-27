@@ -162,14 +162,23 @@ impl ChildRef {
     /// wins; otherwise the last path segment of `url` (stripped of a
     /// trailing `.git`) is used.
     ///
-    /// # Precondition
+    /// # Safety precondition (callers MUST validate first)
     ///
-    /// Callers reaching this from the sync orchestrator can assume the
-    /// `path` value (when present) has already passed the bare-name
-    /// validator (see `validate::run_all`): no separators, no `.` / `..`,
-    /// matches `^[a-z][a-z0-9-]*$`. This method is therefore kept
-    /// side-effect-free — re-validating here would push plan-phase
-    /// checks into the hot dispatch path for no benefit.
+    /// This method returns its input verbatim — it does **not** check
+    /// for path separators, `.` / `..`, the empty string, or other
+    /// path-traversal shapes. **Callers using the returned string for
+    /// any filesystem operation MUST first run plan-phase validation
+    /// via [`PackManifest::validate_plan`] (which invokes
+    /// `validate::run_all`, including the internal bare-name
+    /// validator).** The sync orchestrator and the tree walker do this
+    /// before dispatch; in-crate callers that reach `ChildRef`
+    /// directly must follow the same discipline.
+    ///
+    /// Validation lives at plan phase — not here — to keep this method
+    /// side-effect-free and out of the hot dispatch path. Re-running
+    /// the regex on every call would amount to per-step paranoia for
+    /// zero added safety, since plan validation already short-circuits
+    /// the entire walk on a bad child path.
     #[must_use]
     pub fn effective_path(&self) -> String {
         if let Some(p) = &self.path {
