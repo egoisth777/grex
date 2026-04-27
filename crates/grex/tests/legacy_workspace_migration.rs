@@ -19,6 +19,7 @@
 mod common;
 
 use common::grex;
+use grex_core::git::gix_backend::file_url_from_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,15 +44,6 @@ fn run_git(cwd: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-fn file_url(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{s}")
-    } else {
-        format!("file:///{s}")
-    }
 }
 
 /// Seed a bare repo whose initial commit ships a `.grex/pack.yaml`
@@ -101,7 +93,7 @@ fn build_legacy_layout() -> LegacyLayout {
     let mut clone_urls: Vec<String> = Vec::with_capacity(names.len());
     for name in names {
         let bare = seed_bare(&tmp_path, name, &sink);
-        let url = file_url(&bare);
+        let url = file_url_from_path(&bare);
         // Clone INTO the legacy slot, mirroring v1.0.x layout.
         run_git(&legacy, &["clone", "-q", url.as_str(), legacy.join(name).to_str().unwrap()]);
         clone_urls.push(url);

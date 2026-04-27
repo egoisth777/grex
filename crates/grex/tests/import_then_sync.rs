@@ -22,6 +22,7 @@
 mod common;
 
 use common::grex;
+use grex_core::git::gix_backend::file_url_from_path;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -48,18 +49,6 @@ fn run_git(cwd: &Path, args: &[&str]) {
         args,
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-/// Convert an OS path to a `file://`-style URL grex's gix backend
-/// understands. Forward-slash + double-slash form works on both
-/// Windows (`file:///C:/...`) and Unix (`file:///home/...`).
-fn file_url(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
-    if s.starts_with('/') {
-        format!("file://{s}")
-    } else {
-        format!("file:///{s}")
-    }
 }
 
 /// Seed an empty bare repo with an initial commit containing a
@@ -110,7 +99,7 @@ fn build_layout() -> Layout {
             "schema_version: \"1\"\nname: {name}\ntype: declarative\nactions:\n  - mkdir:\n      path: {mkdir_path}\n",
         );
         let bare = seed_bare(&tmp_path, name, &child_yaml);
-        let url = file_url(&bare);
+        let url = file_url_from_path(&bare);
         // Clone child into root/<name> — exactly the layout grex sync expects
         // post-v1.1.0 (flat siblings of the parent pack root).
         run_git(&root, &["clone", "-q", url.as_str(), root.join(name).to_str().unwrap()]);
@@ -141,6 +130,118 @@ fn build_layout() -> Layout {
     fs::write(root.join("REPOS.json"), repos_json).unwrap();
 
     Layout { _tmp: tmp, root, child_names: names }
+}
+
+/// Same shape as `build_layout` but does NOT pre-clone children. The
+/// parent's `children[].url` points at the bare repos so the walker
+/// must clone them itself on first sync. Returns the layout plus the
+/// list of bare-repo URLs so callers can reuse them in assertions.
+fn build_layout_no_preclones() -> Layout {
+    let tmp = TempDir::new().unwrap();
+    let tmp_path = tmp.path().to_path_buf();
+    let names: [&'static str; 3] = ["alpha", "beta", "gamma"];
+    let sink = tmp_path.join("sink");
+    fs::create_dir_all(&sink).unwrap();
+
+    let root = tmp_path.join("root");
+    fs::create_dir_all(&root).unwrap();
+
+    let mut clone_urls: Vec<String> = Vec::with_capacity(names.len());
+    for name in names {
+        let mkdir_path = sink.join(format!("made-{name}")).to_string_lossy().replace('\\', "/");
+        let child_yaml = format!(
+            "schema_version: \"1\"\nname: {name}\ntype: declarative\nactions:\n  - mkdir:\n      path: {mkdir_path}\n",
+        );
+        let bare = seed_bare(&tmp_path, name, &child_yaml);
+        clone_urls.push(file_url_from_path(&bare));
+        // NB: deliberately do NOT clone into `root/<name>` — the
+        // walker must do it on first sync.
+    }
+
+    // Parent meta pack listing the children.
+    let mut parent_yaml =
+        String::from("schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n");
+    for (name, url) in names.iter().zip(clone_urls.iter()) {
+        parent_yaml.push_str(&format!("  - url: {url}\n    path: {name}\n"));
+    }
+    fs::create_dir_all(root.join(".grex")).unwrap();
+    fs::write(root.join(".grex/pack.yaml"), parent_yaml).unwrap();
+
+    Layout { _tmp: tmp, root, child_names: names }
+}
+
+#[test]
+fn sync_clones_children_into_flat_sibling_slots_on_first_run() {
+    let layout = build_layout_no_preclones();
+
+    // Sanity — children are NOT pre-cloned.
+    for name in layout.child_names {
+        assert!(
+            !layout.root.join(name).exists(),
+            "fixture must NOT pre-create flat-sibling `{name}`",
+        );
+    }
+
+    // First sync: walker clones each child into its flat-sibling slot.
+    grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
+    for name in layout.child_names {
+        assert!(
+            layout.root.join(name).join(".git").is_dir(),
+            "child `{name}` must be cloned into flat-sibling slot on first sync",
+        );
+        assert!(
+            layout.root.join(name).join(".grex/pack.yaml").is_file(),
+            "child `{name}`'s pack.yaml must land at flat-sibling slot",
+        );
+    }
+    // Legacy slot must NEVER be created.
+    assert!(
+        !layout.root.join(".grex").join("workspace").exists(),
+        "v1.1.0 fresh sync must NOT create `.grex/workspace/`",
+    );
+
+    // Second sync: idempotent — children already exist, no halts.
+    grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
+}
+
+#[test]
+fn sync_with_workspace_override_routes_children_to_override_dir() {
+    // `--workspace <override>` puts children under <override> instead
+    // of the parent pack root. The flag still accepts an explicit
+    // path post-v1.1.0; only the *default* changed.
+    let layout = build_layout_no_preclones();
+    let override_ws = layout.root.parent().unwrap().join("override-ws");
+    fs::create_dir_all(&override_ws).unwrap();
+
+    grex()
+        .current_dir(&layout.root)
+        .args([
+            "sync",
+            ".",
+            "--workspace",
+            override_ws.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Children must land under the override workspace, NOT under the
+    // pack root.
+    for name in layout.child_names {
+        assert!(
+            override_ws.join(name).join(".git").is_dir(),
+            "child `{name}` must be cloned into --workspace override `{}`",
+            override_ws.display(),
+        );
+        assert!(
+            !layout.root.join(name).exists(),
+            "child `{name}` must NOT appear under pack root when --workspace overrides",
+        );
+    }
+    // Workspace lock lives under the override, not the pack root.
+    assert!(
+        override_ws.join(".grex.sync.lock").exists(),
+        "workspace lock must live under the --workspace override",
+    );
 }
 
 #[test]
