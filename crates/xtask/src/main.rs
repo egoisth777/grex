@@ -178,8 +178,33 @@ fn write_man(cmd: &clap::Command, path: &std::path::Path) -> Result<()> {
     let man = Man::new(cmd.clone());
     let mut buf: Vec<u8> = Vec::new();
     man.render(&mut buf).context("render man page")?;
-    fs::write(path, buf).with_context(|| format!("write {}", path.display()))?;
+    let cleaned = strip_trailing_whitespace(&buf);
+    fs::write(path, cleaned).with_context(|| format!("write {}", path.display()))?;
     Ok(())
+}
+
+/// Strip trailing ASCII whitespace from each line of a clap-rendered man
+/// page so the output passes `git diff --check` and matches the project's
+/// no-trailing-whitespace convention. Preserves the original line ending
+/// (LF or CRLF) and the trailing newline, if any.
+fn strip_trailing_whitespace(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    for raw in input.split_inclusive(|b| *b == b'\n') {
+        let (body, terminator) = match raw.last() {
+            Some(b'\n') => (&raw[..raw.len() - 1], &raw[raw.len() - 1..]),
+            _ => (raw, &raw[raw.len()..]),
+        };
+        let (body, cr) = match body.last() {
+            Some(b'\r') => (&body[..body.len() - 1], &body[body.len() - 1..]),
+            _ => (body, &body[body.len()..]),
+        };
+        let trimmed_end =
+            body.iter().rposition(|b| *b != b' ' && *b != b'\t').map(|i| i + 1).unwrap_or(0);
+        out.extend_from_slice(&body[..trimmed_end]);
+        out.extend_from_slice(cr);
+        out.extend_from_slice(terminator);
+    }
+    out
 }
 
 /// Filenames inside `grex-doc/src/` that are hand-authored and must NOT
