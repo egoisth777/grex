@@ -191,7 +191,7 @@ jobs:
           # Distinct key from the debug `build` job so the release target
           # does not thrash the debug cache.
           key: release
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build release grex (self-contained; ~3 min cold, < 1 min warm)
