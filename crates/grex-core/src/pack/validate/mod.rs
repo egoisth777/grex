@@ -78,8 +78,8 @@ pub enum PackValidationError {
 
     /// A `children[].path` value violates the bare-name rule
     /// (`^[a-z][a-z0-9-]*$`, no separators, no `.` / `..`, no empty).
-    /// Enforced since v1.1.0 — see
-    /// [`child_path::ChildPathValidator`].
+    /// Enforced since v1.1.0 — see the `child_path` module's
+    /// `ChildPathValidator` (internal).
     #[error("pack child `{child_name}` has invalid path `{path}`: {reason}")]
     ChildPathInvalid {
         /// Label of the offending child (its `path` field, or `url` as
@@ -96,7 +96,8 @@ pub enum PackValidationError {
     /// second clone would silently overwrite the first's working
     /// tree, or — once both have a `.git` — collide on the
     /// dest-already-exists fast path and skip-fetch the wrong upstream.
-    /// Enforced since v1.1.0; see [`child_path::DupChildPathValidator`].
+    /// Enforced since v1.1.0 — see the `child_path` module's
+    /// `DupChildPathValidator` (internal).
     #[error("pack has duplicate children resolving to `{path}`: {urls:?}")]
     ChildPathDuplicate {
         /// The shared resolved path that two or more children claim.
@@ -126,10 +127,10 @@ pub trait Validator {
 ///
 /// 1. [`DuplicateSymlinkValidator`] — two symlinks with the same literal
 ///    `dst`.
-/// 2. [`ChildPathValidator`] — every `children[].path` matches the
-///    bare-name regex (since v1.1.0).
-/// 3. [`DupChildPathValidator`] — no two `children[]` entries within the
-///    same parent share an `effective_path()` (since v1.1.0).
+/// 2. `ChildPathValidator` (internal) — every `children[].path` matches
+///    the bare-name regex (since v1.1.0).
+/// 3. `DupChildPathValidator` (internal) — no two `children[]` entries
+///    within the same parent share an `effective_path()` (since v1.1.0).
 ///
 /// Later slices extend this list; callers should prefer
 /// [`PackManifest::validate_plan`] over instantiating validators manually,

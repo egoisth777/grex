@@ -165,10 +165,10 @@ impl ChildRef {
     /// # Precondition
     ///
     /// Callers reaching this from the sync orchestrator can assume the
-    /// `path` value (when present) has already passed
-    /// [`validate::ChildPathValidator`]: bare name, no separators, no
-    /// `.` / `..`, matches `^[a-z][a-z0-9-]*$`. This method is therefore
-    /// kept side-effect-free — re-validating here would push plan-phase
+    /// `path` value (when present) has already passed the bare-name
+    /// validator (see `validate::run_all`): no separators, no `.` / `..`,
+    /// matches `^[a-z][a-z0-9-]*$`. This method is therefore kept
+    /// side-effect-free — re-validating here would push plan-phase
     /// checks into the hot dispatch path for no benefit.
     #[must_use]
     pub fn effective_path(&self) -> String {

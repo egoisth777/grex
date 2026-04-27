@@ -1,6 +1,6 @@
 //! Bare-name validator for `children[].path`.
 //!
-//! Per the pack-spec ([`man/concepts/pack-spec.md`] §"Validation rules"):
+//! Per the pack-spec (`man/concepts/pack-spec.md` §"Validation rules"):
 //! `children[].path` must be a bare name — no path separators, no
 //! `.` / `..`, no empty string. The same regex as the pack `name` field
 //! is enforced: `^[a-z][a-z0-9-]*$` (letter-led, lowercase, hyphens
