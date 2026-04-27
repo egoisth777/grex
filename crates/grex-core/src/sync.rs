@@ -68,7 +68,8 @@ pub struct SyncOptions {
     /// When `false`, skip plan-phase validators (manifest + graph). Debug
     /// escape hatch; production callers should leave this `true`.
     pub validate: bool,
-    /// Override workspace directory. `None` → `<pack_root>/.grex/workspace`.
+    /// Override workspace directory. `None` → the parent pack root itself
+    /// (children resolve as flat siblings of the parent pack root).
     pub workspace: Option<PathBuf>,
     /// Global ref override (`grex sync --ref <sha|branch|tag>`). When
     /// `Some`, every child pack clone/checkout uses this ref instead of
@@ -384,8 +385,9 @@ impl Clone for SyncError {
 /// * If `pack_root` is a directory the walker looks for
 ///   `<pack_root>/.grex/pack.yaml`.
 /// * If `pack_root` ends in `.yaml` / `.yml` it is loaded verbatim.
-/// * Workspace defaults to `<pack_root>/.grex/workspace` when `opts.workspace`
-///   is `None`.
+/// * Workspace defaults to the pack root directory itself when
+///   `opts.workspace` is `None`. Children resolve as flat siblings of the
+///   parent pack root (since v1.1.0).
 ///
 /// # Errors
 ///
@@ -640,12 +642,15 @@ fn workspace_lock_err(ws_lock_path: &Path, reason: &str) -> SyncError {
 }
 
 /// Compute the default workspace path when `override_` is absent.
+///
+/// The default is the pack root directory itself, so child packs resolve
+/// as flat siblings of the parent pack root. See
+/// `openspec/changes/feat-v1.1.0-flat-children-layout/` for rationale.
 fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> PathBuf {
     if let Some(p) = override_ {
         return p.to_path_buf();
     }
-    let anchor = pack_root_dir(pack_root);
-    anchor.join(".grex").join("workspace")
+    pack_root_dir(pack_root)
 }
 
 /// If `pack_root` points at a yaml file, use its parent; otherwise use it.
@@ -1637,8 +1642,11 @@ impl RecoveryReport {
 ///
 /// Inspects:
 ///
-/// * `<pack_root>/.grex/workspace/**` (and the pack_root itself) for
-///   `.grex.bak` orphans and timestamped `.grex.bak.<ts>` tombstones.
+/// * The pack root directory (`pack_root_dir(pack_root)`) for `.grex.bak`
+///   orphans and timestamped `.grex.bak.<ts>` tombstones. As of v1.1.0
+///   the workspace anchor IS the pack root (children resolve as flat
+///   siblings), so a single bounded walk covers both child clones and
+///   top-of-tree symlink destinations.
 /// * `event_log` (the manifest JSONL) for `ActionStarted` entries that
 ///   have no matching `ActionCompleted` / `ActionHalted` successor.
 ///
@@ -1653,11 +1661,8 @@ impl RecoveryReport {
 /// reports corruption. Filesystem traversal errors are swallowed.
 pub fn scan_recovery(pack_root: &Path, event_log: &Path) -> Result<RecoveryReport, SyncError> {
     let mut report = RecoveryReport::default();
-    let workspace_root = pack_root.join(".grex").join("workspace");
+    let workspace_root = pack_root_dir(pack_root);
     walk_for_backups(&workspace_root, &mut report);
-    // Also scan the pack root itself — symlink destinations often live at
-    // the top of the tree (e.g. `~/.config/foo`).
-    walk_for_backups(pack_root, &mut report);
     if event_log.exists() {
         match read_all(event_log) {
             Ok(events) => {
