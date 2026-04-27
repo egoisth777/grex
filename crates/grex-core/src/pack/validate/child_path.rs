@@ -25,17 +25,21 @@
 //! executor reaches the field.
 
 use super::{PackValidationError, Validator};
-use crate::pack::PackManifest;
+use crate::pack::{ChildRef, PackManifest};
 
-/// Validates that every `children[].path` (when explicitly set) is a
-/// bare name matching the same regex as `pack.name`:
-/// `^[a-z][a-z0-9-]*$`.
+/// Validates that every `children[].path` value (or the URL-derived tail
+/// when `path:` is omitted) is a bare name matching the same regex as
+/// `pack.name`: `^[a-z][a-z0-9-]*$`.
 ///
-/// When `path` is absent the implicit URL-tail derivation in
-/// [`crate::pack::ChildRef::effective_path`] is trusted — that derivation
-/// strips trailing `.git` and the last URL segment, both of which are
-/// already constrained by the URL grammar. Authors who want stricter
-/// enforcement on URL-derived paths can set `path` explicitly.
+/// Two attribution modes:
+///
+/// * **Explicit `path:`** — rejected with the original literal value,
+///   labelled by the `path` string itself.
+/// * **Omitted `path:`** — the URL-tail derivation in
+///   [`crate::pack::ChildRef::effective_path`] is computed and validated.
+///   Rejected entries are labelled by the URL (since the user never
+///   wrote a `path` to attribute against) and the `path` field of the
+///   error carries the derived tail.
 pub struct ChildPathValidator;
 
 impl Validator for ChildPathValidator {
@@ -46,25 +50,50 @@ impl Validator for ChildPathValidator {
     fn check(&self, pack: &PackManifest) -> Vec<PackValidationError> {
         let mut errs = Vec::new();
         for child in &pack.children {
-            let Some(path) = child.path.as_deref() else { continue };
-            if let Some(reason) = reject_reason(path) {
-                errs.push(PackValidationError::ChildPathInvalid {
-                    child_name: derive_child_label(child),
-                    path: path.to_string(),
-                    reason: reason.to_string(),
-                });
+            if let Some(err) = check_one(child) {
+                errs.push(err);
             }
         }
         errs
     }
 }
 
+/// Validate one child: explicit `path:` is checked verbatim; otherwise
+/// the URL-tail derivation is checked. Returns `None` when the child's
+/// effective path is acceptable.
+#[must_use]
+pub fn check_one(child: &ChildRef) -> Option<PackValidationError> {
+    let (effective, attribution) = match child.path.as_deref() {
+        Some(p) => (p.to_string(), Attribution::Explicit(p.to_string())),
+        None => (child.effective_path(), Attribution::UrlDerived(child.url.clone())),
+    };
+    let reason = reject_reason(&effective)?;
+    let (child_name, path) = match attribution {
+        Attribution::Explicit(label) => (label.clone(), label),
+        Attribution::UrlDerived(url) => (url, effective),
+    };
+    Some(PackValidationError::ChildPathInvalid {
+        child_name,
+        path,
+        reason: reason.to_string(),
+    })
+}
+
+enum Attribution {
+    Explicit(String),
+    UrlDerived(String),
+}
+
 /// Reject `path` with a one-line reason string when it violates the
 /// bare-name rule. Returns `None` when the path is acceptable.
 ///
+/// Exposed at `pub(crate)` so the tree walker can run the same
+/// rejection logic before any clone fires (closing the path-traversal
+/// window between manifest load and `walker.resolve_destination`).
+///
 /// Order matters for the message — the most specific failure mode wins
 /// so authors get a useful diagnostic instead of "regex did not match".
-fn reject_reason(path: &str) -> Option<&'static str> {
+pub(crate) fn reject_reason(path: &str) -> Option<&'static str> {
     if path.is_empty() {
         return Some("empty string is not a valid child path");
     }
@@ -92,14 +121,6 @@ fn matches_bare_name_regex(s: &str) -> bool {
         _ => return false,
     }
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-}
-
-/// Pick a stable label for the offending child in the error message.
-/// Prefers the literal path (already known invalid) so authors can grep;
-/// falls back to the URL when the path field is somehow absent (which
-/// `check` guards against, but defensive in case the surface evolves).
-fn derive_child_label(child: &crate::pack::ChildRef) -> String {
-    child.path.clone().unwrap_or_else(|| child.url.clone())
 }
 
 #[cfg(test)]
@@ -130,124 +151,54 @@ mod tests {
         }
     }
 
-    fn check_one(path: &str) -> Vec<PackValidationError> {
+    fn validate_path(path: &str) -> Vec<PackValidationError> {
         ChildPathValidator.check(&pack_with_child_paths(&[path]))
     }
 
+    /// Table-driven sweep of every rejection mode + every accept mode.
+    /// Substring assertions on the reason string keep the test resilient
+    /// to message rewording without losing the "which sub-rule fired"
+    /// signal.
     #[test]
-    fn accepts_bare_lowercase_name() {
-        assert!(check_one("foo").is_empty());
-        assert!(check_one("a").is_empty());
-        assert!(check_one("algo-leet").is_empty());
-        assert!(check_one("foo-bar").is_empty());
-        assert!(check_one("foo123").is_empty());
-        assert!(check_one("a1-b2").is_empty());
-    }
-
-    #[test]
-    fn rejects_empty_string() {
-        let errs = check_one("");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { path, reason, .. } => {
-                assert_eq!(path, "");
-                assert!(reason.contains("empty"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_forward_slash() {
-        let errs = check_one("foo/bar");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("separator"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_backslash() {
-        let errs = check_one("foo\\bar");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("separator"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_dot_and_dotdot() {
-        for bad in [".", ".."] {
-            let errs = check_one(bad);
-            assert_eq!(errs.len(), 1, "input {bad:?}");
+    fn rejection_table() {
+        let cases: &[(&str, &str)] = &[
+            ("", "empty"),
+            ("foo/bar", "separator"),
+            ("foo\\bar", "separator"),
+            ("/abs", "separator"),
+            ("../escape", "separator"),
+            (".", "`.` and `..`"),
+            ("..", "`.` and `..`"),
+            ("Foo", "`^[a-z]"),
+            ("1foo", "letter-led"),
+        ];
+        for (input, expected_reason_substr) in cases {
+            let errs = validate_path(input);
+            assert_eq!(errs.len(), 1, "input {input:?}");
             match &errs[0] {
-                PackValidationError::ChildPathInvalid { reason, .. } => {
-                    assert!(reason.contains("`.`") && reason.contains("`..`"), "reason: {reason}");
+                PackValidationError::ChildPathInvalid { path, reason, .. } => {
+                    assert_eq!(path, input, "input {input:?}");
+                    assert!(
+                        reason.contains(expected_reason_substr),
+                        "input {input:?} reason: {reason}",
+                    );
                 }
-                other => panic!("wrong variant for {bad:?}: {other:?}"),
+                other => panic!("input {input:?} wrong variant: {other:?}"),
             }
         }
     }
 
     #[test]
-    fn rejects_parent_traversal() {
-        let errs = check_one("../escape");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            // `../escape` contains `/` so it trips the separator check first.
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("separator"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
+    fn accept_table() {
+        for ok in ["foo", "a", "algo-leet", "foo-bar", "foo123", "a1-b2"] {
+            assert!(validate_path(ok).is_empty(), "input {ok:?} should accept");
         }
     }
 
     #[test]
-    fn rejects_absolute_unix_path() {
-        let errs = check_one("/abs");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("separator"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_uppercase_letter_lead() {
-        let errs = check_one("Foo");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("`^[a-z]"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_digit_lead() {
-        let errs = check_one("1foo");
-        assert_eq!(errs.len(), 1);
-        match &errs[0] {
-            PackValidationError::ChildPathInvalid { reason, .. } => {
-                assert!(reason.contains("letter-led"), "reason: {reason}");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn skips_check_when_path_absent() {
-        // No `path:` field — derivation from URL takes over and is trusted.
-        let pack = PackManifest {
+    fn url_derived_tail_is_validated_when_path_absent() {
+        // Acceptable URL tail.
+        let ok = PackManifest {
             schema_version: SchemaVersion::current(),
             name: "p".to_string(),
             r#type: PackType::Meta,
@@ -262,7 +213,37 @@ mod tests {
             teardown: None,
             extensions: BTreeMap::new(),
         };
-        assert!(ChildPathValidator.check(&pack).is_empty());
+        assert!(ChildPathValidator.check(&ok).is_empty());
+
+        // Hostile URL tail — `..` after stripping `.git`. Validator must
+        // catch this even though `path:` is absent.
+        let bad = PackManifest {
+            schema_version: SchemaVersion::current(),
+            name: "p".to_string(),
+            r#type: PackType::Meta,
+            version: None,
+            depends_on: Vec::new(),
+            children: vec![ChildRef {
+                url: "https://example.invalid/...git".to_string(),
+                path: None,
+                r#ref: None,
+            }],
+            actions: Vec::new(),
+            teardown: None,
+            extensions: BTreeMap::new(),
+        };
+        let errs = ChildPathValidator.check(&bad);
+        assert_eq!(errs.len(), 1, "errs: {errs:?}");
+        match &errs[0] {
+            PackValidationError::ChildPathInvalid { child_name, path, .. } => {
+                // URL-derived: child_name carries the URL (since the user
+                // never wrote a path to attribute against), path carries
+                // the derived tail.
+                assert_eq!(child_name, "https://example.invalid/...git");
+                assert_eq!(path, "..");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
     }
 
     #[test]

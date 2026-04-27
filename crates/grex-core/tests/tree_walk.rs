@@ -240,6 +240,90 @@ fn walk_three_level_nested_via_mock() {
     assert_eq!(c_node.parent, Some(a_node.id));
 }
 
+// ---------------------------------------------------------------------------
+// B1 — pre-walk path-traversal gate (v1.1.0 post-review)
+//
+// A malicious parent pack with `children[].path: "../escape"` must be
+// rejected BEFORE any clone fires. Plan-phase validation runs after the
+// walker historically, so the walker now also runs `ChildPathValidator`
+// on each loaded manifest's children list before resolving them on
+// disk. Backend `Clone` must not be observed for the offending child.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn walker_rejects_parent_traversal_in_child_path_pre_clone() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    fs::create_dir_all(&root).unwrap();
+
+    // pack.yaml with a hostile child path. Parser accepts (no validator
+    // runs at parse time); the walker must catch it before issuing a
+    // clone that would create `<ws>/../escape/`.
+    let root_yaml =
+        pack_yaml_with_children("root", &[("git://host/escape.git", "../escape", None)]);
+    let loader = MockLoader::new().with(root.clone(), parse_pack(&root_yaml));
+    let backend = mock_git();
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf());
+
+    let err = walker.walk(&root).expect_err("walker must reject path traversal");
+    match err {
+        TreeError::ChildPathInvalid { path, reason, .. } => {
+            assert_eq!(path, "../escape");
+            assert!(reason.contains("separator"), "reason: {reason}");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+
+    // Critical: backend never saw a Clone for the offending child.
+    let calls = backend.calls();
+    assert!(
+        !calls.iter().any(|c| matches!(c, BackendCall::Clone { .. })),
+        "no clone may fire for a traversal-bearing child path; got: {calls:?}",
+    );
+
+    // Sibling check: the resolved on-disk path must not exist either.
+    // We deliberately walk to `<ws>/../escape` which would land outside
+    // `ws.path()`. Compose it manually so the assertion does not depend
+    // on backend behaviour.
+    let escaped = ws.path().join("../escape");
+    assert!(
+        !escaped.exists(),
+        "no `../escape` directory must be created; found: {}",
+        escaped.display(),
+    );
+}
+
+#[test]
+fn walker_rejects_traversal_in_grandchild_pack_pre_clone() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let mid = ws.path().join("mid");
+    fs::create_dir_all(&root).unwrap();
+
+    // Root → mid (clean). Mid's pack.yaml lists a hostile grandchild.
+    // Walker must clone mid (legitimate) but reject before cloning
+    // `<ws>/../grand`.
+    let root_yaml = pack_yaml_with_children("root", &[("git://host/mid.git", "mid", None)]);
+    let mid_yaml =
+        pack_yaml_with_children("mid", &[("git://host/grand.git", "../grand", None)]);
+    let loader = MockLoader::new()
+        .with(root.clone(), parse_pack(&root_yaml))
+        .with(mid.clone(), parse_pack(&mid_yaml));
+    let backend = mock_git();
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf());
+
+    let err = walker.walk(&root).expect_err("grandchild traversal must be rejected");
+    assert!(matches!(err, TreeError::ChildPathInvalid { .. }), "got: {err:?}");
+
+    // Mid clones (legitimate); grand never does.
+    let calls = backend.calls();
+    let grand_clones = calls
+        .iter()
+        .filter(|c| matches!(c, BackendCall::Clone { url, .. } if url.contains("grand")))
+        .count();
+    assert_eq!(grand_clones, 0, "no clone may fire for grandchild traversal; got: {calls:?}");
+}
+
 #[test]
 fn walker_uses_git_backend_for_children() {
     let ws = TempDir::new().unwrap();
