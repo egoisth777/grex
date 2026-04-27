@@ -16,7 +16,7 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 - [x] P1.4 `openspec/changes/feat-v1.1.0-flat-children-layout/tasks.md` authored (this file).
 - [x] P1.5 Commit + push branch (`c220fb2`).
 - [x] P1.6 PR #50 opened vs `main` (originally titled `docs(openspec): draft v1.1.0 — flat-sibling child layout`; retitled to `feat(v1.1.0): flat-sibling child layout (openspec + impl)` once the impl landed on the same branch).
-- [x] P1.7 Reviewers: 4 parallel codex personas surfaced 2 BLOCKERS, 7 CONCERNs, 5 OTHERs, 10 NITs — all addressed in the post-review fix sweep.
+- [x] P1.7 Reviewers: 4 parallel codex personas surfaced 2 BLOCKER findings, 7 CONCERN findings, 5 OTHER findings, 10 NIT findings — all addressed in the post-review fix sweep.
 - [ ] P1.8 ~~Merge after openspec review (no code merged).~~ Superseded — openspec, impl, and post-review fixes collapsed onto a single branch + single PR.
 
 ---
