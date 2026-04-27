@@ -6,7 +6,7 @@
 
 Two PRs: this one (openspec only, no code) + the implementation PR that lands after openspec review. **(Superseded — collapsed into a single combined PR #50; both phase headings retained below for traceability.)**
 
-> **Note on hardcoded line numbers below.** The sub-change task descriptions cite specific line numbers in `sync.rs` / `pack/mod.rs` / `tree/walker.rs` as they stood at impl-time. Those numbers will rot as the files evolve; treat them as historical anchors and rely on the function/symbol names (`resolve_workspace`, `scan_recovery`, `effective_path`, `Walker::resolve_destination`) for navigation. Cleanup pass to convert all line refs to symbol-anchor refs is tracked as a TODO for the next openspec sweep.
+> **Note on file references below.** Sub-change task descriptions reference specific symbols (`resolve_workspace`, `scan_recovery`, `effective_path`, `Walker::resolve_destination`) using the `<file> :: <symbol>` form so they survive line-number drift as the files evolve.
 
 ---
 
@@ -28,9 +28,9 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 ### Sub-change 4a — Code: drop `.grex/workspace/` default + fix backup-scan anchor
 
 - [x] 4a.1 Branch `feat/v1.1.0-impl` off post-merge `main`.
-- [x] 4a.2 [`crates/grex-core/src/sync.rs:643-649`](../../../crates/grex-core/src/sync.rs) — `resolve_workspace()` default returns `pack_root_dir(pack_root)` directly; remove `.join(".grex").join("workspace")`.
-- [x] 4a.3 [`crates/grex-core/src/sync.rs:1654-1660`](../../../crates/grex-core/src/sync.rs) — `scan_recovery()` workspace anchor changes to `pack_root_dir(pack_root)`; collapse the now-redundant "also walk pack_root" fallback.
-- [x] 4a.4 [`crates/grex-core/src/tree/walker.rs:184`](../../../crates/grex-core/src/tree/walker.rs) — verify no change needed (walker is anchor-agnostic).
+- [x] 4a.2 [`crates/grex-core/src/sync.rs`](../../../crates/grex-core/src/sync.rs) :: `resolve_workspace` — default returns `pack_root_dir(pack_root)` directly; remove `.join(".grex").join("workspace")`.
+- [x] 4a.3 [`crates/grex-core/src/sync.rs`](../../../crates/grex-core/src/sync.rs) :: `scan_recovery` — workspace anchor changes to `pack_root_dir(pack_root)`; collapse the now-redundant "also walk pack_root" fallback.
+- [x] 4a.4 [`crates/grex-core/src/tree/walker.rs`](../../../crates/grex-core/src/tree/walker.rs) :: `Walker::resolve_destination` — verify no change needed (walker is anchor-agnostic).
 - [x] 4a.5 Update unit tests in `sync.rs` that asserted on the old default path.
 
 ### Sub-change 4b — Validator: bare-name `children[].path`
@@ -38,7 +38,7 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 - [x] 4b.1 Add `crates/grex-core/src/pack/validate/child_path.rs` — new `ChildPathValidator` matching the `^[a-z][a-z0-9-]*$` regex used by `name`.
 - [x] 4b.2 Add `PackValidationError::ChildPathInvalid { child_name, path, reason }` variant in [`crates/grex-core/src/pack/validate/mod.rs`](../../../crates/grex-core/src/pack/validate/mod.rs).
 - [x] 4b.3 Wire `ChildPathValidator` into `run_all` alongside the existing 3 validators.
-- [x] 4b.4 [`crates/grex-core/src/pack/mod.rs:165-172`](../../../crates/grex-core/src/pack/mod.rs) `effective_path()` keeps current shape; document the precondition that validation has run.
+- [x] 4b.4 [`crates/grex-core/src/pack/mod.rs`](../../../crates/grex-core/src/pack/mod.rs) :: `effective_path` — keeps current shape; document the precondition that validation has run.
 - [x] 4b.5 Add table-driven tests for the validator: rejects `../escape`, `foo/bar`, `foo\bar`, `.`, `..`, `""`, `/abs`; accepts `algo-leet`, `child-a`, `a`, `a1-b2`.
 
 ### Sub-change 4c — Doc updates
@@ -110,7 +110,7 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 - [x] PR.N8 `file_url` helper duplication in two test files replaced by `gix_backend::file_url_from_path`.
 - [x] PR.N9 pack-spec.md `children` paragraph shortened — points at Validation rules anchor instead of duplicating regex/error text.
 - [x] PR.N10 `sync.rs` `resolve_workspace` rustdoc inlined the rationale instead of linking to the openspec change directory.
-- [ ] PR.N4 man/grex.1 trailing whitespace — clap_mangen output artefact (`.TH ... ""` macro emits trailing space). `git diff --check` does NOT flag it; fixing manually creates drift with the gen-man drift gate. Deferred to a clap_mangen-side fix or a sed post-processing hook in `xtask gen-man` — out of scope for this PR.
+- [x] PR.N4 man/grex.1 trailing whitespace — fixed via a `strip_trailing_whitespace` post-render pass in `xtask::write_man` that trims trailing spaces / tabs while preserving the original line ending. All 15 `man/grex*.1` regenerated drift-free; `git diff --check man/` exits 0.
 
 ### Release
 
