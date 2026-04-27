@@ -318,12 +318,32 @@ fn find_node_id_by_name_or_url(nodes: &[PackNode], dep: &str) -> Option<usize> {
 /// whole graph post-walk via `validate_graph`, so authors who clear
 /// the traversal exploit see the full diagnostic batch on the next
 /// invocation.
+///
+/// `check_child_path` is documented to return only the
+/// `ChildPathInvalid` variant, but we `match` exhaustively so any
+/// future variant the helper grows surfaces as a compile-time
+/// failure here rather than as a silently swallowed `Some(other)`.
 fn validate_children_paths(manifest: &PackManifest) -> Result<(), TreeError> {
     for child in &manifest.children {
-        if let Some(PackValidationError::ChildPathInvalid { child_name, path, reason }) =
-            check_child_path(child)
-        {
-            return Err(TreeError::ChildPathInvalid { child_name, path, reason });
+        let Some(err) = check_child_path(child) else { continue };
+        match err {
+            PackValidationError::ChildPathInvalid { child_name, path, reason } => {
+                return Err(TreeError::ChildPathInvalid { child_name, path, reason });
+            }
+            other @ (PackValidationError::DuplicateSymlinkDst { .. }
+            | PackValidationError::GraphCycle { .. }
+            | PackValidationError::DependsOnUnsatisfied { .. }
+            | PackValidationError::ChildPathDuplicate { .. }) => {
+                // `check_child_path` is contracted to only emit
+                // `ChildPathInvalid`. Any other variant indicates the
+                // helper has drifted out of sync with this caller —
+                // surface loudly rather than silently swallowing it.
+                tracing::error!(
+                    target: "grex::walker",
+                    "check_child_path returned unexpected variant: {other:?}",
+                );
+                debug_assert!(false, "check_child_path returned unexpected variant: {other:?}");
+            }
         }
     }
     Ok(())

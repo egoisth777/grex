@@ -115,15 +115,20 @@ impl Validator for DupChildPathValidator {
         // already invalid (their `effective_path()` may be garbage);
         // the bare-name validator surfaces those independently and
         // duplicate-of-garbage is not a useful additional signal.
+        //
+        // Cache `effective_path()` per child once and reject via the
+        // shared `reject_reason` predicate. Calling `check_one` here
+        // would re-compute `effective_path()` internally for every
+        // child whose `path:` is omitted; the inline form below shares
+        // the resolved string between the rejection check and the
+        // bucket insert.
         let mut by_path: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for child in &pack.children {
-            // Re-use the same check as the bare-name validator so
-            // attribution stays consistent: invalid children are
-            // skipped here (their path is meaningless until fixed).
-            if check_one(child).is_some() {
+            let effective = child.effective_path();
+            if reject_reason(&effective).is_some() {
                 continue;
             }
-            by_path.entry(child.effective_path()).or_default().push(child.url.clone());
+            by_path.entry(effective).or_default().push(child.url.clone());
         }
         let mut errs = Vec::new();
         for (path, urls) in by_path {

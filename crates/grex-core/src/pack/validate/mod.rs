@@ -27,7 +27,7 @@ use thiserror::Error;
 use super::PackManifest;
 use crate::tree::PackGraph;
 
-pub mod child_path;
+pub(crate) mod child_path;
 pub mod cycle;
 pub mod depends_on;
 pub mod dup_symlink;
