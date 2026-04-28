@@ -1,7 +1,46 @@
 # progress — grex
 
 ## Where we are
-**v1.1.0 SHIPPED; v1.1.1 OPENSPEC STABLE + REBASED; main backlog DRAINED + REPO HOUSEKEEPED (2026-04-27, session-end).** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Tech-debt pair #34/#35 closed via PRs #52/#51 (both merged to main). Eight Dependabot PRs merged (#39-#46), two deferred + closed (#47 sha2 0.11 MSRV blocker; #48 gix 0.81 multi-crate scope). #54 typos rephrase merged on main. CLAUDE.md `MUST use powershell as default shell tool` rule landed on main via #55. v1.1.1 openspec triplet at `openspec/changes/feat-v1.1.1-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children; impl pending (Stage 1a–1k). Branch rebased onto fresh `main` (post-#55), 4 commits ahead / 0 behind. Repo housekeeping: 15 stale remote branches pruned, 2 obsolete stashes dropped, runtime artifact `crates/grex/grex.jsonl` deleted. **No release pending** — v1.1.1 release blocked until impl stages complete + manual real-world verify on `E:\repos\code`. Detailed v1.1.0 ship + v1.1.x follow-up history below.
+**v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
+
+## Endpoint (2026-04-28, v1.1.1 SHIPPED)
+- **Squash-merge:** PR #56 squash-merged to `main`, SHA `3d1b963`. Branch `feat/v1.1.1-impl` deleted.
+- **Tag:** `v1.1.1` annotated on `3d1b963`, pushed to origin. `release.yml` (cargo-dist) fired automatically; cross-platform builds in progress at session-end.
+- **crates.io publish (topological, all green):** `grex-core 1.1.1` → `grex-plugins-builtin 1.1.1` → `grex-mcp 1.1.1` → `grex-cli 1.1.1`. Index propagation waited automatically by `cargo publish`. `cargo install grex-cli --force --version 1.1.1` replaced 1.1.0 → 1.1.1 in PATH; `grex --version` reports `grex 1.1.1`.
+- **Manual real-world verify on `E:\repos\code` (Stage 1j, AC #6):**
+  - `grex ls .` → 14 children rendered, all with `~ <name> (scripted, synthetic)` (AC #4 ✓).
+  - `grex sync .` → exit 0, walked all 14 children, auto-migration WARN on legacy `algo-leet` preserved (conservative non-clobber per v1.1.0 contract; user must manually resolve the dual `.grex/workspace/algo-leet` + flat-sibling `algo-leet/`).
+  - `grex sync .` (re-run) → exit 0, every child reports `[skipped]` via hash-match (AC #2 idempotency ✓).
+  - `grex doctor` → exit 0, 14 `synthetic-pack[<name>] OK OK (synthetic)` rows; zero `on-disk-drift` warnings; manifest-schema + gitignore-sync + on-disk-drift all OK (AC #3 ✓).
+- **Acceptance criteria status (proposal.md §"Acceptance criteria", 8 of 8 ✓):**
+  - 1 (e2e plain-git children walk) — `crates/grex/tests/plain_git_children_sync.rs::plain_git_children_sync_walks_to_completion` ✓.
+  - 2 (idempotent re-sync) — `plain_git_children_sync_idempotent` + manual ✓.
+  - 3 (doctor `OK (synthetic)`) — `doctor_after_plain_git_sync_reports_ok_synthetic_and_no_unregistered_warning` + manual ✓.
+  - 4 (`grex ls` distinguishes synthetic) — `ls_basic.rs::ls_plain_git_child_renders_synthetic_marker_in_tree_mode` + JSON variant + manual `~` rendering ✓.
+  - 5 (existing tests pass) — 752 total / 0 failed / 0 ignored across 71 suites ✓.
+  - 6 (real-world `E:\repos\code` 14-child) — manual verify ✓.
+  - 7 (mixed-tree workspace) — `mixed_tree_meta_with_declarative_and_plain_git_children` ✓.
+  - 8 (meta-pack with declared `children:` resolving to plain-git) — covered by `plain_git_children_sync_walks_to_completion` (parent meta declares `children:` URLs that resolve to plain-git seed clones) ✓.
+- **PR #56 review methodology:**
+  - 4 parallel reviewers (correctness / adversarial / maintainability / api-contract) round 1 against impl HEAD pre-commit. Findings: 1 BLOCKER + ~10 CONCERNs + ~15 NITs.
+  - 3 parallel fix agents partitioned by scope (core / walker+ls / MCP+docs) closed all R1 findings.
+  - 4 parallel reviewers round 2 confirmed all R1 CLOSED + surfaced 1 NEW BLOCKER (tracing→stdout pollutes `--json`) + 2 CONCERNs (cli-json.md case mismatch, doctor swallows corrupt lockfile silently).
+  - R2 fix-sweep agent closed all 3 (`tracing_subscriber::fmt().with_writer(io::stderr)` in main.rs; cli-json.md kebab/lowercase; `read_synthetic_lock` returns `(map, Option<Finding>)` and surfaces corruption as `Severity::Warning`).
+- **Final gates pre-commit:** fmt ✓ clippy -D warnings ✓ test 752/0/0 ✓ gen-man drift expected (intentional v1.1.1 changes only) ✓ doc-site-prep ✓ mdbook HTML ✓ cargo-deny ok ✓ typos ✓ cargo metadata reports 1.1.1 across 5 packages ✓.
+- **CI status at merge:** 31 pass / 0 fail / 1 pending (CodeRabbit, advisory, non-required) / 8 skipping. All 8 required checks pass: `build / ubuntu-latest / stable`, `build / windows-latest / stable`, `build / macos-latest / stable`, `cargo-deny`, `MCP protocol conformance (2025-06-18)`, `man-drift (clap_mangen)`, `release-plan (cargo-dist)`, `typos`. Merged via `--admin` (solo maintainer pattern; CodeRabbit advisory only).
+- **Key v1.1.1 deltas:**
+  - Walker synthesizes `PackManifest` (leaf scripted-no-hooks) when child has `.git/` but no `.grex/pack.yaml`. `dest_has_git_repo` symlink-hardened (refuses synthesis on symlinked dest).
+  - `LockEntry.synthetic: bool` (`#[serde(default)]`); `LockEntry` + `Finding` now `#[non_exhaustive]` with `LockEntry::new(...)` constructor for additive growth.
+  - Hash-skip invalidates on synthetic-flag flip; `tracing::warn!` on real→synthetic downgrade.
+  - Doctor lockfile-driven synthetic registry (manifest events are empty for sync-only flows). On-disk-drift skips synthetic-tagged dirs. Lockfile corruption surfaces as Warning.
+  - CLI / MCP `ls` real read-only walk; tree mode `~` marker; JSON `{workspace, tree[]}` shape; synthetic + unsynced + errored children all surface explicitly.
+  - Tracing subscriber pinned to stderr in non-serve binary path (was leaking warns onto stdout, polluting `--json` envelopes).
+  - 4 new test files: `plain_git_children_sync.rs`, `ls_basic.rs`, `tracing_to_stderr.rs`, plus walker / sync / doctor unit tests.
+- **Open items (all NIT, parked for follow-up):**
+  - R2 NEW: clone-into-symlinked-dest in `resolve_destination` (not synthesis path); platform-specific Windows junctions + gitfile `.git` files; ls --json shape parity vs MCP needs deeper field-level diff (current `parity_ls` is smoke-only); asymmetric warn (real→synthetic warns, synthetic→real silent — design intent, document if it persists).
+  - User workspace cleanup: `E:\repos\code/.grex/workspace/algo-leet/` legacy dir still present alongside flat-sibling `algo-leet/`; user must manually resolve. Out of scope for grex.
+  - `grex.jsonl` runtime artifact path is cwd-relative (was added to `.gitignore` this PR); should resolve from workspace root in a v1.1.x follow-up.
+- **Anything weird:** (1) v1.1.0 ship had a manual cargo-publish dance for `grex-cli` due to leftover `grex.jsonl`; this PR's `.gitignore` addition + clean working tree pre-publish made the v1.1.1 publish 1-shot per crate. (2) Round-2 BLOCKER (tracing→stdout) was a latent v1.0.x issue that v1.1.1's new `tracing::warn!` made symptom-visible — fixed in main.rs (single line `.with_writer(std::io::stderr)`). (3) GitHub release workflow was still in-progress at session-end (4m9s into typical ~10min cross-platform build); the tag is published, all crates are live, the GitHub Release artifacts will materialize once `release.yml` finishes — non-blocking for users installing via `cargo install`.
 
 ## Endpoint (2026-04-27, feat/v1.1.1-plain-git-children — session-end checkpoint)
 - Branch: `feat/v1.1.1-plain-git-children` at `eb80553`, rebased onto `origin/main` `3cf9c27`. **4 commits ahead / 0 behind** (openspec draft → backfill → v1.2.0→v1.1.1 rename → post-rebase endpoint refresh). Markdown-only.
