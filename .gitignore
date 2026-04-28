@@ -5,6 +5,10 @@
 **/target/
 Cargo.lock.bak
 
+# Runtime artifacts (grex CLI append-only event log — written when grex runs in a workspace)
+grex.jsonl
+**/grex.jsonl
+
 # editors
 .vscode/
 .idea/

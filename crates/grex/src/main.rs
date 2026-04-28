@@ -31,11 +31,19 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("grex=info,rmcp=warn"));
         tracing_subscriber::fmt().with_writer(std::io::stderr).with_env_filter(filter).init();
     } else {
+        // Non-serve verbs may emit `--json` envelopes on stdout (e.g.
+        // `grex sync --json`, `grex doctor --json`). The default
+        // `tracing_subscriber::fmt()` writer is `io::stdout`, which would
+        // interleave any `tracing::warn!` / `info!` line with the JSON
+        // payload and break consumers that parse stdout. Pin the writer
+        // to stderr — the same discipline the serve branch uses for
+        // JSON-RPC framing — so structured stdout stays JSON-only.
         tracing_subscriber::fmt()
             .with_env_filter(
                 tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("grex=info")),
             )
+            .with_writer(std::io::stderr)
             .init();
     }
 

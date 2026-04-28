@@ -22,11 +22,12 @@
 //! `walk` → `walk_recursive` → `process_children` → `handle_child` →
 //! `resolve_destination` | `record_depends_on`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::GitBackend;
 use crate::pack::validate::child_path::check_one as check_child_path;
-use crate::pack::{ChildRef, PackManifest, PackValidationError};
+use crate::pack::{ChildRef, PackManifest, PackType, PackValidationError, SchemaVersion};
 
 use super::error::TreeError;
 use super::graph::{EdgeKind, PackEdge, PackGraph, PackNode};
@@ -100,6 +101,7 @@ impl<'a> Walker<'a> {
             manifest: root_manifest.clone(),
             parent: None,
             commit_sha: root_commit_sha,
+            synthetic: false,
         });
         let root_identity = pack_identity_for_root(root_pack_path);
         self.walk_recursive(root_id, &root_manifest, &mut state, &mut vec![root_identity])?;
@@ -165,7 +167,19 @@ impl<'a> Walker<'a> {
             return Err(TreeError::CycleDetected { chain });
         }
         let dest = self.resolve_destination(child, state)?;
-        let child_manifest = self.loader.load(&dest)?;
+        // v1.1.1 plain-git children: when the destination has no
+        // `.grex/pack.yaml` but does carry a `.git/`, synthesize a
+        // leaf scripted-no-hooks manifest in-memory rather than
+        // aborting. See
+        // `openspec/changes/feat-v1.1.1-plain-git-children/design.md`
+        // §"Synthesis algorithm".
+        let (child_manifest, is_synthetic) = match self.loader.load(&dest) {
+            Ok(m) => (m, false),
+            Err(TreeError::ManifestNotFound(_)) if dest_has_git_repo(&dest) => {
+                (synthesize_plain_git_manifest(child), true)
+            }
+            Err(e) => return Err(e),
+        };
         verify_child_name(&child_manifest.name, child, &dest)?;
         // Validate this child's own `children[]` before its descent
         // resolves any of them on disk. Mirrors the root-manifest gate
@@ -182,6 +196,7 @@ impl<'a> Walker<'a> {
             manifest: child_manifest.clone(),
             parent: Some(parent_id),
             commit_sha,
+            synthetic: is_synthetic,
         });
         state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 
@@ -283,8 +298,46 @@ fn pack_identity_for_child(child: &ChildRef) -> String {
 /// Shallow on-disk check: a `.git` entry (file or dir) signals an existing
 /// working tree. We deliberately do not open the repo here — that's the
 /// backend's job via `fetch`/`checkout`.
-fn dest_has_git_repo(dest: &Path) -> bool {
+///
+/// # Symlink safety
+///
+/// `dest` itself MUST NOT be a symlink. If it is, this function returns
+/// `false` regardless of whether the symlink target carries a `.git`
+/// entry. This refusal closes a synthesis-redirection attack: a parent
+/// pack declaring `path: code` against a workspace where the user
+/// happens to have `<workspace>/code -> $HOME` would otherwise let the
+/// walker treat `$HOME/.git` as a "plain-git child" and operate on an
+/// unrelated tree. The check uses [`std::fs::symlink_metadata`] so the
+/// link itself — not its target — is interrogated.
+pub fn dest_has_git_repo(dest: &Path) -> bool {
+    // Reject symlinked destinations outright. `symlink_metadata` does
+    // NOT follow the link, so a broken or path-traversing symlink is
+    // treated as untrusted regardless of its target.
+    if let Ok(meta) = std::fs::symlink_metadata(dest) {
+        if meta.file_type().is_symlink() {
+            return false;
+        }
+    }
     dest.join(".git").exists()
+}
+
+/// Build the in-memory manifest used for v1.1.1 plain-git children — a
+/// leaf scripted pack with no hooks, no children, no actions. Activated
+/// at the walker's load-fallback boundary when a child has a `.git/`
+/// but no `.grex/pack.yaml`. See
+/// `openspec/changes/feat-v1.1.1-plain-git-children/design.md`.
+pub fn synthesize_plain_git_manifest(child: &ChildRef) -> PackManifest {
+    PackManifest {
+        schema_version: SchemaVersion::current(),
+        name: child.effective_path(),
+        r#type: PackType::Scripted,
+        version: None,
+        depends_on: Vec::new(),
+        children: Vec::new(),
+        actions: Vec::new(),
+        teardown: None,
+        extensions: BTreeMap::new(),
+    }
 }
 
 /// Enforce that the cloned child's pack.yaml name matches what the parent
@@ -358,4 +411,84 @@ pub(super) fn looks_like_url(s: &str) -> bool {
         || s.starts_with("ssh://")
         || s.starts_with("git@")
         || s.ends_with(".git")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Direct unit test of the synthesis helper — name must equal the
+    /// child's `effective_path()`, type must be `Scripted`, and every
+    /// list field must be empty.
+    #[test]
+    fn synthesize_plain_git_manifest_yields_leaf_scripted_pack() {
+        let child = ChildRef {
+            url: "https://example.com/algo-leet.git".to_string(),
+            path: None,
+            r#ref: None,
+        };
+        let manifest = synthesize_plain_git_manifest(&child);
+        assert_eq!(manifest.name, child.effective_path());
+        assert_eq!(manifest.name, "algo-leet");
+        assert_eq!(manifest.r#type, PackType::Scripted);
+        assert_eq!(manifest.schema_version.as_str(), "1");
+        assert!(manifest.depends_on.is_empty());
+        assert!(manifest.children.is_empty());
+        assert!(manifest.actions.is_empty());
+        assert!(manifest.teardown.is_none());
+        assert!(manifest.extensions.is_empty());
+        assert!(manifest.version.is_none());
+    }
+
+    /// Explicit `path:` override wins over the URL-derived bare name —
+    /// confirms the synthesised manifest's `name` mirrors what the
+    /// parent declared, so `verify_child_name` passes by construction.
+    #[test]
+    fn synthesize_plain_git_manifest_honours_explicit_path() {
+        let child = ChildRef {
+            url: "https://example.com/some-repo.git".to_string(),
+            path: Some("custom-name".to_string()),
+            r#ref: None,
+        };
+        let manifest = synthesize_plain_git_manifest(&child);
+        assert_eq!(manifest.name, "custom-name");
+    }
+
+    /// `dest_has_git_repo` MUST refuse a symlinked destination — even
+    /// when the symlink target carries a real `.git/` directory.
+    /// Otherwise a malicious parent pack could redirect synthesis to
+    /// fetch into `$HOME` (or any sibling repo) by relying on a
+    /// pre-existing symlink in the workspace.
+    #[test]
+    fn dest_has_git_repo_rejects_symlinked_dest() {
+        // Skip on platforms where unprivileged symlink creation fails
+        // (notably Windows without Developer Mode). Failing the symlink
+        // call is itself proof the attack vector is closed for that
+        // host, so the rest of the test is moot.
+        let outer = tempfile::tempdir().unwrap();
+        let real = outer.path().join("real-repo");
+        std::fs::create_dir_all(real.join(".git")).unwrap();
+        let link = outer.path().join("via-link");
+
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&real, &link);
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_dir(&real, &link);
+
+        if symlink_result.is_err() {
+            // Host won't let us create a symlink — nothing to test.
+            return;
+        }
+
+        // Sanity: following the symlink would reveal `.git`.
+        assert!(link.join(".git").exists(), "symlink target should expose .git through traversal");
+        // But `dest_has_git_repo` must refuse it.
+        assert!(
+            !dest_has_git_repo(&link),
+            "dest_has_git_repo must refuse a symlinked destination even when target has .git"
+        );
+        // Real (non-symlinked) sibling still passes — we haven't
+        // accidentally broken the happy path.
+        assert!(dest_has_git_repo(&real));
+    }
 }

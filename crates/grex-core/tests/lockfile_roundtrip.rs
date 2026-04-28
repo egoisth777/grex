@@ -17,14 +17,7 @@ fn lockfile_roundtrip_many() {
         let id = format!("pack-{i}");
         map.insert(
             id.clone(),
-            LockEntry {
-                id,
-                sha: format!("sha-{i}"),
-                branch: "main".into(),
-                installed_at: ts,
-                actions_hash: format!("h-{i}"),
-                schema_version: "1".into(),
-            },
+            LockEntry::new(id, format!("sha-{i}"), "main", ts, format!("h-{i}"), "1"),
         );
     }
     write_lockfile(&p, &map).unwrap();
@@ -52,17 +45,7 @@ fn timestamp_precision_preserved() {
         Utc.with_ymd_and_hms(2026, 4, 19, 10, 0, 0).unwrap().with_nanosecond(123_456_789).unwrap();
 
     let mut map = HashMap::new();
-    map.insert(
-        "pack-ns".into(),
-        LockEntry {
-            id: "pack-ns".into(),
-            sha: "abc".into(),
-            branch: "main".into(),
-            installed_at: ts,
-            actions_hash: "h".into(),
-            schema_version: "1".into(),
-        },
-    );
+    map.insert("pack-ns".into(), LockEntry::new("pack-ns", "abc", "main", ts, "h", "1"));
 
     write_lockfile(&p, &map).unwrap();
     let back = read_lockfile(&p).unwrap();
@@ -79,17 +62,7 @@ fn unicode_pack_ids_roundtrip() {
     let ids = ["パック-1", "grex-αβγ", "🎯-pack"];
     let mut map = HashMap::new();
     for id in ids {
-        map.insert(
-            id.to_string(),
-            LockEntry {
-                id: id.to_string(),
-                sha: "sha".into(),
-                branch: "main".into(),
-                installed_at: ts,
-                actions_hash: "h".into(),
-                schema_version: "1".into(),
-            },
-        );
+        map.insert(id.to_string(), LockEntry::new(id, "sha", "main", ts, "h", "1"));
     }
 
     write_lockfile(&p, &map).unwrap();
@@ -108,4 +81,39 @@ fn malformed_lockfile_returns_err() {
 
     let result = read_lockfile(&p);
     assert!(matches!(result, Err(LockfileError::Corruption { .. })));
+}
+
+/// v1.1.1 — `LockEntry::synthetic = true` survives a JSONL round-trip.
+#[test]
+fn synthetic_field_roundtrips() {
+    let dir = tempdir().unwrap();
+    let p = dir.path().join("grex.lock.jsonl");
+    let ts = Utc.with_ymd_and_hms(2026, 4, 27, 10, 0, 0).unwrap();
+
+    let mut entry = LockEntry::new("plain-git-child", "deadbeef", "main", ts, "h", "1");
+    entry.synthetic = true;
+    let mut map = HashMap::new();
+    map.insert(entry.id.clone(), entry.clone());
+    write_lockfile(&p, &map).unwrap();
+    let back = read_lockfile(&p).unwrap();
+    assert_eq!(back.get("plain-git-child"), Some(&entry));
+    assert!(back.get("plain-git-child").unwrap().synthetic);
+}
+
+/// v1.1.1 forward-compat — a v1.1.0-shaped JSONL line (no `synthetic`
+/// field) deserialises with `synthetic = false` thanks to
+/// `#[serde(default)]`.
+#[test]
+fn missing_synthetic_field_defaults_to_false() {
+    let dir = tempdir().unwrap();
+    let p = dir.path().join("grex.lock.jsonl");
+    // Hand-craft a v1.1.0 line — note the absence of `synthetic`.
+    let line = r#"{"id":"legacy","sha":"abc","branch":"main","installed_at":"2026-04-19T10:00:00Z","actions_hash":"h","schema_version":"1"}"#;
+    fs::write(&p, format!("{line}\n")).unwrap();
+
+    let back = read_lockfile(&p).unwrap();
+    let entry = back.get("legacy").expect("legacy entry must parse");
+    assert!(!entry.synthetic, "missing field must deserialise to false");
+    assert_eq!(entry.id, "legacy");
+    assert_eq!(entry.sha, "abc");
 }

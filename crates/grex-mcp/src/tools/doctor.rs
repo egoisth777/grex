@@ -89,6 +89,7 @@ pub(crate) fn render_report_json(report: &DoctorReport) -> serde_json::Value {
                 "pack": f.pack,
                 "detail": f.detail,
                 "auto_fixable": f.auto_fixable,
+                "synthetic": f.synthetic,
             })
         })
         .collect();

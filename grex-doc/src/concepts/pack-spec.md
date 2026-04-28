@@ -82,8 +82,6 @@ Gitignored. Holds per-pack runtime cache (lock markers, resolved deps, per-platf
 
 ## The 3 built-in pack-types
 
-> **Planned for v1.1.1:** Plain git repositories without their own `.grex/pack.yaml` will be treated as synthetic `scripted` packs (no hooks, sync = `git pull` only). This makes grex able to manage existing repo trees without requiring per-child pack.yaml ceremony. See [`openspec/changes/feat-v1.1.1-plain-git-children/`](../../../openspec/changes/feat-v1.1.1-plain-git-children/) for the spec. Until v1.1.1 ships, every child must carry its own `.grex/pack.yaml`.
-
 ### `meta`
 
 Nests children only. Has no own actions. Lifecycle:
@@ -170,6 +168,60 @@ name: legacy-vim
 type: scripted
 # hooks/ directory ships setup.sh, setup.ps1, teardown.sh, teardown.ps1
 ```
+
+## Plain-git children (v1.1.1+)
+
+A child path declared in a parent pack's `children:` list does **not** have
+to carry its own `.grex/pack.yaml`. When the walker resolves a child to a
+directory that contains `.git/` but no `.grex/pack.yaml`, grex synthesizes
+an in-memory `scripted`-no-hooks pack manifest for it. No file is written
+to disk.
+
+Synthetic packs are leaves by construction. They declare empty
+`children: []`, empty `actions: []`, and empty `teardown: []`, so the
+walker recurses no further past them. Sync against a synthetic pack runs
+`git pull` only — no setup, update, or teardown hooks fire (there are
+none to fire).
+
+This makes the bootstrap pattern (`REPOS.json`-style flat-sibling layouts:
+a parent meta-pack whose children are existing plain git repos that the
+user did not author specifically for grex) walk end-to-end on
+`grex sync` without per-child `.grex/pack.yaml` authoring ceremony.
+
+### Surfacing
+
+- **Lockfile**: synthetic pack entries set `synthetic: true` (default
+  `false` and `#[serde(default)]`, so v1.1.0 lockfiles parse forward).
+- **`grex ls`**: synthetic entries are prefixed with `~` in tree mode
+  and gain `"synthetic": true` in `--json` mode.
+- **`grex doctor`**: synthetic packs report `OK (synthetic)` instead of
+  raising a missing-manifest error. JSON output gains
+  `"synthetic": true` on the per-pack diagnostic.
+
+### Failure mode
+
+If a declared child path resolves to a directory that has neither
+`.grex/pack.yaml` *nor* `.git/`, the walker still raises
+`TreeError::ManifestNotFound`. Synthesis only fires when at least one of
+the two exists; a path pointing at "nothing" is genuinely an error.
+
+### Example
+
+Workspace layout:
+
+```
+~/code/                       # parent (meta) pack root, declares children
+├── .grex/pack.yaml           # type: meta, children: [algo-leet, neetcode]
+├── algo-leet/                # child #1 — plain git repo, no .grex/
+│   └── .git/
+└── neetcode/                 # child #2 — plain git repo, no .grex/
+    └── .git/
+```
+
+`grex sync ~/code` walks `algo-leet` and `neetcode` as synthesized
+scripted-no-hooks packs, runs `git pull` in each, and exits 0. The
+lockfile records both with `synthetic: true`; `grex ls` shows them
+with the `~` prefix.
 
 ## Validation rules
 

@@ -87,7 +87,11 @@ pub struct RmArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct LsArgs {}
+pub struct LsArgs {
+    /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
+    /// itself. Defaults to the current working directory.
+    pub pack_root: Option<std::path::PathBuf>,
+}
 
 #[derive(Args, Debug)]
 pub struct StatusArgs {}
