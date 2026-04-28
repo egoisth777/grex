@@ -57,6 +57,7 @@ fn render_json(report: &DoctorReport) -> String {
                 "pack": f.pack,
                 "detail": f.detail,
                 "auto_fixable": f.auto_fixable,
+                "synthetic": f.synthetic,
             })
         })
         .collect();

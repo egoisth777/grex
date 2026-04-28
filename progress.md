@@ -1,7 +1,45 @@
 # progress — grex
 
 ## Where we are
-**v1.1.0 SHIPPED (2026-04-27).** PR #50 squash-merged to `main` at `e54dc64`; tag `v1.1.0` (tag SHA `1b537c0`) pushed; cargo-dist `release.yml` (run [24984990441](https://github.com/egoisth777/grex/actions/runs/24984990441)) emitted GitHub Release [v1.1.0](https://github.com/egoisth777/grex/releases/tag/v1.1.0) with 16 assets (5 archive targets + installers + checksums + dist-manifest). All 4 crates published to crates.io topologically (`grex-core` → `grex-plugins-builtin` → `grex-mcp` → `grex-cli`), each at `1.1.0`. Local `cargo install grex-cli --force --version 1.1.0` upgraded `~/.cargo/bin/grex.exe` from 1.0.0 → 1.1.0. End-to-end validation against `E:\repos\code` exposed a real legacy/flat-sibling collision (auto-migration WARN-skipped non-destructively as designed; subsequent `tree walk` exits code 3 because flat-sibling child `algo-leet` lacks its own `.grex/pack.yaml` — workspace-side state, not a v1.1.0 regression). PRs #51 #52 still open as post-1.1.0 follow-ups. v1.1.0 history below.
+**v1.1.0 SHIPPED; v1.1.1 OPENSPEC STABLE + REBASED; main backlog DRAINED + REPO HOUSEKEEPED (2026-04-27, session-end).** v1.1.0 live on crates.io (all 4 crates) and GitHub Releases. Tech-debt pair #34/#35 closed via PRs #52/#51 (both merged to main). Eight Dependabot PRs merged (#39-#46), two deferred + closed (#47 sha2 0.11 MSRV blocker; #48 gix 0.81 multi-crate scope). #54 typos rephrase merged on main. CLAUDE.md `MUST use powershell as default shell tool` rule landed on main via #55. v1.1.1 openspec triplet at `openspec/changes/feat-v1.1.1-plain-git-children/` proposes synthetic-scripted-no-hooks fallback for plain-git children; impl pending (Stage 1a–1k). Branch rebased onto fresh `main` (post-#55), 4 commits ahead / 0 behind. Repo housekeeping: 15 stale remote branches pruned, 2 obsolete stashes dropped, runtime artifact `crates/grex/grex.jsonl` deleted. **No release pending** — v1.1.1 release blocked until impl stages complete + manual real-world verify on `E:\repos\code`. Detailed v1.1.0 ship + v1.1.x follow-up history below.
+
+## Endpoint (2026-04-27, feat/v1.1.1-plain-git-children — session-end checkpoint)
+- Branch: `feat/v1.1.1-plain-git-children` at `eb80553`, rebased onto `origin/main` `3cf9c27`. **4 commits ahead / 0 behind** (openspec draft → backfill → v1.2.0→v1.1.1 rename → post-rebase endpoint refresh). Markdown-only.
+- **main SHA:** `3cf9c27cbe35805356003f3514caf2b1b04a3a14` (`docs(claude): require powershell as default shell tool (#55)`).
+- **Phase:** session-end checkpoint — main backlog drained, repo housekeeped, v1.1.1 impl pending Stage 1a–1k.
+- **v1.1.1 openspec status:** triplet stable at `openspec/changes/feat-v1.1.1-plain-git-children/{proposal,design,tasks}.md`. Approach A locked: walker synthesizes `scripted`-no-hooks pack manifest in-memory when child has `.git/` but no `.grex/pack.yaml`. SemVer PATCH per user override (additive feature would normally be MINOR; user-elected PATCH).
+- **Impl pending (Stage 1a–1k):** 1a cut `feat/v1.1.1-impl` off post-merge main + baseline `cargo test --workspace` green → 1b walker synthetic-manifest fallback → 1c lockfile schema (add `synthetic: bool`) → 1d doctor synthetic-OK handling → 1e `ls` adds `~` marker for synthetic packs → 1f e2e `plain_git_children_sync.rs` → 1g docs (pack-spec, mdBook chapter) → 1h version bump `Cargo.toml` 1.1.0 → 1.1.1 → 1i gates (fmt/clippy/test/mcp-parity/gen-man/mdbook/cargo-deny/typos) → 1j real-world verify `grex sync E:\repos\code` walks 14 plain-git children idempotently → 1k ship (PR → merge → tag v1.1.1 → publish 4 crates).
+- **Release status:** NOT pending. Release gated on Stage 1k completion + manual real-world verify on `E:\repos\code`.
+- **Next action:** Stage 1a — branch `feat/v1.1.1-impl` off post-merge `main`; baseline `cargo test --workspace` green before any code change.
+
+### Session ledger (2026-04-27)
+
+**PRs merged this session (12):**
+- #39 dependabot setup-python 5→6
+- #40 dependabot deploy-pages 4→5 (admin)
+- #41 dependabot attest-build-provenance 3→4 (admin)
+- #42 dependabot upload-pages-artifact 3→5 (admin)
+- #43 dependabot download-artifact 7→8
+- #44 dependabot winreg 0.55→0.56
+- #45 dependabot clap_mangen 0.2.26→0.3.0 (with man regen `3b7e317`, admin)
+- #46 dependabot thiserror 1→2 (with `{r#ref}` → `{ref}` fix `d3b811d`, admin)
+- #51 fix(grex): wire import through `add::run` (rescue-rebased `d535dd2`) — closes #35
+- #52 fix(grex-core): populate `expected_patterns_for_pack` — closes #34
+- #54 chore: typo fix on main
+- #55 docs(claude): require powershell as default shell tool
+
+**PRs deferred + closed (2):**
+- #47 sha2 0.10→0.11 — MSRV 1.85 blocker (repo MSRV 1.75); revisit when MSRV bumps.
+- #48 gix 0.70→0.81 — multi-crate scope; needs `gix-worktree-state` 0.17→0.28 + explicit `sha1` feature + `with_ref_name` panic-prone audit; revisit as a dedicated `chore/gix-0.81` PR.
+
+**Issues auto-closed:** #34 (doctor `expected_patterns_for_pack`) via #52; #35 (import via `add::run`) via #51.
+
+**Housekeeping:**
+- Renamed v1.2.0 → v1.1.1 (branch + openspec dir + all docs); SemVer PATCH per user override (additive feature would normally be MINOR).
+- 15 stale remote branches pruned.
+- 2 obsolete stashes dropped (`m5-pack-types`, `m7-4a/4c` — both shipped).
+- Runtime artifact `crates/grex/grex.jsonl` deleted (was untracked CLI log left over from publish-time dirty-tree workaround).
+- CLAUDE.md `MUST use powershell as the default shell tool` rule landed on main via #55.
 
 ## Endpoint (2026-04-27, v1.1.0 SHIPPED)
 - **Squash-merge:** PR #50 merged via `gh pr merge 50 --squash --delete-branch`; squash SHA on `main` = `e54dc64596b3e9090c68e5712974b6d443912343` ([commit](https://github.com/egoisth777/grex/commit/e54dc64596b3e9090c68e5712974b6d443912343)). `feat/v1.1.0-flat-children-layout` deleted.

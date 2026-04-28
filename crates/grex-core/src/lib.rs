@@ -34,7 +34,10 @@ pub use pack::{
     RequireSpec, RmdirArgs, SchemaVersion, SymlinkArgs, SymlinkKind, UnlinkArgs, Validator,
     WhenSpec,
 };
-pub use tree::{EdgeKind, FsPackLoader, PackGraph, PackLoader, PackNode, TreeError, Walker};
+pub use tree::{
+    build_ls_tree, dest_has_git_repo, synthesize_plain_git_manifest, EdgeKind, FsPackLoader,
+    LsNode, LsNodeError, LsTree, PackGraph, PackLoader, PackNode, TreeError, Walker,
+};
 pub use vars::{expand, VarEnv, VarExpandError};
 
 pub mod scheduler;

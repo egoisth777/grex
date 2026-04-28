@@ -73,6 +73,13 @@ pub struct PackNode {
     /// [`crate::lockfile::compute_actions_hash`] so ref drift invalidates
     /// the skip-on-hash short-circuit (M4-D spec §M4 req 4a).
     pub commit_sha: Option<String>,
+    /// `true` when the walker synthesised the manifest in-memory because
+    /// the on-disk child had no `.grex/pack.yaml` but did carry a `.git/`
+    /// (v1.1.1 plain-git children, see
+    /// `openspec/changes/feat-v1.1.1-plain-git-children/`). Threaded
+    /// through to the lockfile (`LockEntry::synthetic`) and downstream
+    /// surfaces (doctor, ls). Default `false` for every declared pack.
+    pub synthetic: bool,
 }
 
 /// An edge in the walked graph.

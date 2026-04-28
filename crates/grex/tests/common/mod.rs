@@ -33,10 +33,13 @@ pub const VERBS: &[&str] = &[
 /// appends one manifest registration row (or reports a dry-run plan), with
 /// dedicated coverage in `add_cli.rs`; sync coverage lives in
 /// `crates/grex/tests/json_output.rs::sync_without_pack_root_json_emits_usage_error`
-/// and the E2E suite. Use this slice for parametric tests that actually
-/// *run* the verb; use `VERBS` for tests that only inspect help text or
-/// the verb-name surface.
-pub const STUB_VERBS: &[&str] = &["init", "rm", "ls", "status", "update", "run", "exec"];
+/// and the E2E suite. `ls` is excluded as of feat-v1.1.1: it now performs
+/// a real read-only tree walk and surfaces a usage-shaped error when no
+/// manifest is reachable from the cwd; dedicated coverage lives in
+/// `crates/grex/tests/ls_basic.rs`. Use this slice for parametric tests
+/// that actually *run* the verb; use `VERBS` for tests that only inspect
+/// help text or the verb-name surface.
+pub const STUB_VERBS: &[&str] = &["init", "rm", "status", "update", "run", "exec"];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.

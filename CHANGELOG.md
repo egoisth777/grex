@@ -40,6 +40,45 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.1.1] - 2026-04-27
+
+### Added
+- Walker synthesizes a scripted-no-hooks pack manifest in-memory when a child dir contains `.git/` but no `.grex/pack.yaml`. Plain-git children now walk end-to-end on `grex sync` without per-child `pack.yaml` authoring (the bootstrap pattern: `REPOS.json` + flat-sibling git repos).
+- `LockEntry.synthetic: bool` field (default `false`, `#[serde(default)]` for forward compatibility) — true iff the pack manifest was synthesized.
+- `grex doctor` reports synthetic packs as `OK (synthetic)`; JSON output gains `"synthetic": true` per entry.
+- `grex ls` prefixes synthetic entries with `~` (tree mode) and adds `"synthetic": true` (JSON mode).
+- New e2e test `crates/grex/tests/plain_git_children_sync.rs` covering plain-git child walk + idempotent re-sync + mixed-tree.
+
+### Changed
+- Pack-spec doc gains a "Plain-git children" section.
+- Migration guide updated: `grex import --from-repos-json` + `grex sync` works end-to-end on bootstrap-pattern repos.
+- `grex ls` is no longer a stub. From v1.1.1+, `grex ls [<pack_root>]`
+  walks the workspace read-only and renders the pack tree (human and
+  JSON modes). Previously `grex ls --json` returned
+  `{"status": "unimplemented", "verb": "ls"}` and exit 0; now it
+  returns `{"workspace", "tree": [...]}` and may exit 2 if the
+  workspace is invalid (no root manifest). The MCP `ls` tool wires
+  through the same `grex_core::build_ls_tree` helper, so CLI and
+  MCP `ls` are field-aligned. Wrappers that polled `grex ls` as a
+  "binary available?" probe should switch to `grex --version`.
+
+### Migration notes
+
+- **v1.1.0 lockfiles parse forward.** `LockEntry.synthetic` carries
+  `#[serde(default)]`, so a pre-v1.1.1 lockfile decodes cleanly into
+  the new struct (`synthetic` defaults to `false`). No on-disk
+  migration is required for the lockfile.
+- **PATCH semver justification.** v1.1.1 is additive: walker synthesis
+  is a fallback that fires only when the legacy path errors, no
+  `pack.yaml` schema break, and no public API break beyond a struct
+  growing one field (now gated by `#[non_exhaustive]` for forward
+  compatibility — see fix-sweep round 1 scope A).
+- **`grex ls` exit-code change.** The stub→wired transition flips the
+  `ls` exit code on a broken workspace (was always 0/stub, now 2/error
+  when the root manifest cannot be loaded). Wrappers checking for
+  binary presence via `grex ls`'s exit status should migrate to
+  `grex --version`. Successful `ls` invocations still exit 0.
+
 ## [1.1.0] - 2026-04-26
 
 Behaviour change at runtime + zero schema/API break. Brings the
@@ -357,7 +396,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/egoisth777/grex/releases/tag/v1.1.1
 [1.1.0]: https://github.com/egoisth777/grex/releases/tag/v1.1.0
 [1.0.3]: https://github.com/egoisth777/grex/releases/tag/v1.0.3
 [1.0.2]: https://github.com/egoisth777/grex/releases/tag/v1.0.2

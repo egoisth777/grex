@@ -19,9 +19,11 @@
 pub mod error;
 pub mod graph;
 pub mod loader;
+pub mod ls;
 pub mod walker;
 
 pub use error::TreeError;
 pub use graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 pub use loader::{FsPackLoader, PackLoader};
-pub use walker::Walker;
+pub use ls::{build_ls_tree, LsNode, LsNodeError, LsTree};
+pub use walker::{dest_has_git_repo, synthesize_plain_git_manifest, Walker};
