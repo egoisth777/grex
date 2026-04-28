@@ -747,3 +747,64 @@ fn walker_integrates_with_real_git_backend() {
     assert!(ws.join("child").join(".git").exists());
     graph.validate().expect("clean real-backend graph validates");
 }
+
+// ---------------------------------------------------------------------------
+// v1.1.1 — plain-git child synthesis fallback
+//
+// When a child has no `.grex/pack.yaml` but does carry a `.git/`, the
+// walker must synthesise a leaf scripted-no-hooks manifest in-memory
+// rather than aborting. When neither exists, `ManifestNotFound` still
+// propagates as a hard error.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn walker_synthesises_plain_git_child_when_manifest_missing() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let a = ws.path().join("a");
+    fs::create_dir_all(&root).unwrap();
+    // Pre-populate dest with a `.git/` marker so `dest_has_git_repo`
+    // returns true. MockLoader has no entry for `a`, so its `load` will
+    // return `ManifestNotFound` — the walker must fall back to
+    // synthesis instead of erroring.
+    fs::create_dir_all(a.join(".git")).unwrap();
+
+    let root_yaml = pack_yaml_with_children("root", &[("git://x/a.git", "a", None)]);
+    let loader = MockLoader::new().with(root.clone(), parse_pack(&root_yaml));
+    let backend = mock_git();
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf());
+
+    let graph = walker.walk(&root).expect("walk must succeed via synthesis");
+    assert_eq!(graph.nodes().len(), 2, "root + synthesised child");
+
+    let child = graph.find_by_name("a").expect("synthesised child node");
+    assert!(child.synthetic, "child must carry the synthetic flag");
+    assert_eq!(child.manifest.name, "a");
+    assert!(child.manifest.children.is_empty());
+    assert!(child.manifest.actions.is_empty());
+
+    // Root is never synthetic.
+    assert!(!graph.root().synthetic, "root must not be marked synthetic");
+}
+
+#[test]
+fn walker_propagates_manifest_not_found_when_no_git_repo() {
+    let ws = TempDir::new().unwrap();
+    let root = ws.path().join("root");
+    let a = ws.path().join("a");
+    fs::create_dir_all(&root).unwrap();
+    // Deliberately do NOT create `a/.git/` — synthesis must NOT fire.
+    // MockLoader has no entry for `a`, so the walker must surface the
+    // original `ManifestNotFound` error.
+    let _ = a; // keep the binding for clarity even though we don't use it directly.
+
+    let root_yaml = pack_yaml_with_children("root", &[("git://x/a.git", "a", None)]);
+    let loader = MockLoader::new().with(root.clone(), parse_pack(&root_yaml));
+    // Disable create_on_clone so the mock backend leaves the dest
+    // untouched — the walker then sees no `.git/` and refuses synthesis.
+    let backend = MockGitBackend { calls: Mutex::new(Vec::new()), create_on_clone: false };
+    let walker = Walker::new(&loader, &backend, ws.path().to_path_buf());
+
+    let err = walker.walk(&root).expect_err("must propagate ManifestNotFound");
+    assert!(matches!(err, TreeError::ManifestNotFound(_)), "got: {err:?}");
+}

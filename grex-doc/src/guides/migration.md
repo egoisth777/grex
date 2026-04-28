@@ -64,6 +64,8 @@ Legacy `REPOS.json` carries no pack type info. Default assumption:
 
 User can later convert to `declarative` or `scripted` by adding a `.grex/pack.yaml` in the imported pack's own repo.
 
+From v1.1.1+, plain-git children (no `.grex/pack.yaml`) walk via synthetic-manifest fallback — `grex import --from-repos-json` followed by `grex sync` works end-to-end on the bootstrap pattern (REPOS.json + flat-sibling git repos). See [`pack-spec.md` §"Plain-git children"](../concepts/pack-spec.md#plain-git-children-v111) for the synthesis rule.
+
 ## Coexistence during transition
 
 Both systems can run against the same workspace if:

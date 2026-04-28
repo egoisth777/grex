@@ -1008,6 +1008,7 @@ fn run_actions(
         let actions = node.manifest.actions.clone();
         let manifest = node.manifest.clone();
         let commit_sha = node.commit_sha.clone().unwrap_or_default();
+        let synthetic = node.synthetic;
         // `--only` filter + skip-on-hash short-circuits colocated in
         // `try_skip_or_filter` so this outer loop stays within the
         // 50-LOC per-function budget.
@@ -1018,6 +1019,7 @@ fn run_actions(
             &pack_path,
             &actions,
             &commit_sha,
+            synthetic,
             workspace,
             prior_lock,
             next_lock,
@@ -1059,7 +1061,7 @@ fn run_actions(
         // resolved HEAD SHA when the pack's working tree is a git
         // repository, otherwise an empty string keeps the hash stable.
         let actions_hash = compute_actions_hash(&actions, &commit_sha);
-        upsert_lock_entry(next_lock, &pack_name, &commit_sha, &actions_hash);
+        upsert_lock_entry(prior_lock, next_lock, &pack_name, &commit_sha, &actions_hash, synthetic);
     }
 }
 
@@ -1122,6 +1124,7 @@ fn try_skip_or_filter(
     pack_path: &Path,
     actions: &[Action],
     commit_sha: &str,
+    current_synthetic: bool,
     workspace: &Path,
     prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
@@ -1135,7 +1138,16 @@ fn try_skip_or_filter(
         return true;
     }
     try_skip_pack(
-        report, pack_name, pack_path, actions, commit_sha, prior_lock, next_lock, dry_run, force,
+        report,
+        pack_name,
+        pack_path,
+        actions,
+        commit_sha,
+        current_synthetic,
+        prior_lock,
+        next_lock,
+        dry_run,
+        force,
     )
 }
 
@@ -1377,11 +1389,56 @@ fn dispatch_pack_type_plugin(
     !record_action_outcome(report, event_log, lock_path, pack_name, 0, type_tag, step_result)
 }
 
+/// Pure skip-eligibility decision. Returns `Some(hash)` when the pack
+/// is eligible for the hash-skip short-circuit, `None` otherwise.
+///
+/// Splitting the decision out of [`try_skip_pack`] keeps the
+/// side-effecting transcript bookkeeping testable in isolation: the
+/// v1.1.1 synthetic-flag-flip regression exercises this helper without
+/// having to stand up a `SyncReport` / `PackGraph`.
+fn skip_eligibility(
+    actions: &[Action],
+    commit_sha: &str,
+    current_synthetic: bool,
+    prior: &LockEntry,
+    dry_run: bool,
+    force: bool,
+) -> Option<String> {
+    if dry_run || force {
+        // Dry runs must always produce the planned-step transcript so
+        // authors can see what `sync` *would* do. `--force` is the
+        // operator's explicit opt-out from the hash short-circuit.
+        return None;
+    }
+    let hash = compute_actions_hash(actions, commit_sha);
+    if prior.actions_hash != hash {
+        return None;
+    }
+    if prior.synthetic != current_synthetic {
+        // Pack-shape flipped between runs (real ↔ synthetic). Even
+        // when the actions hash matches by coincidence (e.g. a
+        // declarative pack with empty `actions[]` whose pack.yaml was
+        // deleted, falling through to a synthetic leaf with the same
+        // empty actions list and stable commit SHA), we must NOT
+        // carry the stale `synthetic` flag forward. Forcing the
+        // upsert path re-emits the entry with the current flag.
+        return None;
+    }
+    Some(hash)
+}
+
 /// Decide whether `pack_name` can be short-circuited via a lockfile
 /// hash match. When the prior hash matches the freshly-computed hash,
 /// emit a single [`ExecResult::Skipped`] step and carry the prior
 /// lockfile entry forward unchanged. Returns `true` when the pack was
 /// skipped.
+///
+/// `current_synthetic` is the walker-derived synthetic flag for this
+/// pack on the current run. The skip eligibility check requires it to
+/// match `prior.synthetic` so a pack-shape transition (e.g. user
+/// deletes `pack.yaml` so a previously-real pack now walks as
+/// synthetic) invalidates the skip and forces the lockfile entry to
+/// be re-emitted with the fresh `synthetic` value.
 #[allow(clippy::too_many_arguments)]
 fn try_skip_pack(
     report: &mut SyncReport,
@@ -1389,24 +1446,20 @@ fn try_skip_pack(
     pack_path: &Path,
     actions: &[Action],
     commit_sha: &str,
+    current_synthetic: bool,
     prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     dry_run: bool,
     force: bool,
 ) -> bool {
-    if dry_run || force {
-        // Dry runs must always produce the planned-step transcript so
-        // authors can see what `sync` *would* do. `--force` is the
-        // operator's explicit opt-out from the hash short-circuit.
-        return false;
-    }
     let Some(prior) = prior_lock.get(pack_name) else {
         return false;
     };
-    let hash = compute_actions_hash(actions, commit_sha);
-    if prior.actions_hash != hash {
+    let Some(hash) =
+        skip_eligibility(actions, commit_sha, current_synthetic, prior, dry_run, force)
+    else {
         return false;
-    }
+    };
     let skipped_step = ExecStep {
         action_name: Cow::Borrowed("pack"),
         result: ExecResult::Skipped {
@@ -1440,12 +1493,33 @@ fn try_skip_pack(
 /// correctly invalidated. The prior-preserve carve-out that was
 /// introduced in M4-D was unsound (hash-vs-sha drift) and is removed
 /// by the M4-D post-review fix bundle; see spec §M4 req 4a.
+///
+/// `prior_lock` is consulted purely for observability: when a
+/// previously-real pack flips to synthetic between runs (user deleted
+/// the pack's `pack.yaml` so the walker fell back to v1.1.1
+/// plain-git-child synthesis), a `tracing::warn!` records the
+/// downgrade so the operator notices their declarative actions have
+/// stopped running.
 fn upsert_lock_entry(
+    prior_lock: &std::collections::HashMap<String, LockEntry>,
     next_lock: &mut std::collections::HashMap<String, LockEntry>,
     pack_name: &str,
     commit_sha: &str,
     actions_hash: &str,
+    synthetic: bool,
 ) {
+    if synthetic {
+        if let Some(prior) = prior_lock.get(pack_name) {
+            if !prior.synthetic {
+                tracing::warn!(
+                    target: "grex::sync",
+                    pack = pack_name,
+                    "pack `{pack_name}` downgraded from real to synthetic — \
+                     pack.yaml missing on disk; only `git pull` will run going forward",
+                );
+            }
+        }
+    }
     let installed_at = Utc::now();
     let entry = next_lock.get(pack_name).map_or_else(
         || LockEntry {
@@ -1455,11 +1529,13 @@ fn upsert_lock_entry(
             installed_at,
             actions_hash: actions_hash.to_string(),
             schema_version: "1".to_string(),
+            synthetic,
         },
         |prev| LockEntry {
             installed_at,
             actions_hash: actions_hash.to_string(),
             sha: commit_sha.to_string(),
+            synthetic,
             ..prev.clone()
         },
     );
@@ -2023,4 +2099,132 @@ fn collect_dangling_starts(events: &[Event]) -> Vec<DanglingStart> {
     let mut out: Vec<DanglingStart> = open.into_values().collect();
     out.sort_by_key(|a| a.started_at);
     out
+}
+
+#[cfg(test)]
+mod synthetic_transition_tests {
+    //! v1.1.1 — regression cover for the pack-shape transition fixes.
+    //!
+    //! These tests exercise [`skip_eligibility`] / [`upsert_lock_entry`]
+    //! directly (no walker, no fs) so the assertion is on the plumbing
+    //! itself: skip eligibility must require synthetic-flag agreement
+    //! even when the actions hash matches by coincidence, and the
+    //! upsert path must record the real-to-synthetic downgrade in the
+    //! lockfile so the operator's lockfile reflects what just happened.
+    use super::{skip_eligibility, upsert_lock_entry, LockEntry};
+    use crate::lockfile::compute_actions_hash;
+    use chrono::{TimeZone, Utc};
+    use std::collections::HashMap;
+
+    fn ts() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 4, 27, 10, 0, 0).unwrap()
+    }
+
+    /// Stable empty-actions hash with a fixed commit SHA. The same
+    /// inputs feed both the prior (real) and the new (synthetic)
+    /// configuration in the regression below, which is exactly the
+    /// coincidental-hash-match scenario FIX 3 must catch.
+    fn stable_hash() -> String {
+        compute_actions_hash(&[], "deadbeef")
+    }
+
+    fn prior_entry(synthetic: bool) -> LockEntry {
+        LockEntry {
+            id: "alpha".into(),
+            sha: "deadbeef".into(),
+            branch: "main".into(),
+            installed_at: ts(),
+            actions_hash: stable_hash(),
+            schema_version: "1".into(),
+            synthetic,
+        }
+    }
+
+    /// FIX 3 — pack flips from real → synthetic but `actions_hash` and
+    /// `commit_sha` happen to match. The skip MUST be invalidated so
+    /// the upsert path re-emits the lockfile entry with `synthetic =
+    /// true`.
+    #[test]
+    fn skip_eligibility_invalidates_when_synthetic_flag_flips() {
+        let prior = prior_entry(false);
+        let decision = skip_eligibility(&[], "deadbeef", true, &prior, false, false);
+        assert!(decision.is_none(), "skip must be invalidated when synthetic flag flips");
+    }
+
+    /// Same hash, same synthetic flag → skip is allowed (baseline).
+    #[test]
+    fn skip_eligibility_allows_skip_when_synthetic_matches() {
+        let prior = prior_entry(true);
+        let decision = skip_eligibility(&[], "deadbeef", true, &prior, false, false);
+        assert_eq!(
+            decision.as_deref(),
+            Some(stable_hash().as_str()),
+            "skip must be honoured when synthetic flag matches",
+        );
+    }
+
+    /// `dry_run` and `force` always disable the skip regardless of
+    /// flag agreement.
+    #[test]
+    fn skip_eligibility_respects_dry_run_and_force() {
+        let prior = prior_entry(true);
+        assert!(skip_eligibility(&[], "deadbeef", true, &prior, true, false).is_none());
+        assert!(skip_eligibility(&[], "deadbeef", true, &prior, false, true).is_none());
+    }
+
+    /// FIX 4 — `upsert_lock_entry` records the downgrade in the
+    /// lockfile (entry flips to `synthetic = true`) when the prior
+    /// entry was real. The `tracing::warn!` is fire-and-forget, but
+    /// the lockfile transition itself is observable and must be
+    /// correct.
+    #[test]
+    fn upsert_lock_entry_records_real_to_synthetic_downgrade() {
+        let mut prior: HashMap<String, LockEntry> = HashMap::new();
+        prior.insert(
+            "beta".into(),
+            LockEntry {
+                id: "beta".into(),
+                sha: "deadbeef".into(),
+                branch: "main".into(),
+                installed_at: ts(),
+                actions_hash: stable_hash(),
+                schema_version: "1".into(),
+                synthetic: false,
+            },
+        );
+        let mut next: HashMap<String, LockEntry> = HashMap::new();
+
+        upsert_lock_entry(&prior, &mut next, "beta", "deadbeef", &stable_hash(), true);
+
+        let entry = next.get("beta").expect("entry must be upserted");
+        assert!(entry.synthetic, "downgraded entry must carry synthetic = true");
+        assert_eq!(entry.actions_hash, stable_hash(), "actions_hash must reflect current run");
+    }
+
+    /// Upsert path is a no-op for the steady-state case (synthetic →
+    /// synthetic): the entry is replaced with the current run's
+    /// timestamp/hash but the synthetic flag is preserved. This
+    /// guards against an over-eager warning fire.
+    #[test]
+    fn upsert_lock_entry_no_op_for_steady_state_synthetic() {
+        let mut prior: HashMap<String, LockEntry> = HashMap::new();
+        prior.insert(
+            "gamma".into(),
+            LockEntry {
+                id: "gamma".into(),
+                sha: "deadbeef".into(),
+                branch: "main".into(),
+                installed_at: ts(),
+                actions_hash: stable_hash(),
+                schema_version: "1".into(),
+                synthetic: true,
+            },
+        );
+        let mut next: HashMap<String, LockEntry> = HashMap::new();
+
+        upsert_lock_entry(&prior, &mut next, "gamma", "deadbeef", &stable_hash(), true);
+
+        let entry = next.get("gamma").expect("entry must be upserted");
+        assert!(entry.synthetic, "synthetic must remain true on no-op refresh");
+    }
 }

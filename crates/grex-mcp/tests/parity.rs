@@ -70,6 +70,10 @@ async fn parity_rm() {
     assert_parity("rm").await;
 }
 
+// `ls` parity restored in v1.1.1 fix-sweep: MCP `ls` now wires through
+// `grex_core::build_ls_tree`, mirroring the CLI surface. Both signal
+// `PackOpError` when invoked against a fixture tempdir with no
+// `.grex/pack.yaml` (the default parity-helper fixture).
 #[tokio::test]
 async fn parity_ls() {
     assert_parity("ls").await;

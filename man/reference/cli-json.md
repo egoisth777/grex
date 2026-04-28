@@ -39,11 +39,11 @@ for the stub envelope; no verb-specific shape will ever gain a top-level
 
 ## Stub envelope (unimplemented verbs)
 
-`init`, `rm`, `ls`, `status`, `update`, `run`, `exec` are still
+`init`, `rm`, `status`, `update`, `run`, `exec` are still
 M1 stubs. `--json` emits:
 
 ```json
-{"status": "unimplemented", "verb": "ls"}
+{"status": "unimplemented", "verb": "init"}
 ```
 
 Fields:
@@ -80,6 +80,69 @@ Fields:
 - `appended` — bool; `false` only when `dry_run` is `true`.
 
 The MCP `add` tool emits a byte-identical body.
+
+## `ls`
+
+Wired in v1.1.1. Walks the workspace from a root `pack.yaml` (or the
+current directory when no `pack_root` is given) without cloning,
+fetching, or executing anything, and emits a structured tree envelope:
+
+```json
+{
+  "workspace": "/abs/path/to/workspace",
+  "tree": [
+    {
+      "id": 0,
+      "name": "rootp",
+      "path": "/abs/path/to/workspace",
+      "type": "meta",
+      "synthetic": false,
+      "children": [
+        {
+          "id": 1,
+          "name": "alpha",
+          "path": "/abs/path/to/workspace/alpha",
+          "type": "scripted",
+          "synthetic": true,
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Fields:
+- `workspace` — absolute path to the resolved workspace (the directory
+  holding the root pack's `.grex/`, or the pack root itself for the
+  flat-sibling layout).
+- `tree[]` — root-level nodes. Currently always one entry; the array
+  shape is reserved so future surfaces walking from a workspace dir
+  with multiple sibling packs can extend without a schema break.
+- Per node: `id` (stable in-walk depth-first counter, root = 0),
+  `name`, `path` (absolute), `type` (one of `meta`, `declarative`,
+  `scripted`), `synthetic` (bool — see below), `children[]`.
+
+`synthetic: true` indicates a plain-git child whose pack manifest was
+synthesised in-memory by the walker (the destination directory carries
+`.git/` but no `.grex/pack.yaml`). Synthetic nodes always carry
+`type: "scripted"` per the v1.1.1 design. See
+[`pack-spec.md`](../concepts/pack-spec.md) §"Plain-git children" for
+the full contract.
+
+### Error envelope
+
+```json
+{"verb": "ls", "error": {"kind": "tree", "message": "..."}}
+```
+
+`kind` values: `tree` (root manifest could not be loaded), `usage`
+(invalid `pack_root` argument). The verb exits `2` on error and `0`
+on success.
+
+The MCP `ls` tool emits a byte-identical successful body. The MCP
+surface does NOT accept a `pack_root` parameter (workspace-confinement
+invariant); the walk always starts from the server's pinned workspace.
 
 ## `sync` and `teardown`
 
@@ -151,7 +214,10 @@ Wired. Emits a `DoctorReport`:
   "worst_severity": "ok",
   "findings": [
     {"check": "manifest-schema", "severity": "ok",
-     "pack": null, "detail": "", "auto_fixable": false}
+     "pack": null, "detail": "", "auto_fixable": false, "synthetic": false},
+    {"check": "synthetic-pack", "severity": "ok",
+     "pack": "algo-leet", "detail": "OK (synthetic)",
+     "auto_fixable": false, "synthetic": true}
   ]
 }
 ```
@@ -164,6 +230,13 @@ Fields:
 - `findings[]` — array of per-check finding objects.
 
 `severity` values: `ok`, `warning`, `error`.
+
+v1.1.1+ adds `synthetic: true` to findings for synthetic plain-git
+children (skipped schema validation; gitignore + drift checks still
+run). The flag mirrors the `synthetic` marker on the matching `LsTree`
+node and on the lockfile entry, so consumers correlating doctor
+findings with `grex ls` output see the same plain-git provenance on
+both surfaces.
 
 The MCP `doctor` tool emits a byte-identical body. The MCP surface does
 NOT accept `--fix` (read-only inspection only) or `--workspace`

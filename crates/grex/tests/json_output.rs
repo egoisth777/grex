@@ -71,10 +71,9 @@ fn rm_json_emits_unimplemented() {
     assert_unimplemented("rm", &["some-pack"]);
 }
 
-#[test]
-fn ls_json_emits_unimplemented() {
-    assert_unimplemented("ls", &[]);
-}
+// `ls` no longer emits the unimplemented stub: as of feat-v1.1.1 it
+// performs a read-only tree walk and surfaces structured output. See
+// `crates/grex/tests/ls_basic.rs` for dedicated coverage.
 
 #[test]
 fn status_json_emits_unimplemented() {

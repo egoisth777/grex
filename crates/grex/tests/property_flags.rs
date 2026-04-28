@@ -89,10 +89,18 @@ proptest! {
 /// in `crates/grex/tests/import_cli.rs`.
 /// `sync` is excluded as of feat-m8 — it now requires `<pack_root>` to
 /// avoid the stub fall-through; covered end-to-end in dedicated sync tests.
+/// `ls` is excluded as of feat-v1.1.1 — it now performs a real
+/// read-only tree walk and exits 2 when no manifest is reachable from
+/// the cwd; coverage lives in `crates/grex/tests/ls_basic.rs`.
 #[test]
 fn each_verb_accepts_required_args() {
     for verb in VERBS {
-        if *verb == "serve" || *verb == "doctor" || *verb == "import" || *verb == "sync" {
+        if *verb == "serve"
+            || *verb == "doctor"
+            || *verb == "import"
+            || *verb == "sync"
+            || *verb == "ls"
+        {
             continue;
         }
         let mut cmd = grex();

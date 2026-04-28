@@ -17,10 +17,11 @@
 //! See `openspec/changes/feat-m7-4-import-doctor-license/spec.md`
 //! §"Sub-scope 2 — `grex doctor`".
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::fs::gitignore::{read_managed_block, upsert_managed_block, GitignoreError};
+use crate::lockfile::{read_lockfile, LockEntry, LockfileError};
 use crate::manifest::{self, Event, ManifestError, PackState};
 use crate::plugin::pack_type::default_managed_gitignore_patterns;
 
@@ -38,6 +39,11 @@ pub enum CheckKind {
     OnDiskDrift,
     /// Opt-in config lint (`--lint-config` only).
     ConfigLint,
+    /// Per-pack synthetic-status row — emitted only for v1.1.1
+    /// plain-git children whose lockfile entry has `synthetic: true`.
+    /// Always reports `OK (synthetic)`; downstream JSON consumers see
+    /// the `synthetic: true` flag on the finding.
+    SyntheticPack,
 }
 
 impl CheckKind {
@@ -48,6 +54,7 @@ impl CheckKind {
             CheckKind::GitignoreSync => "gitignore-sync",
             CheckKind::OnDiskDrift => "on-disk-drift",
             CheckKind::ConfigLint => "config-lint",
+            CheckKind::SyntheticPack => "synthetic-pack",
         }
     }
 }
@@ -65,6 +72,13 @@ pub enum Severity {
 }
 
 /// One observation from a single check.
+///
+/// Marked `#[non_exhaustive]` so future audit fields (per-finding
+/// timestamp, plugin id, remediation hint) can land without breaking
+/// out-of-crate consumers that destructure or struct-literal-construct
+/// findings. Within `grex-core` the existing struct-literal sites
+/// continue to work unchanged.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     /// Which check produced the finding.
@@ -79,6 +93,12 @@ pub struct Finding {
     /// `CheckKind::GitignoreSync` ever sets this to true; the flag gates
     /// the safety contract of `apply_fixes`.
     pub auto_fixable: bool,
+    /// `true` when this finding describes a v1.1.1 synthetic plain-git
+    /// pack (no `.grex/pack.yaml` on disk; manifest synthesised
+    /// in-memory by the walker). Surfaced in `--json` output so
+    /// downstream consumers can branch on the structured signal rather
+    /// than parsing the human-readable detail string.
+    pub synthetic: bool,
 }
 
 impl Finding {
@@ -90,6 +110,7 @@ impl Finding {
             pack: None,
             detail: String::new(),
             auto_fixable: false,
+            synthetic: false,
         }
     }
 }
@@ -183,6 +204,19 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
     // the dependent checks so we don't double-report garbage.
     let packs = events_opt.map(manifest::fold);
 
+    // v1.1.1 — load the lockfile so per-pack checks can branch on
+    // `LockEntry::synthetic`. A missing lockfile is tolerated silently
+    // (workspaces that have never synced are a normal state); a
+    // corrupt / unreadable lockfile produces an empty map AND a
+    // warning finding so operators see the root cause instead of the
+    // downstream "unregistered directory on disk" warnings the on-disk
+    // drift check would otherwise emit (those warnings rely on the
+    // synthetic flag that was just swallowed).
+    let (lock, lock_finding) = read_synthetic_lock(workspace);
+    if let Some(f) = lock_finding {
+        report.findings.push(f);
+    }
+
     let gi_result = match &packs {
         Some(p) => check_gitignore_sync(workspace, p),
         None => CheckResult::single(Finding {
@@ -191,21 +225,30 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
             pack: None,
             detail: "skipped: manifest unreadable".to_string(),
             auto_fixable: false,
+            synthetic: false,
         }),
     };
     report.findings.extend(gi_result.findings.clone());
 
     let drift_result = match &packs {
-        Some(p) => check_on_disk_drift(workspace, p),
+        Some(p) => check_on_disk_drift(workspace, p, &lock),
         None => CheckResult::single(Finding {
             check: CheckKind::OnDiskDrift,
             severity: Severity::Warning,
             pack: None,
             detail: "skipped: manifest unreadable".to_string(),
             auto_fixable: false,
+            synthetic: false,
         }),
     };
     report.findings.extend(drift_result.findings);
+
+    // v1.1.1 — synthetic plain-git children only ever land in the
+    // lockfile (no `Event::Add` is logged for them). Iterate the
+    // lockfile, not the manifest-derived `packs` map, so the canonical
+    // sync-only flow surfaces an `OK (synthetic)` row per child.
+    let synth = check_synthetic_packs(&lock);
+    report.findings.extend(synth.findings);
 
     if opts.lint_config {
         let cfg_result = check_config_lint(workspace);
@@ -274,6 +317,7 @@ pub fn check_manifest_schema(manifest_path: &Path) -> (CheckResult, Option<Vec<E
                     pack: None,
                     detail,
                     auto_fixable: false,
+                    synthetic: false,
                 }),
                 None,
             )
@@ -287,6 +331,7 @@ pub fn check_manifest_schema(manifest_path: &Path) -> (CheckResult, Option<Vec<E
                     pack: None,
                     detail,
                     auto_fixable: false,
+                    synthetic: false,
                 }),
                 None,
             )
@@ -365,6 +410,7 @@ pub fn check_gitignore_sync(
                             actual.len()
                         ),
                         auto_fixable: true,
+                        synthetic: false,
                     });
                 }
             }
@@ -378,6 +424,7 @@ pub fn check_gitignore_sync(
                     pack: Some(id.clone()),
                     detail: format!("cannot read managed block: {e}"),
                     auto_fixable: matches!(e, GitignoreError::UnclosedBlock { .. }),
+                    synthetic: false,
                 });
             }
         }
@@ -393,15 +440,21 @@ pub fn check_gitignore_sync(
 /// registered in the manifest. Both are reported as
 /// [`CheckKind::OnDiskDrift`]; missing dirs are `Error`, unregistered
 /// dirs are `Warning`.
+///
+/// `lock` is consulted to suppress unregistered-drift warnings for
+/// directories whose lockfile entry has `synthetic: true` — those are
+/// v1.1.1 plain-git children that never get an `Event::Add`, so the
+/// lockfile is the authoritative registry for them.
 pub fn check_on_disk_drift(
     workspace: &Path,
     packs: &std::collections::HashMap<String, PackState>,
+    lock: &HashMap<String, LockEntry>,
 ) -> CheckResult {
     let mut findings = Vec::new();
     let registered_paths: BTreeSet<PathBuf> =
         packs.values().map(|p| PathBuf::from(&p.path)).collect();
     collect_manifest_to_disk_findings(workspace, packs, &mut findings);
-    collect_disk_to_manifest_findings(workspace, &registered_paths, &mut findings);
+    collect_disk_to_manifest_findings(workspace, &registered_paths, lock, &mut findings);
     if findings.is_empty() {
         findings.push(Finding::ok(CheckKind::OnDiskDrift));
     }
@@ -436,9 +489,14 @@ fn collect_manifest_to_disk_findings(
 /// Disk → manifest half of [`check_on_disk_drift`]: only direct
 /// children of `workspace` are walked (no pack interiors). Dotfiles
 /// and housekeeping dirs are skipped.
+///
+/// Directories matching a synthetic lockfile entry (`lock[name].synthetic
+/// == true`) are also skipped — v1.1.1 plain-git children never appear
+/// in `Event::Add`, so the lockfile is authoritative for them.
 fn collect_disk_to_manifest_findings(
     workspace: &Path,
     registered_paths: &BTreeSet<PathBuf>,
+    lock: &HashMap<String, LockEntry>,
     findings: &mut Vec<Finding>,
 ) {
     let Ok(entries) = std::fs::read_dir(workspace) else { return };
@@ -452,15 +510,20 @@ fn collect_disk_to_manifest_findings(
         if name_str.starts_with('.') || is_housekeeping_dir(name_str) {
             continue;
         }
-        if !registered_paths.contains(&PathBuf::from(name_str)) {
-            findings.push(Finding {
-                check: CheckKind::OnDiskDrift,
-                severity: Severity::Warning,
-                pack: None,
-                detail: format!("unregistered directory on disk: {name_str}"),
-                auto_fixable: false,
-            });
+        if registered_paths.contains(&PathBuf::from(name_str)) {
+            continue;
         }
+        if lock.get(name_str).is_some_and(|e| e.synthetic) {
+            continue;
+        }
+        findings.push(Finding {
+            check: CheckKind::OnDiskDrift,
+            severity: Severity::Warning,
+            pack: None,
+            detail: format!("unregistered directory on disk: {name_str}"),
+            auto_fixable: false,
+            synthetic: false,
+        });
     }
 }
 
@@ -472,6 +535,7 @@ fn drift_error(id: &str, detail: String) -> Finding {
         pack: Some(id.to_string()),
         detail,
         auto_fixable: false,
+        synthetic: false,
     }
 }
 
@@ -535,6 +599,82 @@ fn check_omne_cfg_markdown(workspace: &Path, findings: &mut Vec<Finding>) {
     }
 }
 
+/// Read the workspace's lockfile and return entries keyed by pack id,
+/// alongside an optional finding when the lockfile exists but cannot
+/// be parsed.
+///
+/// Behaviour:
+/// * Missing lockfile → `(empty map, None)`. A workspace that has
+///   never synced is a normal state, not a finding.
+/// * Corruption (`LockfileError::Corruption`) or I/O failure
+///   (`LockfileError::Io`) → `(empty map, Some(Warning))`. The
+///   downstream synthetic / on-disk-drift checks still run against an
+///   empty map, but the operator now sees the root cause instead of
+///   being misled by spurious "unregistered directory on disk"
+///   warnings (the on-disk-drift skip relies on the synthetic flag in
+///   the lockfile entries that just got swallowed).
+fn read_synthetic_lock(workspace: &Path) -> (HashMap<String, LockEntry>, Option<Finding>) {
+    let lock_path = workspace.join(".grex").join("grex.lock.jsonl");
+    match read_lockfile(&lock_path) {
+        Ok(map) => (map, None),
+        Err(err @ LockfileError::Corruption { .. }) | Err(err @ LockfileError::Io(_)) => {
+            let finding = Finding {
+                check: CheckKind::ManifestSchema,
+                severity: Severity::Warning,
+                pack: None,
+                detail: format!("lockfile corruption: {err}"),
+                auto_fixable: false,
+                synthetic: false,
+            };
+            (HashMap::new(), Some(finding))
+        }
+        // `read_lockfile` already maps NotFound → Ok(empty), and
+        // `Serialize` is write-side only, so neither path is reachable
+        // here. Tolerate any future variant by treating it the same as
+        // a corruption warning rather than panicking.
+        Err(err) => {
+            let finding = Finding {
+                check: CheckKind::ManifestSchema,
+                severity: Severity::Warning,
+                pack: None,
+                detail: format!("lockfile corruption: {err}"),
+                auto_fixable: false,
+                synthetic: false,
+            };
+            (HashMap::new(), Some(finding))
+        }
+    }
+}
+
+/// v1.1.1 — emit one `OK (synthetic)` finding per pack whose lockfile
+/// entry has `synthetic: true`.
+///
+/// The lockfile is the canonical synthetic registry: plain-git children
+/// are walked + cloned during `grex sync` and only ever recorded in
+/// `grex.lock.jsonl` (no `Event::Add` fires for them, so they never
+/// appear in the manifest-fold `packs` map). Iterating the lockfile
+/// here means the canonical sync-only flow surfaces the row, and
+/// downstream JSON consumers see the structured `synthetic: true`
+/// signal regardless of whether the pack also has an `Event::Add`.
+pub fn check_synthetic_packs(lock: &HashMap<String, LockEntry>) -> CheckResult {
+    let mut findings = Vec::new();
+    let ordered: BTreeMap<_, _> = lock.iter().collect();
+    for (id, entry) in ordered {
+        if !entry.synthetic {
+            continue;
+        }
+        findings.push(Finding {
+            check: CheckKind::SyntheticPack,
+            severity: Severity::Ok,
+            pack: Some(id.clone()),
+            detail: "OK (synthetic)".to_string(),
+            auto_fixable: false,
+            synthetic: true,
+        });
+    }
+    CheckResult { findings }
+}
+
 /// Shorthand — build a workspace-scoped config-lint warning finding.
 fn config_lint_warning(detail: String) -> Finding {
     Finding {
@@ -543,6 +683,7 @@ fn config_lint_warning(detail: String) -> Finding {
         pack: None,
         detail,
         auto_fixable: false,
+        synthetic: false,
     }
 }
 
@@ -771,7 +912,7 @@ mod tests {
         fs::remove_dir_all(d.path().join("a")).unwrap();
         let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
         let packs = manifest::fold(events);
-        let r = check_on_disk_drift(d.path(), &packs);
+        let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Error);
     }
 
@@ -782,7 +923,7 @@ mod tests {
         fs::create_dir_all(d.path().join("stranger")).unwrap();
         let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
         let packs = manifest::fold(events);
-        let r = check_on_disk_drift(d.path(), &packs);
+        let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Warning);
     }
 
@@ -792,7 +933,7 @@ mod tests {
         seed_pack(d.path(), "a");
         let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
         let packs = manifest::fold(events);
-        let r = check_on_disk_drift(d.path(), &packs);
+        let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Ok);
     }
 
@@ -833,6 +974,7 @@ mod tests {
             pack: None,
             detail: String::new(),
             auto_fixable: true,
+            synthetic: false,
         });
         assert_eq!(r.exit_code(), 1);
     }
@@ -846,6 +988,7 @@ mod tests {
             pack: None,
             detail: String::new(),
             auto_fixable: false,
+            synthetic: false,
         });
         assert_eq!(r.exit_code(), 2);
     }
@@ -859,6 +1002,7 @@ mod tests {
             pack: None,
             detail: String::new(),
             auto_fixable: true,
+            synthetic: false,
         });
         r.findings.push(Finding {
             check: CheckKind::OnDiskDrift,
@@ -866,6 +1010,7 @@ mod tests {
             pack: None,
             detail: String::new(),
             auto_fixable: false,
+            synthetic: false,
         });
         assert_eq!(r.exit_code(), 2);
     }
@@ -1008,6 +1153,121 @@ mod tests {
         assert!(report.findings.iter().any(|f| f.check == CheckKind::ConfigLint));
     }
 
+    // --- v1.1.1: synthetic plain-git children ---
+
+    /// A workspace whose lockfile carries a `synthetic: true` entry for
+    /// pack `a` reports `OK (synthetic)` for it, exits 0, and never
+    /// emits a missing-manifest finding even though no `.grex/pack.yaml`
+    /// exists on disk for that pack.
+    #[test]
+    fn run_doctor_synthetic_pack_reports_ok_synthetic_and_exits_zero() {
+        use crate::lockfile::{write_lockfile, LockEntry};
+        use std::collections::HashMap;
+
+        let d = tempdir().unwrap();
+        seed_pack(d.path(), "a");
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
+
+        // Hand-write a lockfile with `synthetic: true` for pack `a`.
+        let lock_dir = d.path().join(".grex");
+        fs::create_dir_all(&lock_dir).unwrap();
+        let lock_path = lock_dir.join("grex.lock.jsonl");
+        let mut lock = HashMap::new();
+        lock.insert(
+            "a".to_string(),
+            LockEntry {
+                id: "a".into(),
+                sha: "deadbeef".into(),
+                branch: "main".into(),
+                installed_at: ts(),
+                actions_hash: String::new(),
+                schema_version: "1".into(),
+                synthetic: true,
+            },
+        );
+        write_lockfile(&lock_path, &lock).unwrap();
+
+        // Note: we deliberately do NOT write `<pack>/.grex/pack.yaml`,
+        // matching the v1.1.1 plain-git-child case.
+        let report = run_doctor(d.path(), &DoctorOpts::default()).unwrap();
+        assert_eq!(report.exit_code(), 0, "synthetic-only workspace must exit 0");
+        let synth: Vec<_> =
+            report.findings.iter().filter(|f| f.check == CheckKind::SyntheticPack).collect();
+        assert_eq!(synth.len(), 1, "exactly one synthetic-pack finding");
+        assert_eq!(synth[0].pack.as_deref(), Some("a"));
+        assert_eq!(synth[0].detail, "OK (synthetic)");
+        assert!(synth[0].synthetic, "Finding.synthetic must be true");
+        assert_eq!(synth[0].severity, Severity::Ok);
+
+        // Sanity: nothing in the report claims pack `a` is missing or
+        // schema-invalid.
+        for f in &report.findings {
+            assert!(f.severity != Severity::Error, "no error-severity finding allowed; got: {f:?}",);
+        }
+    }
+
+    /// A workspace whose `.grex/grex.lock.jsonl` is malformed (one line
+    /// of invalid JSON) must produce a `Severity::Warning` finding
+    /// mentioning lockfile corruption. The doctor must still complete
+    /// — lockfile errors are findings, not orchestration aborts —
+    /// because operators rely on `grex doctor` to surface root causes,
+    /// not crash on them.
+    #[test]
+    fn run_doctor_corrupt_lockfile_emits_warning_finding() {
+        let d = tempdir().unwrap();
+        // Seed a clean schema-and-gitignore baseline so the corruption
+        // finding stands out against an otherwise-OK report.
+        seed_pack(d.path(), "a");
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
+
+        // Hand-write a malformed lockfile: one line of invalid JSON.
+        let lock_dir = d.path().join(".grex");
+        fs::create_dir_all(&lock_dir).unwrap();
+        fs::write(lock_dir.join("grex.lock.jsonl"), b"not-json-at-all\n").unwrap();
+
+        let report = run_doctor(d.path(), &DoctorOpts::default())
+            .expect("doctor must complete despite lockfile corruption");
+
+        // The lockfile corruption is reported as a ManifestSchema
+        // warning whose detail mentions "lockfile corruption".
+        let lock_warns: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| {
+                f.check == CheckKind::ManifestSchema
+                    && f.severity == Severity::Warning
+                    && f.detail.contains("lockfile corruption")
+            })
+            .collect();
+        assert_eq!(
+            lock_warns.len(),
+            1,
+            "exactly one lockfile-corruption warning expected; got: {:?}",
+            report.findings,
+        );
+
+        // Doctor still completed: report has the usual gitignore /
+        // drift / synthetic rows even though the lockfile was unusable.
+        assert!(
+            report.findings.iter().any(|f| f.check == CheckKind::GitignoreSync),
+            "gitignore-sync check must still run",
+        );
+        assert!(
+            report.findings.iter().any(|f| f.check == CheckKind::OnDiskDrift),
+            "on-disk-drift check must still run",
+        );
+    }
+
     // --- Property: exit code roll-up invariant ---
 
     proptest::proptest! {
@@ -1030,6 +1290,7 @@ mod tests {
                     pack: None,
                     detail: String::new(),
                     auto_fixable: false,
+                    synthetic: false,
                 });
             }
             let worst = severities.iter().max().copied().unwrap_or(0);
