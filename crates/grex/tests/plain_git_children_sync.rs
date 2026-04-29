@@ -192,9 +192,9 @@ fn plain_git_children_sync_walks_to_completion() {
     // into the persisted event log, the choice of `pack_type` for
     // such an event MUST stay within the documented v1 taxonomy
     // (`scripted` — never invented variants like `"synthetic_scripted"`).
-    let manifest_path = layout.root.join("grex.jsonl");
+    let manifest_path = layout.root.join(".grex").join("events.jsonl");
     if manifest_path.is_file() {
-        let body = fs::read_to_string(&manifest_path).expect("read grex.jsonl");
+        let body = fs::read_to_string(&manifest_path).expect("read .grex/events.jsonl");
         let mut adds_for_synthetic = 0_usize;
         for line in body.lines() {
             if line.is_empty() {

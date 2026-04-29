@@ -339,7 +339,7 @@ mod tests {
     fn import_parses_flat_repos_json_three_entries() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[
@@ -362,7 +362,7 @@ mod tests {
     fn import_dry_run_does_not_write_manifest() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(&input, r#"[{"url": "https://x/y.git", "path": "foo"}]"#);
         let _ = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: true }).unwrap();
         assert!(!manifest.exists());
@@ -372,7 +372,7 @@ mod tests {
     fn import_real_run_appends_one_row_per_entry() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[
@@ -439,7 +439,7 @@ mod tests {
     fn import_skips_existing_manifest_row() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         manifest::append_event(
             &manifest,
             &Event::Add {
@@ -472,7 +472,7 @@ mod tests {
     fn import_is_idempotent_on_second_run() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(&input, r#"[{"url": "https://x/y.git", "path": "foo"}]"#);
         let p1 = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
         assert_eq!(p1.imported.len(), 1);
@@ -487,7 +487,7 @@ mod tests {
     fn import_detects_duplicate_paths_within_input() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[
@@ -505,7 +505,7 @@ mod tests {
     fn import_empty_array_produces_empty_plan() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(&input, "[]");
         let plan =
             import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn import_missing_input_surfaces_io_error() {
         let dir = tempdir().unwrap();
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         let err = import_from_repos_json(
             &dir.path().join("no-such.json"),
             &manifest,
@@ -531,7 +531,7 @@ mod tests {
     fn import_malformed_surfaces_parse_error() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(&input, "not json at all");
         let err = import_from_repos_json(&input, &manifest, ImportOpts::default()).unwrap_err();
         assert!(matches!(err, ImportError::Parse { .. }));
@@ -541,7 +541,7 @@ mod tests {
     fn import_rejects_path_with_separator_into_failed() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[
@@ -572,7 +572,7 @@ mod tests {
     fn import_rejects_dot_dotdot_uppercase_empty() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[
@@ -592,7 +592,7 @@ mod tests {
     fn property_every_imported_entry_matches_classify() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         write_json(
             &input,
             r#"[

@@ -142,7 +142,7 @@ mod tests {
         let state = crate::ServerState::new(
             grex_core::Scheduler::new(1),
             grex_core::Registry::default(),
-            dir.path().join("grex.jsonl"),
+            dir.path().join(".grex").join("events.jsonl"),
             dir.path().to_path_buf(),
         );
         let r = handle(&state, Parameters(DoctorParams::default())).await.unwrap();
@@ -159,7 +159,8 @@ mod tests {
     async fn doctor_corrupt_manifest_surfaces_error_severity() {
         let dir = tempdir().unwrap();
         // Line 1 garbage + a valid line 2 → M3's reader reports Corruption.
-        let m = dir.path().join("grex.jsonl");
+        let m = dir.path().join(".grex").join("events.jsonl");
+        std::fs::create_dir_all(m.parent().unwrap()).unwrap();
         std::fs::write(
             &m,
             "not-json\n{\"schema_version\":\"1\",\"kind\":\"add\",\"ts\":\"2026-04-22T10:00:00Z\",\"id\":\"x\",\"url\":\"u\",\"path\":\"x\",\"pack_type\":\"declarative\"}\n",
@@ -168,7 +169,7 @@ mod tests {
         let state = crate::ServerState::new(
             grex_core::Scheduler::new(1),
             grex_core::Registry::default(),
-            dir.path().join("grex.jsonl"),
+            dir.path().join(".grex").join("events.jsonl"),
             dir.path().to_path_buf(),
         );
         let r = handle(&state, Parameters(DoctorParams::default())).await.unwrap();

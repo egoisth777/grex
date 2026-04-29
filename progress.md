@@ -3,6 +3,27 @@
 ## Where we are
 **v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
 
+## Endpoint (2026-04-29, v1.1.2 design intent — branch cut)
+- **Active branch:** `feat/v1.1.2-nested-children` cut off `main` at SHA `d45a061` (`docs(progress): v1.1.1 SHIPPED endpoint — all 4 crates live + manual verify`).
+- **Phase:** design-intent capture (pre-openspec, pre-impl). No code/manifest/openspec changes yet — this section locks the v1.1.2 contract before triplet drafting.
+- **What v1.1.2 changes (option c — hybrid declarative + synthesis at depth):**
+  - **Disk layout:** flat-sibling → nested. Walker resolves `dest = workspace.join(<nested-path>)` instead of `workspace.join(<bare-name>)`. Tree mirrors the manifest graph (e.g. `tools/foo`, `courses/cpp/cpp-grammar`).
+  - **Validator relaxation:** `crates/grex-core/src/pack/validate/child_path.rs:152` no longer requires bare-name. Nested relative paths allowed; security guards stay (`..`, absolute paths, symlink-cross-boundary still rejected).
+  - **Walker resolver:** `crates/grex-core/src/tree/walker.rs:217` switches from bare-name join to nested-path join. Manifest-graph traversal otherwise unchanged.
+  - **Synthesis at depth:** v1.1.1 in-memory `scripted`-no-hooks `PackManifest` synthesis (trigger: `.git/` present, no `.grex/pack.yaml`; `synthetic: true` lockfile flag) fires unchanged at arbitrary depth. No new trigger, no new flag.
+  - **Lockfile keying:** id-only key collides when `tools/foo` and `vendor/foo` both clone repos named `foo`. Must move to path-keyed or `parent_id+name` composite. Schema bump implied; migration path TBD in design phase.
+  - **Doctor walk scope:** current 1-level on-disk-drift walk under workspace root insufficient for nested layout. Two options to resolve in design: strict (only check declared paths) vs loose (walk to declared depths, warn on undeclared `.git/` dirs). No auto-discovery either way.
+  - **`grex ls`:** already renders manifest graph recursively; under v1.1.2 the rendered tree matches physical disk layout 1:1 (no rendering change required, semantics shift from logical-only to logical=physical).
+- **What v1.1.2 does NOT change:**
+  - Walker remains purely manifest-graph-driven; never reads filesystem to discover children. Undeclared dirs stay invisible to grex.
+  - No auto-discovery (option a, explicitly rejected).
+  - Synthesis trigger and `synthetic: true` flag semantics unchanged — only the resolution depth changes.
+  - Security guards on `child_path.rs` still active for `..`, absolute paths, symlink-cross-boundary.
+  - `pack.yaml` `children:` field shape (`{url, path?, ref?}`) unchanged at the schema level — only the validator's `path` regex relaxes.
+- **SemVer decision:** **MINOR bump 1.1.1 → 1.2.0**, NOT PATCH. Additive feature (nested paths now accepted), but breaks the bare-name-only contract for the `path:` field — any external tool relying on validator rejection of nested paths will see behavior change. User override does not apply here (v1.1.1 was a user-elected PATCH for an additive feature; v1.1.2 has a real semantic break in the validator surface).
+- **Parked:** YAML→TOML manifest format migration deferred to post-v1.1.2 (separate work, no overlap with nested-children scope).
+- **Next action:** draft openspec triplet at `openspec/changes/feat-v1.1.2-nested-children/{proposal,design,tasks}.md` covering: validator relaxation regex + test matrix, walker resolver delta, lockfile keying scheme decision (path-key vs composite + migration), doctor walk-scope decision (strict vs loose), e2e test layout (multi-level nested + mixed declarative/synthetic). Then Stage 1a–1k impl plan mirroring v1.1.1 cadence.
+
 ## Endpoint (2026-04-28, v1.1.1 SHIPPED)
 - **Squash-merge:** PR #56 squash-merged to `main`, SHA `3d1b963`. Branch `feat/v1.1.1-impl` deleted.
 - **Tag:** `v1.1.1` annotated on `3d1b963`, pushed to origin. `release.yml` (cargo-dist) fired automatically; cross-platform builds in progress at session-end.

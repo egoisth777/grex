@@ -16,6 +16,7 @@
 
 use crate::cli::args::{GlobalFlags, ServeArgs};
 use anyhow::{Context, Result};
+use grex_core::manifest::{ensure_event_log_migrated, find_workspace_root};
 use grex_core::{Registry, Scheduler};
 use grex_mcp::{GrexMcpServer, ServerState};
 use tokio_util::sync::CancellationToken;
@@ -27,11 +28,17 @@ use tokio_util::sync::CancellationToken;
 pub fn run(args: ServeArgs, _global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let workspace = match args.workspace {
         Some(p) => p,
-        None => std::env::current_dir().context("resolve cwd for --workspace default")?,
+        None => {
+            let cwd = std::env::current_dir().context("resolve cwd for --workspace default")?;
+            // Walk up from cwd to find a workspace marker — fixes the
+            // v1.x cwd-relative bug for `grex serve` invoked from a
+            // subdir of the workspace.
+            find_workspace_root(&cwd)
+        }
     };
     let manifest_path = match args.manifest {
         Some(p) => p,
-        None => workspace.join("grex.jsonl"),
+        None => ensure_event_log_migrated(&workspace).context("migrate v1.x event log")?,
     };
     let parallel = resolve_parallel(args.parallel);
 

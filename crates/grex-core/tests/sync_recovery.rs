@@ -101,7 +101,7 @@ fn sync_pre_action_event_written_before_execute() {
     let report = sync_run(&pack_root, &opts).expect("sync ok");
     assert!(report.halted.is_none(), "no halt on success path");
 
-    let log = pack_root.join(".grex").join("grex.jsonl");
+    let log = pack_root.join(".grex").join("events.jsonl");
     let events = read_all(&log).expect("log parses");
     let started = events
         .iter()
@@ -131,7 +131,7 @@ fn sync_halted_event_written_on_error() {
     let report = sync_run(&pack_root, &opts).expect("sync returns report even on halt");
     assert!(report.halted.is_some(), "must halt");
 
-    let log = pack_root.join(".grex").join("grex.jsonl");
+    let log = pack_root.join(".grex").join("events.jsonl");
     let events = read_all(&log).expect("log parses");
     assert!(
         events.iter().any(
@@ -182,7 +182,7 @@ fn recovery_scan_finds_orphan_backups() {
     let tombstone = pack_root.join("old-config.grex.bak.1700000000");
     fs::write(&tombstone, b"tombstone").unwrap();
 
-    let log = pack_root.join(".grex").join("grex.jsonl");
+    let log = pack_root.join(".grex").join("events.jsonl");
     let report = scan_recovery(&pack_root, &log).expect("scan ok");
     assert!(report.orphan_backups.iter().any(|p| p == &orphan));
     assert!(report.orphan_tombstones.iter().any(|p| p == &tombstone));
@@ -195,7 +195,7 @@ fn recovery_scan_finds_orphan_backups() {
 fn recovery_scan_finds_dangling_starts() {
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().to_path_buf();
-    let log = pack_root.join(".grex").join("grex.jsonl");
+    let log = pack_root.join(".grex").join("events.jsonl");
     fs::create_dir_all(log.parent().unwrap()).unwrap();
 
     // One "clean" pair + one "dangling" lone ActionStarted.
@@ -288,7 +288,7 @@ fn noop_pack_writes_no_action_events() {
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     sync_run(&pack_root, &opts).expect("sync ok");
 
-    let log = pack_root.join(".grex").join("grex.jsonl");
+    let log = pack_root.join(".grex").join("events.jsonl");
     let events = if log.exists() { read_all(&log).unwrap() } else { Vec::new() };
     assert!(!events.iter().any(|e| matches!(e, Event::ActionStarted { .. })));
     assert!(!events.iter().any(|e| matches!(e, Event::ActionCompleted { .. })));

@@ -49,7 +49,7 @@ struct Paths {
 }
 
 fn paths(dir: &Path) -> Paths {
-    Paths { manifest: dir.join("grex.jsonl"), lock: dir.join(".grex.lock") }
+    Paths { manifest: dir.join(".grex/events.jsonl"), lock: dir.join(".grex.lock") }
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +441,10 @@ fn windows_advisory_vs_mandatory_lock() {
     // docs should be updated.
     let dir = tempdir().unwrap();
     let Paths { manifest, lock } = paths(dir.path());
+    // Manifest now lives at `<ws>/.grex/events.jsonl`; the bypass-write
+    // below opens the manifest directly without going through
+    // `append_event`, so create the parent dir up front.
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
 
     let mp = manifest.clone();
     let lp = lock.clone();

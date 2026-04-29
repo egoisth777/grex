@@ -7,7 +7,7 @@ use tempfile::tempdir;
 #[test]
 fn all_fields_verified_after_roundtrip() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     let base = Utc.with_ymd_and_hms(2026, 4, 19, 10, 0, 0).unwrap();
 
     // Build the full set of events we want to round-trip.
@@ -60,7 +60,7 @@ fn all_fields_verified_after_roundtrip() {
 #[test]
 fn all_event_variants_roundtrip() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     let ts = Utc.with_ymd_and_hms(2026, 4, 19, 10, 0, 0).unwrap();
 
     let events = vec![
@@ -100,7 +100,7 @@ fn all_event_variants_roundtrip() {
 #[test]
 fn timestamp_precision_preserved() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     // Sub-second precision: RFC3339 serialization must not round this off.
     let ts = Utc

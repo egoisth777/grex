@@ -63,7 +63,7 @@ mod tests {
         crate::ServerState::new(
             grex_core::Scheduler::new(1),
             grex_core::Registry::default(),
-            root.join("grex.jsonl"),
+            root.join(".grex").join("events.jsonl"),
             root.to_path_buf(),
         )
     }
@@ -80,6 +80,6 @@ mod tests {
         let p = AddParams { url: "https://x/y.git".into(), path: None };
         let r = handle(&s, Parameters(p)).await.unwrap();
         assert_ne!(r.is_error, Some(true));
-        assert!(dir.path().join("grex.jsonl").exists());
+        assert!(dir.path().join(".grex").join("events.jsonl").exists());
     }
 }

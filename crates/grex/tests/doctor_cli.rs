@@ -49,10 +49,11 @@ fn fs_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     out
 }
 
-/// Minimal valid grex.jsonl with one declarative pack `pack_id` rooted
-/// at `<workspace>/<pack_id>`.
+/// Minimal valid `.grex/events.jsonl` with one declarative pack
+/// `pack_id` rooted at `<workspace>/<pack_id>`.
 fn seed_manifest(workspace: &Path, pack_id: &str) {
-    let manifest = workspace.join("grex.jsonl");
+    let manifest = workspace.join(".grex/events.jsonl");
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     let line = format!(
         r#"{{"op":"add","ts":"2026-04-22T10:00:00Z","id":"{id}","url":"https://example/{id}","path":"{id}","type":"declarative","schema_version":"1"}}
 "#,
@@ -129,8 +130,8 @@ fn doctor_fix_does_not_touch_missing_pack_dir() {
 
     // SAFETY CRITICAL: --fix must NOT write anywhere in the workspace
     // on drift error — a recursive path+bytes snapshot proves no stray
-    // write landed in `grex.jsonl`, a `.gitignore`, or the missing
-    // pack dir.
+    // write landed in `.grex/events.jsonl`, a `.gitignore`, or the
+    // missing pack dir.
     let before = fs_snapshot(dir.path());
 
     bin().current_dir(dir.path()).args(["doctor", "--fix"]).assert().code(2);
@@ -144,7 +145,8 @@ fn doctor_fix_does_not_touch_missing_pack_dir() {
 fn doctor_fix_does_not_touch_manifest_on_corruption() {
     let dir = tempfile::tempdir().unwrap();
     // Corrupt line 1 (not last — line 2 is valid).
-    let manifest = dir.path().join("grex.jsonl");
+    let manifest = dir.path().join(".grex/events.jsonl");
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     fs::write(
         &manifest,
         "garbage-line\n{\"op\":\"add\",\"ts\":\"2026-04-22T10:00:00Z\",\"id\":\"x\",\"url\":\"u\",\"path\":\"x\",\"type\":\"declarative\",\"schema_version\":\"1\"}\n",

@@ -79,8 +79,18 @@ pub(crate) async fn handle(
         Err(msg) => return Ok(packop_error(&msg)),
     };
 
-    // Target manifest always lives at `<workspace>/grex.jsonl`.
-    let manifest_path = ws_canon.join("grex.jsonl");
+    // Target event log always lives at `<workspace>/.grex/events.jsonl`
+    // (v2 canonical). v1.x `<workspace>/grex.jsonl` is auto-migrated on
+    // first access by `ensure_event_log_migrated`.
+    let manifest_path = match grex_core::manifest::ensure_event_log_migrated(&ws_canon) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(packop_error(&format!(
+                "event-log migration failed for workspace `{}`: {e}",
+                ws_canon.display()
+            )));
+        }
+    };
 
     let opts = ImportOpts { dry_run: p.dry_run };
 
@@ -180,7 +190,7 @@ mod tests {
         crate::ServerState::new(
             grex_core::Scheduler::new(1),
             grex_core::Registry::default(),
-            root.join("grex.jsonl"),
+            root.join(".grex").join("events.jsonl"),
             root.to_path_buf(),
         )
     }

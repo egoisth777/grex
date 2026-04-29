@@ -162,7 +162,7 @@ async fn stress_same_pack_serialises() {
         // deadlock or exceed the budget.
         grex_core::Scheduler::new(PARALLEL),
         grex_core::Registry::default(),
-        workspace.path().join("grex.jsonl"),
+        workspace.path().join(".grex").join("events.jsonl"),
         workspace.path().to_path_buf(),
     );
     let server = GrexMcpServer::new(state);
@@ -254,7 +254,7 @@ async fn run_saturation_iteration() -> usize {
     let state = ServerState::new(
         grex_core::Scheduler::new(PARALLEL),
         grex_core::Registry::default(),
-        workspace.path().join("grex.jsonl"),
+        workspace.path().join(".grex").join("events.jsonl"),
         workspace.path().to_path_buf(),
     );
     let server = GrexMcpServer::new(state);

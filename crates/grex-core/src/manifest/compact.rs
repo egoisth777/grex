@@ -3,7 +3,7 @@
 //! state.
 //!
 //! Compaction is implemented as an **atomic rewrite**: we serialize the
-//! compacted log to `grex.jsonl.tmp` then rename into place via
+//! compacted log to `events.jsonl.tmp` then rename into place via
 //! [`crate::fs::atomic_write`]. A crash mid-compaction leaves the original
 //! file untouched.
 
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn compact_preserves_folded_state() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         let events = vec![
             Event::Add {
                 ts: t(0),
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn compact_is_idempotent() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         append_event(
             &p,
             &Event::Add {

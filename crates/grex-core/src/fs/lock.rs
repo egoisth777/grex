@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn open_creates_lock_file() {
         let dir = tempdir().unwrap();
-        let m = dir.path().join("grex.jsonl");
+        let m = dir.path().join(".grex/events.jsonl");
         let p = dir.path().join(".grex.lock");
         let _l = ManifestLock::open(&m, &p).unwrap();
         assert!(p.exists());
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn read_runs_closure() {
         let dir = tempdir().unwrap();
-        let m = dir.path().join("grex.jsonl");
+        let m = dir.path().join(".grex/events.jsonl");
         let p = dir.path().join(".grex.lock");
         let mut l = ManifestLock::open(&m, &p).unwrap();
         let v = l.read(|| 42u32).unwrap();
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn write_runs_closure() {
         let dir = tempdir().unwrap();
-        let m = dir.path().join("grex.jsonl");
+        let m = dir.path().join(".grex/events.jsonl");
         let p = dir.path().join(".grex.lock");
         let mut l = ManifestLock::open(&m, &p).unwrap();
         let v = l.write(|| "ok").unwrap();
