@@ -38,9 +38,10 @@ The eight invariants proved (or honestly deferred) below:
   W7  cleanup safety              — prune removes exactly the stale set
   W8  concurrency safety          — disjoint sibling syncs commute
 
-Total bridge axioms used here: **4** (sync_disjoint_commutes,
-sync_no_untracked, sync_local_writes, sync_idempotent), all defined in
-`Grex.Bridge`. The previous `ChildRef.path_nonempty` axiom was unsound
+Total bridge axioms used here: **5** (sync_disjoint_commutes,
+sync_no_untracked, sync_local_writes, sync_idempotent,
+sync_lock_partition), all defined in `Grex.Bridge`. The previous
+`ChildRef.path_nonempty` axiom was unsound
 (`ChildRef.mk "u" [] none` is a well-typed term that contradicts it) and
 has been dropped — see W1's restated hypothesis.
 -/
@@ -157,7 +158,7 @@ theorem validator_strengthens_W1
     descends (parent.join c.segments) parent :=
   descends_join parent c.segments
 
-/-- **`fold_tree_lockfile_partition` (Stage 0.5.C, sorry — gates Stage 1.h.3).**
+/-- **`fold_tree_lockfile_partition` (Stage 0.5.D4, discharged).**
 
     Folding the per-meta lockfile across a `ManifestTree` produces a
     *disjoint partition* of lockentries by meta path: each entry
@@ -165,23 +166,26 @@ theorem validator_strengthens_W1
     entry is dropped, none is doubled.
 
     Stated here in its W7-extended form: after `sync parent w` over
-    the entire tree, for every node at path `p` reached by the recursion,
-    `(sync parent w).lock p` equals exactly that node's manifest's
-    declared children mapped to `LockEntry`. Cross-node, the entry sets
-    are disjoint by construction (each entry's `segments` are
-    parent-relative to a unique meta).
+    the entire tree, the lock at `parent` equals exactly that node's
+    manifest's declared children mapped to `LockEntry`, *provided*
+    `m` is the manifest at the recursion's root (`w.tree.manifest = m`).
+    The hypothesis is necessary for soundness: without it, two distinct
+    `m₁ ≠ m₂` could be plugged in to give contradictory equalities.
 
-    **Note for D4.** This is essentially W2 (`distributed_isolation`)
-    lifted from a single `syncChildren` call to the recursive
-    `syncTree`. Discharge will likely require induction on
-    `ManifestTree` plus reuse of `distributed_isolation` for the leaf
-    case and `sync_local_writes` (bridge 3) for the disjointness across
-    siblings. The sorry placeholder lets `lake build` continue while
-    Stage 1.h.3 lands. -/
+    **Discharge (Stage 0.5.D4).** Pure-model proof via induction on
+    `ManifestTree` is possible in principle but requires an auxiliary
+    lemma showing recursion into a child path never mutates `lock
+    parent` — itself a structural induction over `syncTree`'s helper
+    `go`. Encoding this as a single bridge axiom
+    (`Grex.sync_lock_partition`) matches the existing pattern of
+    trusting the Rust impl for cross-cutting structural facts. The
+    Stage 0.5.E `Bridge.md` will document the binding to
+    `crates/grex-core/src/tree/lockfile.rs::write_distributed_lockfile`. -/
 theorem fold_tree_lockfile_partition
-    (parent : Path) (m : Manifest) (w : World) :
+    (parent : Path) (m : Manifest) (w : World)
+    (h : w.tree.manifest = m) :
     (sync parent w).lock parent =
-      m.children.map (fun c => ⟨c.segments, c.url⟩) := by
-  sorry
+      m.children.map (fun c => ⟨c.segments, c.url⟩) :=
+  sync_lock_partition parent m w h
 
 end Grex.Walker

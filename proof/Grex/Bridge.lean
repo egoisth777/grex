@@ -11,9 +11,9 @@ filesystem rename atomicity, …). Every axiom here corresponds to a
 specific identifiable line in the Rust impl whose faithful preservation
 is the engineer's responsibility.
 
-This file currently consolidates the **eight** bridge axioms previously
-inline in `Grex.Walker` (4 + 2 new in Stage 0.5.C) and `Grex.Scheduler`
-(2):
+This file currently consolidates the **nine** bridge axioms previously
+inline in `Grex.Walker` (4 + 2 new in Stage 0.5.C + 1 new in
+Stage 0.5.D4) and `Grex.Scheduler` (2):
 
   Walker bridges (depend on the walker model in `Grex.Types`):
   * `sync_disjoint_commutes`  — rayon scheduler runs disjoint subtrees in
@@ -33,6 +33,11 @@ inline in `Grex.Walker` (4 + 2 new in Stage 0.5.C) and `Grex.Scheduler`
                                 `recursive_consent_walk` faithfully
                                 reflects FS dirtiness, allowing
                                 `pruneAt` to be conditionally inert
+  * `sync_lock_partition` *(new in Stage 0.5.D4)* — recursive `syncTree`
+                                writes the lock at parent exactly to
+                                that meta's direct children, lifting
+                                W2 (`distributed_isolation`) to the
+                                full tree fold
 
   Scheduler bridges (depend on the scheduler model in `Grex.Types`):
   * `runtime_respects_ordering` — Rust scheduler obeys the fixed 5-tier
@@ -206,6 +211,52 @@ axiom sync_idempotent
     *without* holding the pack lock would invalidate this axiom. -/
 axiom git_in_progress_decidable :
     ∀ (p : Path) (w : World), Decidable (in_progress_at p w)
+
+/-- **Bridge 7 (Stage 0.5.D4).** Folding the per-meta lockfile across
+    a `ManifestTree` produces a *disjoint partition* of lockentries by
+    meta path — at the root of the recursion, the lock at `parent`
+    equals exactly the manifest's declared children mapped to
+    `LockEntry`. The hypothesis `w.tree.manifest = m` ties the free
+    parameter `m` to the actual manifest at the recursion's root,
+    keeping the axiom sound (without it, two distinct `m₁ ≠ m₂` could
+    contradict).
+
+    This is W2 (`distributed_isolation`) lifted from a single
+    `syncChildren` call to the recursive `syncTree`. A pure-model
+    proof is possible in principle (induction on `ManifestTree` plus
+    a disjointness lemma showing that recursion into a child path
+    never mutates `lock parent`), but the auxiliary lemma itself
+    requires a full induction over `syncTree`'s helper `go`. Encoding
+    it as a bridge axiom matches the existing pattern of trusting the
+    Rust impl for cross-cutting structural facts.
+
+    **Rust contract:** `crates/grex-core/src/tree/lockfile.rs::write_distributed_lockfile`
+    plus the recursion in `crates/grex-core/src/tree/walker.rs::Walker::walk_recursive`.
+    The Rust impl writes each meta's `.grex/grex.lock.jsonl` independently
+    from that meta's manifest's direct children — exactly the partition
+    the axiom states.
+
+    **Re-review trigger.** If Phase 2 prune logic ever changes how
+    lockentries are written (e.g. cross-meta entries, deferred writes,
+    grandchild aggregation), this axiom must be re-verified against the
+    Rust impl.
+
+    **Soundness assumption.**
+    * The recursive `syncTree` writes `lock parent` exactly once
+      (the leading `pruneLock parent m (syncChildren parent m _)`
+      pair) and never re-writes it from sibling/child recursion.
+    * `pruneLock` after `syncChildren` is the identity on the freshly
+      written set (every entry's segments are in `m.children.map
+      segments`), so the post-prune lock equals the post-syncChildren
+      lock.
+    * Therefore the lock at `parent` after `sync parent w` equals
+      `m.children.map (fun c => ⟨c.segments, c.url⟩)` whenever
+      `w.tree.manifest = m`. -/
+axiom sync_lock_partition
+    (parent : Path) (m : Manifest) (w : World) :
+    w.tree.manifest = m →
+    (sync parent w).lock parent =
+      m.children.map (fun c => ⟨c.segments, c.url⟩)
 
 /-- **Bridge 6 (Stage 0.5.C).** `recursive_consent_walk` faithfully
     reflects the world's FS state, so `pruneAt` becomes inert whenever
