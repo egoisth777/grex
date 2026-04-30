@@ -27,7 +27,7 @@ Three structural changes for v1.0.1, all aimed at separating *agent-readable* fr
 
 ### 3b. Scaffold `grex-doc/` mdBook site
 
-- New top-level directory `grex-doc/` (sibling to `crates/`, `man/`, `examples/`, `lean/`).
+- New top-level directory `grex-doc/` (sibling to `crates/`, `man/`, `examples/`, `proof/`).
 - `grex-doc/book.toml` — mdBook config; title `"grex documentation v1.0.1"`; `mdbook-linkcheck` preprocessor.
 - `grex-doc/src/SUMMARY.md` — table of contents derived from `man/` structure, hand-authored for v1 (no auto-gen this round).
 - Build pipeline: `cargo run -p xtask -- doc-site-prep` copies `man/**/*.md` into `grex-doc/src/` (no symlinks — Windows-hostile), then `mdbook build grex-doc/`.

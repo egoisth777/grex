@@ -88,7 +88,7 @@ A `--force-prune` flag bypasses the consent walk (audit-log entry written) for t
 
 ## 8 invariants (Lean-proven)
 
-Each is a theorem in `lean/Grex/Walker.lean` (368 lines, `lake build` clean, 4 bridge axioms link the abstract walker to the Rust impl).
+Each is a theorem in `proof/Grex/Walker.lean` (368 lines, `lake build` clean, 4 bridge axioms link the abstract walker to the Rust impl).
 
 **Stage 0 LOCKED — Lean4 hard gate.** Per `.omne/schemas/rules.md` Rule 8: any v1.2.0 work introducing a non-simple algorithm beyond M6 reuse requires its Lean4 proof to compile clean (`lake build` green, zero `sorry`, zero `admit`) BEFORE any Rust change lands. The walker-invariant proof at commit `cee83d7` discharges I1–I8; new obligations (if any arise during impl) gate the corresponding Rust stages — see `tasks.md` Stage 0.5.
 
@@ -103,7 +103,7 @@ Each is a theorem in `lean/Grex/Walker.lean` (368 lines, `lake build` clean, 4 b
 | I7 | **Cleanup safety** | `Walker.cleanup_safe` | Prune executes only when the recursive consent walk returns `Clean`; dirty/in-progress states block the prune. |
 | I8 | **Concurrency safety** | `Walker.concurrency_safe` | Per-meta fd-lock guarantees mutual exclusion on lockfile writes; proven by reduction to the lock-acquisition order. |
 
-Bridge axioms (4) live in `lean/Grex/Bridge.lean` and link Lean's abstract `Path`/`Meta`/`LockEntry` to the Rust types. Documented in `lean/Grex/Bridge.md`.
+Bridge axioms (4) live in `proof/Grex/Bridge.lean` and link Lean's abstract `Path`/`Meta`/`LockEntry` to the Rust types. Documented in `proof/Grex/Bridge.md`.
 
 ## Algorithm (lifted from `.omne/cfg/walker.md`)
 
@@ -273,4 +273,4 @@ Non-blocking R2 CONCERNs (~25) are routed to in-flight fix agents; their resolut
 2. **Cargo-parallel scheduler complicates error reporting.** Mitigation: errors are accumulated in a `Mutex<Vec<TreeError>>`; the walker returns a single aggregated `TreeError::Multiple { errors }` if the accumulator is non-empty at end of walk. Per-error provenance (which meta raised it) is preserved.
 3. **v1.1.x → v1.2.0 lockfile migration could surprise users by mutating on-disk state.** Mitigation (Stage 0 LOCKED — default-OFF): a v1.2.0 binary meeting a v1.1.1 lockfile errors with `v1.1.1 lockfile detected, run grex migrate-lockfile`. No silent rewrites, no `.bak` the user did not author. `--migrate-lockfile` is the explicit opt-in flag. The migrator is an isolated module (see §Migration module — isolation contract) deletable in a future minor release.
 4. **Per-meta fd-lock can deadlock if the same physical directory is declared by two parents.** Mitigation: the validator catches duplicate-physical-dest at validate-time (canonicalise dest, compare; raise `DuplicateChildDest`). Fd-lock is the belt-and-braces backstop.
-5. **Lean proof bridge axioms drift from Rust impl.** Mitigation: bridge axioms are documented in `lean/Grex/Bridge.md` with a "what each axiom assumes about the Rust side" section. Future Rust changes that touch bridge-relevant code paths must update the bridge doc; CI gate pending (out-of-scope for v1.2.0).
+5. **Lean proof bridge axioms drift from Rust impl.** Mitigation: bridge axioms are documented in `proof/Grex/Bridge.md` with a "what each axiom assumes about the Rust side" section. Future Rust changes that touch bridge-relevant code paths must update the bridge doc; CI gate pending (out-of-scope for v1.2.0).

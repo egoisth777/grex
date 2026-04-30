@@ -134,7 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
-      - run: cd lean && lake build
+      - run: cd proof && lake build
   deny:
     runs-on: ubuntu-latest
     steps:

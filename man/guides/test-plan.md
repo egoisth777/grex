@@ -117,10 +117,10 @@ Fixtures avoid platform-specific paths — all tests use `tempfile` + `PathBuf`.
 
 ```yaml
 - uses: leanprover/lean-action@v1
-- run: cd lean && lake build
+- run: cd proof && lake build
 ```
 
-Job succeeds only if `lean/Grex/Scheduler.lean` compiles to `.olean` with zero `sorry`. Any unresolved `axiom` outside the single `pack_lock_exclusive` model-bridge axiom (resolved to theorem by M5-exit) fails CI.
+Job succeeds only if `proof/Grex/Scheduler.lean` compiles to `.olean` with zero `sorry`. Any unresolved `axiom` outside the single `pack_lock_exclusive` model-bridge axiom (resolved to theorem by M5-exit) fails CI.
 
 Lean type-checking is the guarantee; CI does not attempt to verify proof content beyond compilation.
 

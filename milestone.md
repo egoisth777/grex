@@ -88,7 +88,7 @@ Correctness-by-construction on the scheduler.
 - Bounded `tokio::sync::Semaphore` gated by `--parallel N` (default = `num_cpus`).
 - Per-pack `<path>/.grex-lock` file (fd-lock) prevents same-pack double-exec.
 - Global manifest lock acquired before semaphore slot (ordering prevents deadlock).
-- Lean4 project under `lean/`, theorem `Grex.Scheduler.no_double_lock` proving no two tasks hold lock on same resource path simultaneously.
+- Lean4 project under `proof/` (renamed from `lean/` in v1.2.0 Stage 0.5), theorem `Grex.Scheduler.no_double_lock` proving no two tasks hold lock on same resource path simultaneously.
 - `lake build` in CI matrix.
 
 **Acceptance**: stress test 100 parallel `grex sync` ops on overlapping trees; no data races; Lean4 `.olean` builds green.

@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`design.md`](./design.md)
-**SSOT**: `.omne/cfg/walker.md` (canonical algorithm) · `lean/Grex/Walker.lean` (proof) · [`rust-design-decisions.md`](./rust-design-decisions.md) (in-flight; mechanism choices)
+**SSOT**: `.omne/cfg/walker.md` (canonical algorithm) · `proof/Grex/Walker.lean` (proof) · [`rust-design-decisions.md`](./rust-design-decisions.md) (in-flight; mechanism choices)
 
 Markdown-only openspec PR first; implementation lands on a separate branch off post-merge `main`.
 
@@ -13,7 +13,7 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - [ ] 0.1 Land openspec triplet under `openspec/changes/feat-v1.2.0-nested-children/` (proposal + design + tasks).
 - [ ] 0.2 Cross-link `.omne/cfg/walker.md` → this triplet, and confirm walker.md acceptance-criteria block points back to `proposal.md`.
 - [ ] 0.3 Update `progress.md` with the v1.2.0 openspec endpoint + refreshed "Where we are" block.
-- [ ] 0.4 Confirm `lean/Grex/Walker.lean` builds clean under `lake build` and the 8 theorems are present (snapshot: 368 lines, 4 bridge axioms).
+- [ ] 0.4 Confirm `proof/Grex/Walker.lean` builds clean under `lake build` and the 8 theorems are present (snapshot: 368 lines, 4 bridge axioms).
 - [ ] 0.5 PR description references the locked decisions: parent-relative resolution; distributed lockfile; rayon cargo-parallel (M6 reuse); synthesis retired with keep-legacy `~` glyph; hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` TOCTOU; Lean4 hard-gate before any Rust impl; default-OFF lockfile auto-migrate; SemVer MINOR per maintainer override.
 - [ ] 0.6 Required CI gates green (typos, build × 3, lake-build, etc.) — markdown-only, should pass trivially.
 - [ ] 0.7 Stage 0.5 (Lean4 proof gate) is queued as a hard prerequisite for Stage 1; cannot start 1a until 0.5 is green.
@@ -27,13 +27,13 @@ Stage 0 LOCKED decision #4: any new non-simple algorithm work — explicitly inc
 The bridge-axiom proof at commit `cee83d7` covers walker invariants 1–8 (boundary preservation, distributed isolation, termination, idempotency, sub-meta autonomy, no-untracked, cleanup safety, concurrency safety). Reuse is fine where it covers; new obligations require new theorems.
 
 - [ ] 0.5.1 Audit Stage 1 algorithm surface (validator hybrid TOCTOU resolution, walker phases 1–3, prune-safety + recursive-consent, distributed-lockfile fold, scheduler dispatch, migrator isolation). Identify which obligations are covered by existing invariants I1–I8 + bridge axioms vs. which need new theorems.
-- [ ] 0.5.2 If any new obligation is identified beyond M6 reuse (e.g. rayon scheduler dispatch correctness, recursive-consent walk totality, distributed-lockfile fold isolation), add the theorem stub to `lean/Grex/Walker.lean` (or a sibling module under `lean/Grex/`) with a clear name and statement. List the new theorems explicitly in this task list before discharging them.
+- [ ] 0.5.2 If any new obligation is identified beyond M6 reuse (e.g. rayon scheduler dispatch correctness, recursive-consent walk totality, distributed-lockfile fold isolation), add the theorem stub to `proof/Grex/Walker.lean` (or a sibling module under `proof/Grex/`) with a clear name and statement. List the new theorems explicitly in this task list before discharging them.
 - [ ] 0.5.3 Discharge each new theorem (no `sorry`). Run `lake build` and confirm zero warnings.
-- [ ] 0.5.4 Update `lean/Grex/Bridge.md` if any new bridge axiom is required to link a new theorem to the Rust impl. Document what each new bridge axiom assumes about the Rust side.
-- [ ] 0.5.5 CI gate: `lake build` step in `.github/workflows/ci.yml` (or equivalent) is mandatory and blocking — must already exist; confirm it covers any new files added under `lean/`.
+- [ ] 0.5.4 Update `proof/Grex/Bridge.md` if any new bridge axiom is required to link a new theorem to the Rust impl. Document what each new bridge axiom assumes about the Rust side.
+- [ ] 0.5.5 CI gate: `lake build` step in `.github/workflows/ci.yml` (or equivalent) is mandatory and blocking — must already exist; confirm it covers any new files added under `proof/`.
 - [ ] 0.5.6 Snapshot the post-0.5 Lean state in this tasks file: theorem count, file count, `lake build` wall-time. Commit the snapshot before opening the Stage 1 PR.
 - **HARD GATE**: Cannot proceed to Stage 1a until 0.5.1–0.5.6 are all checked and `lake build` is green with zero `sorry`.
-- **Verification**: `cd lean && lake build` exits 0 with no warnings; `grep -r 'sorry' lean/Grex/` returns no matches.
+- **Verification**: `cd proof && lake build` exits 0 with no warnings; `grep -r 'sorry' proof/Grex/` returns no matches.
 
 ---
 
@@ -43,7 +43,7 @@ The bridge-axiom proof at commit `cee83d7` covers walker invariants 1–8 (bound
 
 - [ ] 1a.1 Branch `feat/v1.2.0-impl` off post-merge `main`.
 - [ ] 1a.2 Confirm `cargo test --workspace` baseline green at HEAD before any code changes.
-- [ ] 1a.3 Confirm `lake build` clean in `lean/`.
+- [ ] 1a.3 Confirm `lake build` clean in `proof/`.
 - [ ] 1a.4 Snapshot the test count for the post-impl regression check (expected: existing v1.1.1 count + v1.2.0 additions).
 
 ### 1b — `LockEntry.path` field + read-fallback
@@ -194,7 +194,7 @@ The bridge-axiom proof at commit `cee83d7` covers walker invariants 1–8 (bound
 - [ ] 1o.5 `cargo run -p xtask -- doc-site-prep && mdbook build grex-doc/` zero warnings.
 - [ ] 1o.6 `cargo deny check` clean.
 - [ ] 1o.7 `typos` clean.
-- [ ] 1o.8 `lake build` (lean/) clean — 8 theorems present, 4 bridge axioms documented.
+- [ ] 1o.8 `lake build` (proof/) clean — 8 theorems present, 4 bridge axioms documented.
 - [ ] 1o.9 MCP conformance gate green.
 - [ ] 1o.10 Workspace bump 1.1.1 → 1.2.0 across `Cargo.toml`, `[workspace.dependencies]`, `crates/xtask/Cargo.toml`.
 - [ ] 1o.11 `crates/xtask/tests/version_test.rs` bump assertion.

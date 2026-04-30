@@ -152,7 +152,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: lean
+          lake-package-directory: proof
 
   # Gate: MCP protocol conformance (L6) — external-oracle gate.
   # Runs `mcp-validator` (Janix-ai) against a release build of `grex serve`
