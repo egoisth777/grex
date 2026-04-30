@@ -45,7 +45,7 @@ mod helpers {
 #[test]
 fn torn_trailing_line_recovers() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     for i in 0..10 {
         append_event(&p, &helpers::sample_add(i)).unwrap();
@@ -70,7 +70,7 @@ fn torn_trailing_line_recovers() {
 #[test]
 fn torn_trailing_line_recovers_from_partial_utf8_codepoint() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     for i in 0..3 {
         append_event(&p, &helpers::sample_add(i)).unwrap();
@@ -94,7 +94,7 @@ fn torn_trailing_line_recovers_from_partial_utf8_codepoint() {
 #[test]
 fn valid_json_invalid_event_schema_tail_is_discarded() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     for i in 0..2 {
         append_event(&p, &helpers::sample_add(i)).unwrap();
@@ -118,7 +118,7 @@ fn valid_json_invalid_event_schema_tail_is_discarded() {
 #[test]
 fn multiple_torn_trailing_lines_are_all_ignored() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     for i in 0..4 {
         append_event(&p, &helpers::sample_add(i)).unwrap();
@@ -147,7 +147,7 @@ fn multiple_torn_trailing_lines_are_all_ignored() {
 #[test]
 fn semantically_corrupt_but_valid_tail_is_not_silently_kept() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     append_event(&p, &helpers::sample_add(0)).unwrap();
     // Second event reuses the same id ("pack-0") but is schema-valid.

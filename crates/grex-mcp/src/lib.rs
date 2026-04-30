@@ -51,7 +51,7 @@ pub struct ServerState {
     pub scheduler: Arc<Scheduler>,
     /// Plugin registry resolving manifest verbs to plugin impls.
     pub registry: Arc<Registry>,
-    /// Path to the `grex.jsonl` event-log manifest. Captured at server
+    /// Path to the `.grex/events.jsonl` event log. Captured at server
     /// launch and immutable for the session (per spec §"Manifest binding").
     pub manifest_path: Arc<std::path::PathBuf>,
     /// Workspace root the server resolves relative paths against.
@@ -81,7 +81,8 @@ impl ServerState {
     /// actually runs.
     pub fn for_tests() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        Self::new(Scheduler::new(1), Registry::default(), cwd.join("grex.jsonl"), cwd)
+        let manifest = grex_core::manifest::event_log_path(&cwd);
+        Self::new(Scheduler::new(1), Registry::default(), manifest, cwd)
     }
 }
 

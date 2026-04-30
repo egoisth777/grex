@@ -13,7 +13,7 @@
 //! 2. scheduler semaphore permit (feat-m6-1)
 //! 3. **per-pack `.grex-lock`** — this module
 //! 4. per-repo backend lock (`<dest>.grex-backend.lock`)
-//! 5. manifest RW lock (`grex.jsonl` sidecar)
+//! 5. manifest RW lock (`.grex/events.jsonl` sidecar)
 //!
 //! Plugins acquire tier 2 (permit) and tier 3 (pack lock) in that order
 //! inside every `PackTypePlugin` method. In debug builds, [`with_tier`]
@@ -514,7 +514,7 @@ pub enum Tier {
     PerPack = 2,
     /// Per-repo backend lock — `<dest>.grex-backend.lock`.
     Backend = 3,
-    /// Manifest RW lock — `grex.jsonl` sidecar.
+    /// Manifest RW lock — `.grex/events.jsonl` sidecar.
     Manifest = 4,
 }
 

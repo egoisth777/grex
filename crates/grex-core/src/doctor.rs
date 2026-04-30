@@ -192,7 +192,11 @@ pub enum DoctorError {
 /// initial scan, then re-runs the gitignore check to record the healed
 /// state.
 pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, DoctorError> {
-    let manifest_path = workspace.join("grex.jsonl");
+    // Auto-migrate v1.x `<ws>/grex.jsonl` → v2 `<ws>/.grex/events.jsonl`
+    // before the schema check so doctor sees a consistent canonical
+    // location whether the workspace was synced under v1.x or v2.0+.
+    let manifest_path =
+        manifest::ensure_event_log_migrated(workspace).map_err(DoctorError::ManifestIo)?;
 
     let (schema_result, events_opt) = check_manifest_schema(&manifest_path);
 
@@ -742,7 +746,7 @@ mod tests {
     }
 
     fn seed_pack_with_type(workspace: &Path, id: &str, pack_type: &str) {
-        let m = workspace.join("grex.jsonl");
+        let m = workspace.join(".grex/events.jsonl");
         append_event(
             &m,
             &Event::Add {
@@ -770,7 +774,7 @@ mod tests {
     fn schema_clean_is_ok() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        let (r, evs) = check_manifest_schema(&d.path().join("grex.jsonl"));
+        let (r, evs) = check_manifest_schema(&d.path().join(".grex/events.jsonl"));
         assert_eq!(r.worst(), Severity::Ok);
         assert_eq!(evs.unwrap().len(), 1);
     }
@@ -780,7 +784,8 @@ mod tests {
         let d = tempdir().unwrap();
         // Line 1 is garbage (not last — there's a valid line 2), so
         // M3's reader flags it as Corruption.
-        let m = d.path().join("grex.jsonl");
+        let m = d.path().join(".grex/events.jsonl");
+        fs::create_dir_all(m.parent().unwrap()).unwrap();
         fs::write(&m, b"not-json\n").unwrap();
         append_event(
             &m,
@@ -803,7 +808,7 @@ mod tests {
     #[test]
     fn schema_missing_manifest_is_ok() {
         let d = tempdir().unwrap();
-        let (r, evs) = check_manifest_schema(&d.path().join("grex.jsonl"));
+        let (r, evs) = check_manifest_schema(&d.path().join(".grex/events.jsonl"));
         assert_eq!(r.worst(), Severity::Ok);
         assert!(evs.unwrap().is_empty());
     }
@@ -815,7 +820,7 @@ mod tests {
         for pack_type in ["meta", "declarative", "scripted"] {
             let d = tempdir().unwrap();
             seed_pack_with_type(d.path(), pack_type, pack_type);
-            let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+            let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
             let packs = manifest::fold(events);
             let state = packs.get(pack_type).unwrap();
             assert_eq!(
@@ -840,7 +845,7 @@ mod tests {
                     "schema_version: \"1\"\nname: {id}\ntype: {pack_type}\nx-gitignore:\n  - \".grex-lock\"\n  - {authored}\n",
                 ),
             );
-            let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+            let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
             let packs = manifest::fold(events);
             let state = packs.get(&id).unwrap();
             assert_eq!(
@@ -862,7 +867,7 @@ mod tests {
             default_managed_gitignore_patterns(),
         )
         .unwrap();
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
         assert_eq!(r.worst(), Severity::Ok);
@@ -874,7 +879,7 @@ mod tests {
         seed_pack(d.path(), "a");
         // Write a drifted workspace-level block body.
         upsert_managed_block(&d.path().join(".gitignore"), "a", &["unexpected-line"]).unwrap();
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
         assert_eq!(r.worst(), Severity::Warning);
@@ -896,7 +901,7 @@ mod tests {
             &[".grex-lock", "target/", "*.log"],
         )
         .unwrap();
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
         assert_eq!(r.worst(), Severity::Ok);
@@ -910,7 +915,7 @@ mod tests {
         seed_pack(d.path(), "a");
         // Delete the pack dir after seeding.
         fs::remove_dir_all(d.path().join("a")).unwrap();
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Error);
@@ -921,7 +926,7 @@ mod tests {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
         fs::create_dir_all(d.path().join("stranger")).unwrap();
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Warning);
@@ -931,7 +936,7 @@ mod tests {
     fn on_disk_clean_workspace_is_ok() {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
-        let events = manifest::read_all(&d.path().join("grex.jsonl")).unwrap();
+        let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_on_disk_drift(d.path(), &packs, &HashMap::new());
         assert_eq!(r.worst(), Severity::Ok);
@@ -1057,7 +1062,8 @@ mod tests {
     fn run_doctor_fix_does_not_touch_manifest_on_schema_error() {
         let d = tempdir().unwrap();
         // Seed a corrupt manifest (line 1 garbage, line 2 valid).
-        let m = d.path().join("grex.jsonl");
+        let m = d.path().join(".grex/events.jsonl");
+        fs::create_dir_all(m.parent().unwrap()).unwrap();
         fs::write(&m, b"garbage-line\n").unwrap();
         append_event(
             &m,
@@ -1096,7 +1102,7 @@ mod tests {
 
         // SAFETY CRITICAL: --fix must NOT write anywhere in the
         // workspace on drift error — not the missing dir, not
-        // `grex.jsonl`, not a stray `.gitignore`, nothing. A recursive
+        // `.grex/events.jsonl`, not a stray `.gitignore`, nothing. A recursive
         // path+bytes snapshot catches any such write, not just the
         // presence/absence of the missing pack dir.
         let before = fs_snapshot(d.path());

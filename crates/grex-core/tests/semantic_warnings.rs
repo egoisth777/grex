@@ -142,7 +142,7 @@ fn ev_sync(id: &str, sec: i64) -> Event {
 #[test]
 fn duplicate_add_warns() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     append_event(&p, &ev_add("pkg", 1)).unwrap();
     append_event(&p, &ev_add("pkg", 2)).unwrap();
 
@@ -160,7 +160,7 @@ fn duplicate_add_warns() {
 #[test]
 fn orphan_update_warns() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     // No Add for "ghost" — just an Update.
     append_event(&p, &ev_update("ghost", 1)).unwrap();
 
@@ -176,7 +176,7 @@ fn orphan_update_warns() {
 #[test]
 fn orphan_sync_warns() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     append_event(&p, &ev_sync("ghost", 1)).unwrap();
 
     let (_events, logs) = capture(|| read_all(&p).unwrap());
@@ -190,7 +190,7 @@ fn orphan_sync_warns() {
 #[test]
 fn orphan_rm_warns() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     append_event(&p, &ev_rm("ghost", 1)).unwrap();
 
     let (_events, logs) = capture(|| read_all(&p).unwrap());
@@ -205,7 +205,7 @@ fn orphan_rm_warns() {
 #[test]
 fn well_formed_log_emits_no_semantic_warnings() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     append_event(&p, &ev_add("pkg", 1)).unwrap();
     append_event(&p, &ev_update("pkg", 2)).unwrap();
     append_event(&p, &ev_sync("pkg", 3)).unwrap();

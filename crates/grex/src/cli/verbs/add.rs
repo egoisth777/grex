@@ -2,12 +2,21 @@ use crate::cli::args::{AddArgs, GlobalFlags};
 use anyhow::{Context, Result};
 use grex_core::add::{add_pack, infer_path_from_url, AddOpts, AddReport, AddRequest};
 use grex_core::import::classify;
+use grex_core::manifest::{ensure_event_log_migrated, find_workspace_root};
 use tokio_util::sync::CancellationToken;
 
 pub fn run(args: AddArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let path = args.path.unwrap_or_else(|| infer_path_from_url(&args.url));
     let pack_type = classify(&args.url).as_str().to_string();
-    let manifest = std::env::current_dir().unwrap_or_default().join("grex.jsonl");
+    // Resolve the workspace root by walking up from cwd looking for a
+    // `.grex/` marker. Falls back to cwd when no marker is found, so a
+    // fresh workspace just uses the user's directory. This fixes the
+    // v1.x cwd-relative bug where running `grex add` from a subdir
+    // created a stray event log in the subdir instead of writing to
+    // the parent workspace's log.
+    let cwd = std::env::current_dir().context("resolve cwd for workspace root")?;
+    let workspace = find_workspace_root(&cwd);
+    let manifest = ensure_event_log_migrated(&workspace).context("migrate v1.x event log")?;
     let report = add_pack(
         &manifest,
         AddRequest::new(args.url, path, pack_type),

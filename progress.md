@@ -2,6 +2,62 @@
 
 ## Where we are
 **v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
+**v1.2.0 IN-FLIGHT** on `feat/v1.2.0-nested-children` @ `e55c0c3`. Stage 0 design SIGN-OFF complete (2026-04-29); 5 deferred decisions resolved (TOCTOU=hybrid `openat2(RESOLVE_BENEATH)`+`cap-std`, scheduler=rayon, glyph=keep-legacy `~`, Lean4=mandatory-gate, auto-migrate=default-off). No PR yet.
+
+## Endpoint (2026-04-29, v1.2.0 design SIGN-OFF — ready for impl Stage 0)
+- **Active branch:** `feat/v1.2.0-nested-children` cut off `main` at SHA `d45a061`. 4 prior commits + this progress update:
+  - `027032b` `feat(v2.0.0): rename event log to .grex/events.jsonl + auto-migrate` (subject misnamed v2.0.0; content valid under v1.2.0)
+  - `<TBD>` `docs(claude): forbid auto-memory writes (SSOT-only enforcement)`
+  - `<TBD>` `feat(lean): v1.2.0 walker proof — 8 invariants, 4 bridge axioms`
+  - `<TBD>` `feat(openspec): v1.2.0 nested-children triplet`
+  - `<TBD>` `docs(progress): v1.2.0 design SIGN-OFF endpoint` (this commit)
+  - *(maintainer: fill in 4 SHAs after `git log --oneline main..HEAD`)*
+- **Phase:** Design phase COMPLETE. Ready for impl Stage 0 (openspec PR + branch baseline). R3 review skipped per maintainer (design sound, move to impl).
+- **Architecture (LOCKED — canonical SSOT in grex-inst, mounted at `.omne/`):**
+  - Pack = directory with `.grex/`; `pack.yaml` lives INSIDE `.grex/`.
+  - Distributed lockfile (β): each meta owns `<meta>/.grex/grex.lock.jsonl`, tracking direct children only.
+  - Parent-relative resolution: `dest = current_meta.join(child.path)`. No global workspace anchor.
+  - Recursion entry: cwd at CLI invocation. Cargo-style parallel siblings + sub-meta recursion.
+  - Synthesis RETIRED at sync time — untracked `.git/` is ERROR, requires explicit `grex add`.
+  - `LockEntry.synthetic` kept for backward-compat reads; dead on new writes under v1.2.0.
+  - Cleanup: child removed from manifest → next CLI cmd `rm -rf` dest + delete lockentry.
+  - Validator: allow `/`; reject `..`, absolute paths, symlink-cross-parent-boundary, Unicode-NFC duplicates, Windows junctions, gitfile `.git`.
+  - 8 invariants Lean4-proven (W1–W8 in `lean/Grex/Walker.lean`).
+  - SemVer LOCKED: MINOR (1.1.1 → 1.2.0).
+- **Canonical SSOT artifacts (grex-inst repo, mounted at `.omne/`):**
+  - `.omne/cfg/walker.md` — 350 lines, signed algorithm + 8 invariants + acceptance criteria.
+  - `.omne/cfg/lockfile.md` — distributed model, schema, three-artifact disambiguation.
+  - `.omne/cfg/migration.md` — v1.1.1→v1.2.0 lockfile + synthetic + pack-template + API deprecation.
+  - `.omne/cfg/test-plan.md` — 9 unit + 20 integration + 6 property + CI gates.
+  - `.omne/cfg/api-contract.md` — NEW; SyncOptions deprecation + LockEntry schema + compat matrix.
+  - `.omne/cfg/rust-design-decisions.md` — NEW; 11 sections, 10 code-mechanism decisions + 7 maintainer Qs.
+  - `.omne/cfg/history.md` — milestone history + v1.2.0 retirement section.
+  - `.omne/cfg/mcp.md` — envelope semantic shift section.
+  - `.omne/schemas/rules.md` — 7 numbered behavior principles (added: progress-canonical, SemVer-authority, SSOT-separate-repo).
+- **Local artifacts (grex repo):**
+  - `lean/Grex/Walker.lean` — 445 lines, `lake build` exit 0, 0 sorry, 4 bridge axioms with Rust contract cites.
+  - `openspec/changes/feat-v1.2.0-nested-children/` — proposal.md (60 lines, 12 ACs) + design.md (255 lines) + tasks.md (198 lines, Stage 0 + 1a–1q).
+  - `CLAUDE.md` — `# Memory: SSOT-only (auto-memory DISABLED)` rule (lines 15–24).
+- **Review history:**
+  - R1: 4 reviewers (correctness PASS-with-fixes / adversarial FAIL / maintainability PASS-with-fixes / api-contract FAIL) → 4 fix agents → all R1 BLOCKERs closed.
+  - R2: 10 reviewers (correctness/citations PASS / lean PASS / security/dataloss/maintainability/api-contract/cross-doc PASS-with-fixes / walker-algo PASS-with-fixes / openspec NEEDS-PASS) → 7 fix-pass-2 agents → all R2 BLOCKERs closed.
+  - R3 skipped (maintainer call: design phase complete, move to impl).
+- **5 decisions deferred to maintainer (resolve at Stage 0 / impl):**
+  1. TOCTOU mitigation crate: `cap-std` vs `openat2(RESOLVE_BENEATH)` + `cap-std`.
+  2. Scheduler primitive: rayon vs tokio.
+  3. ls synthetic-marker glyph: keep `~` placeholder (likely fine).
+  4. Lean bridge-axiom CI gate: defer (out-of-scope for v1.2.0).
+  5. `--no-auto-migrate-lockfile` opt-out default-on; reconsider on user pushback.
+- **Memory→SSOT migration (this session):** 12 memory files folded into `.omne/cfg/history.md` + `.omne/schemas/rules.md`; `~/.claude/projects/.../memory/` empty; CLAUDE.md memory rule prevents future drift.
+- **Next actions for next session:**
+  1. Read this endpoint (`progress.md` lines 6–X).
+  2. Read `.omne/cfg/walker.md` for canonical algo.
+  3. Read `openspec/changes/feat-v1.2.0-nested-children/{proposal,design,tasks}.md`.
+  4. Resolve 5 deferred decisions with maintainer.
+  5. Open openspec PR (Stage 0).
+  6. Cut impl branch off `feat/v1.2.0-nested-children`; begin Stage 1a (`LockEntry.path` field add).
+  7. Commit checkpoint: grex-inst SSOT push (separate repo); grex commits `027032b` + 4 design commits to be pushed for openspec PR.
+- **Parked:** YAML→TOML migration (post-v1.2.0); three pre-session SSOT files (`.omne/cfg/{actions.md, plugin-api.md}`) folded into this session's commits — split history available via `git restore` patch on grex-inst working tree if maintainer wants; `crates/grex/.grex/` test artifact — add to `crates/grex/.gitignore` during Stage 1n test fixtures.
 
 ## Endpoint (2026-04-28, v1.1.1 SHIPPED)
 - **Squash-merge:** PR #56 squash-merged to `main`, SHA `3d1b963`. Branch `feat/v1.1.1-impl` deleted.
@@ -733,3 +789,21 @@ M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓
 - E: Discovery hook (`inventory::submit!` behind `plugin-inventory` feature; default OFF); v2 foundation. [PR #21, squash-merge commit `5206f02` on `main`]
 
 See `.omne/cfg/m3-review-findings.md` for the M3 review-series master finding list and mapping table (finding → PR → resolution).
+
+## Endpoint (2026-04-29, feat/v1.2.0-nested-children — Stage 0 decisions locked)
+_(extends prior 2026-04-29 "v1.2.0 design SIGN-OFF" endpoint with locked open-question resolutions)_
+- **Branch / commit coords:** `feat/v1.2.0-nested-children` @ `e55c0c3` (cut off `main` SHA `d45a061`). No PR yet (Stage 0 in progress).
+- **5 deferred decisions — RESOLVED (carried forward from prior endpoint's open-question list):**
+  1. **TOCTOU mitigation: hybrid.** `openat2(RESOLVE_BENEATH)` on Linux (kernel-enforced boundary) + `cap-std` on Windows/Mac (capability-based dirfd handles, userspace). Closes the canonicalize→clone race window per `walker.md` §326. Walker.md already specifies this shape.
+  2. **Scheduler: rayon.** Sync work-stealing. Reasons: M6 invariants (Lean4 I1 `no_double_lock`) prove sync bounded-semaphore + per-pack `.grex-lock` + manifest fd-lock — reuse inherits proof. libgit2 (`git2` crate) is sync; tokio wrap = `spawn_blocking` thread-pool churn with no payoff. Disjoint-subtree parallelism (Invariant 8) = work-stealing native fit. No network multiplexing gain since each git fetch = one TCP/process.
+  3. **`ls` synthetic glyph: option (b) keep legacy.** Keep `~` marker for legacy lockentries with `synthetic: true` (v1.1.1 carryover). New v1.2.0 lockentries never set `synthetic` (field semantically dead per `walker.md` §302). Self-extincts as users re-sync. Preserves migration-window UX.
+  4. **Lean4 proof: MANDATORY GATE (elevated to permanent rule).** Lean4 proof for non-simple algorithms (incl. concurrent algos) must be written and compile-success (= proved) BEFORE any code change. New rule persists to `.omne/schemas/rules.md` as Rule 8. Implication for v1.2.0: bridge-axiom proof (already at `cee83d7`) covers walker invariants 1–8; new proof obligation for any scheduler/locking algo updates that go beyond M6 reuse. Lean CI gate = mandatory, NOT deferred.
+  5. **Auto-migrate v1.1.1→v1.2.0 lockfile: default-OFF.** Modular implementation, isolated unit, removable post-migration window without affecting other units. v1.2.0 binary encountering v1.1.1 lockfile errors with `v1.1.1 lockfile detected, run grex migrate-lockfile`. No silent rewrites. `--migrate-lockfile` flag opt-in.
+- **Symbol-explanation rule (collaboration):** Going forward, agent must explain new concepts/symbols with ambiguous meaning before first use. Persists to `.omne/schemas/rules.md` as Rule 9.
+- **Glyph clarification recorded:** `~` in `grex ls` output = "synthesized child marker" (walker fabricated scripted-no-hooks pack for child with `.git/` but no own `pack.yaml`). NOT a parent-pack symbol. Parent pack = `<meta>/.grex/pack.yaml`, has no glyph in `ls`.
+- **Next steps:**
+  1. Update openspec triplet `feat-v1.2.0-nested-children/{proposal,design,tasks}.md` to bake decisions (concurrent task — separate subagent in flight).
+  2. Update SSOT `.omne/schemas/rules.md` Rules 8+9 (concurrent task).
+  3. Self-review: spawn parallel zero-state review agents on each artifact.
+  4. Then: open openspec PR (Stage 0 close).
+  5. Then: cut impl branch, begin Stage 1a — but ONLY after Lean4 proof for any new concurrent-algo work compiles.

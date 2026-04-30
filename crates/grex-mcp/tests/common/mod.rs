@@ -93,7 +93,7 @@ pub fn new_duplex_server(fixture: &TestFixture) -> Client {
     let state = ServerState::new(
         grex_core::Scheduler::new(1),
         grex_core::Registry::default(),
-        workspace.join("grex.jsonl"),
+        workspace.join(".grex").join("events.jsonl"),
         workspace,
     );
     let server = GrexMcpServer::new(state);
@@ -782,7 +782,7 @@ async fn run_mcp_tool_json(verb: &str, fixture: &TestFixture, params: Value) -> 
     let state = grex_mcp::ServerState::new(
         grex_core::Scheduler::new(1),
         grex_core::Registry::default(),
-        workspace.join("grex.jsonl"),
+        workspace.join(".grex").join("events.jsonl"),
         workspace,
     );
     let (server_io, client_io) = tokio::io::duplex(4096);

@@ -69,7 +69,8 @@ fn truncate_to_last_newline(file: &mut std::fs::File, len: u64) -> Result<(), Ma
     Ok(())
 }
 
-/// Append one event to the manifest log, creating the file if missing.
+/// Append one event to the event log, creating the file (and any
+/// missing parent directories) if needed.
 ///
 /// Writes `<serialized-json>\n` and fsyncs the data portion. Callers
 /// holding an exclusive [`crate::fs::ManifestLock`] are guaranteed that no
@@ -79,11 +80,20 @@ fn truncate_to_last_newline(file: &mut std::fs::File, len: u64) -> Result<(), Ma
 /// by truncating back to the last newline. This prevents a prior crash from
 /// fusing partial bytes with the next valid append.
 ///
+/// Parent directories are created on demand so the v2 canonical path
+/// (`<workspace>/.grex/events.jsonl`) does not require a separate
+/// `create_dir_all` call at every site.
+///
 /// # Errors
 ///
 /// Returns [`ManifestError::Io`] on I/O failure or
 /// [`ManifestError::Serialize`] if the event cannot be serialized.
 pub fn append_event(path: &Path, event: &Event) -> Result<(), ManifestError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     heal_torn_trailing_line(path)?;
     let mut file = OpenOptions::new().append(true).create(true).open(path)?;
     let line = serde_json::to_string(event).map_err(ManifestError::Serialize)?;
@@ -281,7 +291,7 @@ mod tests {
     #[test]
     fn append_and_read_roundtrip() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         let e = sample();
         append_event(&p, &e).unwrap();
         let got = read_all(&p).unwrap();
@@ -298,7 +308,7 @@ mod tests {
     #[test]
     fn torn_trailing_line_is_discarded() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         append_event(&p, &sample()).unwrap();
         // Simulate a torn append: partial JSON on a new trailing line.
         let mut f = OpenOptions::new().append(true).open(&p).unwrap();
@@ -311,7 +321,8 @@ mod tests {
     #[test]
     fn earlier_corruption_is_hard_error() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         // Line 1 is garbage, line 2 is valid — so garbage is NOT the last line.
         let mut f = OpenOptions::new().create(true).append(true).open(&p).unwrap();
         f.write_all(b"not-json\n").unwrap();
@@ -324,7 +335,7 @@ mod tests {
     #[test]
     fn empty_lines_are_skipped() {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         append_event(&p, &sample()).unwrap();
         let mut f = OpenOptions::new().append(true).open(&p).unwrap();
         f.write_all(b"\n").unwrap();
@@ -339,7 +350,7 @@ mod tests {
         // Next append must heal the fragment so the fused bytes don't
         // become a middle-line corruption on next read_all.
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         append_event(&p, &sample()).unwrap();
         let mut f = OpenOptions::new().append(true).open(&p).unwrap();
         f.write_all(b"{\"op\":\"add\",\"ts\":\"2026").unwrap();

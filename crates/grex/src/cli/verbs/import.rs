@@ -3,6 +3,7 @@
 use crate::cli::args::{GlobalFlags, ImportArgs};
 use anyhow::{anyhow, Context, Result};
 use grex_core::import::{import_from_repos_json, ImportOpts, ImportPlan, SkipReason};
+use grex_core::manifest::{ensure_event_log_migrated, find_workspace_root};
 use tokio_util::sync::CancellationToken;
 
 pub fn run(args: ImportArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
@@ -11,10 +12,18 @@ pub fn run(args: ImportArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
         .as_deref()
         .ok_or_else(|| anyhow!("--from-repos-json <path> is required"))?;
 
-    let manifest = args
-        .manifest
-        .clone()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default().join("grex.jsonl"));
+    // Default the manifest to the v2 canonical event-log path under the
+    // resolved workspace root. The workspace is found by walking up
+    // from cwd looking for a `.grex/` marker (fixes the v1.x
+    // cwd-relative bug). An explicit `--manifest <PATH>` still wins.
+    let manifest = match args.manifest.clone() {
+        Some(p) => p,
+        None => {
+            let cwd = std::env::current_dir().context("resolve cwd for workspace root")?;
+            let workspace = find_workspace_root(&cwd);
+            ensure_event_log_migrated(&workspace).context("migrate v1.x event log")?
+        }
+    };
 
     let dry_run = args.dry_run || global.dry_run;
 

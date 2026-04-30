@@ -87,7 +87,7 @@ async fn concurrent_tool_calls_share_arc_scheduler() {
     let state = ServerState {
         scheduler: scheduler_arc.clone(),
         registry: Arc::new(Registry::default()),
-        manifest_path: Arc::new(std::env::temp_dir().join("grex.jsonl")),
+        manifest_path: Arc::new(std::env::temp_dir().join(".grex").join("events.jsonl")),
         workspace: Arc::new(std::env::temp_dir()),
     };
     // strong_count BEFORE move-into-server: this Arc + the one inside `state` ⇒ 2.

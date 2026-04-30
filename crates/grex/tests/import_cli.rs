@@ -15,7 +15,7 @@ fn fixture(dir: &TempDir, body: &str) -> PathBuf {
 }
 
 fn manifest_path(dir: &TempDir) -> PathBuf {
-    dir.path().join("grex.jsonl")
+    dir.path().join(".grex/events.jsonl")
 }
 
 const SAMPLE: &str = r#"[
@@ -202,6 +202,7 @@ fn import_without_from_flag_errors() {
 fn import_collision_path_is_reported_on_stderr() {
     let dir = tempfile::tempdir().unwrap();
     let manifest = manifest_path(&dir);
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     let seed = "{\"op\":\"add\",\"ts\":\"2026-04-22T00:00:00Z\",\"id\":\"cfg\",\"url\":\"pre\",\"path\":\"cfg\",\"type\":\"declarative\",\"schema_version\":\"1\"}\n";
     fs::write(&manifest, seed).unwrap();
 

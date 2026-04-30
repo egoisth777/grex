@@ -198,9 +198,12 @@ pub struct DoctorArgs {
 
 #[derive(Args, Debug)]
 pub struct ServeArgs {
-    /// Path to the `grex.jsonl` event-log manifest. Captured at server
+    /// Path to the `.grex/events.jsonl` event log. Captured at server
     /// launch and immutable for the session (per spec §"Manifest binding").
-    /// Defaults to `<cwd>/grex.jsonl` when omitted.
+    /// Defaults to `<workspace>/.grex/events.jsonl` when omitted, where
+    /// `<workspace>` is resolved by walking up from cwd to the nearest
+    /// `.grex/` marker. v1.x `<workspace>/grex.jsonl` event logs are
+    /// auto-migrated to the canonical location on first access.
     #[arg(long, value_name = "PATH")]
     pub manifest: Option<std::path::PathBuf>,
 
@@ -226,7 +229,9 @@ pub struct ImportArgs {
     #[arg(long)]
     pub from_repos_json: Option<std::path::PathBuf>,
 
-    /// Target manifest (`grex.jsonl`). Defaults to `<cwd>/grex.jsonl`.
+    /// Target event log (`.grex/events.jsonl`). Defaults to
+    /// `<workspace>/.grex/events.jsonl` where `<workspace>` is resolved
+    /// by walking up from cwd to the nearest `.grex/` marker.
     #[arg(long, value_name = "PATH")]
     pub manifest: Option<std::path::PathBuf>,
 

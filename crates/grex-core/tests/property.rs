@@ -119,7 +119,7 @@ proptest! {
         events in prop::collection::vec(arb_event(), 0..40),
     ) {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         for ev in &events {
             append_event(&p, ev).unwrap();
         }
@@ -131,7 +131,11 @@ proptest! {
     #[test]
     fn compaction_preserves_fold(events in prop::collection::vec(arb_event(), 0..40)) {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
+        // `compact` rewrites via `atomic_write`, which does NOT create
+        // parent dirs. Empty `events` would skip `append_event` (which
+        // does create parents on demand), so seed `.grex/` up front.
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         for ev in &events {
             append_event(&p, ev).unwrap();
         }

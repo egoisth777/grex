@@ -235,7 +235,7 @@ fn e2e_wet_run_3_level_tree() {
     );
 
     // Manifest jsonl assertions: one Sync event per executed step.
-    let log = f.root.join(".grex/grex.jsonl");
+    let log = f.root.join(".grex/events.jsonl");
     let events = manifest::read_all(&log).expect("log readable");
     assert!(events.len() >= 3, "expected >=3 events, got {}", events.len());
     let sym_src_ok = f.a_symlink_src.exists();

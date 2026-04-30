@@ -1,7 +1,7 @@
 //! Regression: `grex sync` action appends must serialize through
 //! [`ManifestLock`]. Prior to PR B the sync driver called `append_event`
 //! directly, so two cooperating syncs could interleave lines in
-//! `.grex/grex.jsonl`. This suite pins the lock-wrapped append path.
+//! `.grex/events.jsonl`. This suite pins the lock-wrapped append path.
 //!
 //! Two threads sharing one event log each issue 50 appends. After join the
 //! file must parse line-for-line as valid JSON with exactly 100 events.
@@ -21,7 +21,7 @@ const PER_THREAD: usize = 50;
 #[test]
 fn two_threads_sync_append_are_serialised() {
     let dir = tempdir().unwrap();
-    let log = Arc::new(dir.path().join(".grex").join("grex.jsonl"));
+    let log = Arc::new(dir.path().join(".grex").join("events.jsonl"));
     let lock = Arc::new(dir.path().join(".grex").join(".grex.lock"));
 
     let handles: Vec<_> = (0..2)
@@ -66,7 +66,7 @@ fn two_threads_sync_append_are_serialised() {
 fn sync_append_creates_parent_dir_lazily() {
     // First call on a fresh tempdir must create `.grex/` on demand.
     let dir = tempdir().unwrap();
-    let log: PathBuf = dir.path().join(".grex").join("grex.jsonl");
+    let log: PathBuf = dir.path().join(".grex").join("events.jsonl");
     let lock: PathBuf = dir.path().join(".grex").join(".grex.lock");
     assert!(!log.parent().unwrap().exists(), "precondition: .grex/ absent");
     __test_append_sync_event(&log, &lock, "pack", "act").expect("first append");
