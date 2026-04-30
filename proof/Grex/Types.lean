@@ -301,4 +301,133 @@ def overlaps (a b : TimeWindow) : Prop :=
 
 end Scheduler
 
+/-! ## v1.2.0 walker — extended types
+
+Stage 0.5.C introduces three new walker concepts whose signatures live
+here so that `Grex.Bridge`, `Grex.Walker`, `Grex.Phase1`, and
+`Grex.Consent` can all reference them without import cycles:
+
+* `Manifest.validated` — predicate witnessing the Rust validator gate
+  (NFC-dedup, no `..`, no junctions, no gitfile, no Windows-special).
+* `DestClass` — five-way destination classifier output.
+* `ConsentResult` — five refusal kinds returned by `recursive_consent_walk`.
+
+Plus three opaque pure-model placeholders (`classify_dest`,
+`recursive_consent_walk`, `pruneAt`) backed by Rust impls via the new
+bridge axioms in `Grex.Bridge`. They are `opaque` rather than `axiom`
+because they are *functions* (returning data) rather than propositions;
+the bridge axioms then connect their results back to the model state.
+-/
+
+namespace Walker
+
+/-! ### Validator predicate (gates W1 strengthening) -/
+
+/-- **Validator gate.** `Manifest.validated m` holds iff `m` has passed
+    the Rust v1.2.0 manifest validator: child segments are NFC-normalised
+    and deduplicated, contain no `..` segment, point to no NTFS junction
+    or `.git` gitfile, and are not Windows-special device names
+    (`CON`, `PRN`, `AUX`, `NUL`, `COM[1-9]`, `LPT[1-9]`).
+
+    Declared `opaque` because the predicate's *content* is a Rust runtime
+    fact (NFC normalisation, junction probing, device-name lookup table);
+    Lean only needs the *name* to state `validator_strengthens_W1`. The
+    `Manifest` skeleton in this file does not encode any of these
+    properties, so an `opaque Prop` is the correct abstraction. -/
+opaque Manifest.validated : Manifest → Prop
+
+/-! ### Five-way destination classifier (gates `classify_dest_total`) -/
+
+/-- **DestClass.** Output of Phase 1's per-child destination classifier.
+    Rust impl: `crates/grex-core/src/tree/walker.rs::classify_dest`
+    (to be added in Stage 1.e). -/
+inductive DestClass : Type where
+  /-- Destination directory does not exist on disk. -/
+  | Missing
+  /-- Destination exists, has a recognised pack, and is in declared state. -/
+  | PresentDeclared
+  /-- Destination exists with uncommitted FS changes (porcelain dirty). -/
+  | PresentDirty
+  /-- Destination exists and a git operation is mid-flight (rebase / merge /
+      cherry-pick / bisect / `MERGE_HEAD` etc.). -/
+  | PresentInProgress
+  /-- Destination exists on disk but is NOT recorded in the parent's
+      `pack.yaml` — i.e. it is an undeclared occupant of a declared path. -/
+  | PresentUndeclared
+  deriving DecidableEq, Repr
+
+/-- **`classify_dest`.** The pure-model classifier. Declared as `axiom`
+    (rather than `opaque`) because Lean's `opaque` requires an
+    `Inhabited` instance for the codomain, and we want this to remain a
+    pure black-box reference to the Rust impl.
+
+    Rust impl probes the filesystem (`exists`, `is_dir`, `.git/`,
+    `git status`), which is outside the Lean kernel. The
+    `classify_dest_total` theorem in `Grex.Phase1` proves that this
+    function is *total* into `DestClass` (i.e. it can ONLY return one
+    of the five tags — guaranteed structurally). -/
+axiom classify_dest : Path → ChildRef → World → DestClass
+
+/-! ### Recursive consent walk (gates `prune_only_on_clean_consent`) -/
+
+/-- **ConsentResult.** Output of the Phase 2 recursive consent probe
+    that gates pruning of an undeclared dest. Five kinds are mutually
+    exclusive: pruning proceeds iff the result is `Clean`; otherwise
+    the lockfile and filesystem at `d` are left untouched.
+
+    Rust impl: `crates/grex-core/src/tree/walker.rs::recursive_consent_walk`
+    (to be added in Stage 1.f). -/
+inductive ConsentResult : Type where
+  /-- All probes passed; the dest may be pruned. -/
+  | Clean
+  /-- Working tree at `d` (or any descendant) is dirty per
+      `git status --porcelain`. -/
+  | DirtyTree
+  /-- Working tree dirty *only* in `--ignored` paths (build artefacts,
+      `target/`, `node_modules/` etc.). Distinguished from `DirtyTree`
+      because `--force-prune` may consume it where it would NOT consume
+      a tracked-file dirty tree. -/
+  | DirtyTreeWithIgnored
+  /-- A git operation is mid-flight at `d` or a descendant
+      (`.git/rebase-merge`, `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`,
+      `.git/BISECT_LOG`, etc.). -/
+  | GitInProgress
+  /-- `d` itself is a sub-meta and at least one of its declared
+      children is dirty / in-progress / undeclared. The sub-meta cannot
+      be pruned without violating its own children's autonomy. -/
+  | SubMetaWithDirtyChildren
+  deriving DecidableEq, Repr
+
+/-- **`recursive_consent_walk`.** The pure-model recursive consent probe.
+    Declared `axiom` (rather than `opaque`) for the same reason as
+    `classify_dest` — Lean's `opaque` requires an `Inhabited` codomain.
+    Rust impl runs `git status --porcelain --ignored` and `.git/`-state
+    probes across an arbitrary subtree; from Lean's point of view it is
+    a total function into `ConsentResult` whose correctness is connected
+    to the world by `consent_walk_reflects_fs_state`. -/
+axiom recursive_consent_walk : Path → World → ConsentResult
+
+/-- **`pruneAt`.** Apply Phase 2's prune action at path `d`. Removes the
+    on-disk subtree at `d` and the lockfile entry that referenced it
+    from the parent. Declared `axiom` (rather than `opaque`) because
+    `opaque` requires `Inhabited World`, which would force a default
+    `ManifestTree` constructor we don't want to commit to. The bridge
+    axiom `consent_walk_reflects_fs_state` connects the decision-input
+    (consent walk result) to whether `pruneAt` actually mutates the
+    world. -/
+axiom pruneAt : Path → World → World
+
+/-! ### In-progress predicate (gates `git_in_progress_decidable`) -/
+
+/-- **`in_progress_at p w`.** True iff some git operation is mid-flight
+    at `p` in world `w` — i.e. `.git/rebase-merge/`, `.git/MERGE_HEAD`,
+    `.git/CHERRY_PICK_HEAD`, `.git/BISECT_LOG`, `.git/REVERT_HEAD`, or
+    similar marker is present. Opaque: the predicate's content is a
+    filesystem probe sequence in Rust; the bridge axiom
+    `git_in_progress_decidable` asserts the probe is decidable
+    (terminates with a definite Yes/No) at every world point. -/
+opaque in_progress_at : Path → World → Prop
+
+end Walker
+
 end Grex

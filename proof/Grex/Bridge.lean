@@ -11,8 +11,9 @@ filesystem rename atomicity, …). Every axiom here corresponds to a
 specific identifiable line in the Rust impl whose faithful preservation
 is the engineer's responsibility.
 
-This file currently consolidates the **six** bridge axioms previously
-inline in `Grex.Walker` (4) and `Grex.Scheduler` (2):
+This file currently consolidates the **eight** bridge axioms previously
+inline in `Grex.Walker` (4 + 2 new in Stage 0.5.C) and `Grex.Scheduler`
+(2):
 
   Walker bridges (depend on the walker model in `Grex.Types`):
   * `sync_disjoint_commutes`  — rayon scheduler runs disjoint subtrees in
@@ -24,15 +25,20 @@ inline in `Grex.Walker` (4) and `Grex.Scheduler` (2):
                                 (no escapes via symlink traversal)
   * `sync_idempotent`         — stable-input idempotency of the recursive
                                 walker
+  * `git_in_progress_decidable` *(new in Stage 0.5.C)* — the
+                                `.git/`-marker probes used by Phase 1's
+                                `classify_dest` are decidable at every
+                                world point
+  * `consent_walk_reflects_fs_state` *(new in Stage 0.5.C)* —
+                                `recursive_consent_walk` faithfully
+                                reflects FS dirtiness, allowing
+                                `pruneAt` to be conditionally inert
 
   Scheduler bridges (depend on the scheduler model in `Grex.Types`):
   * `runtime_respects_ordering` — Rust scheduler obeys the fixed 5-tier
                                   lock-acquisition order
   * `pack_lock_exclusive`       — fd-lock FIFO mutex semantics for the
                                   per-pack lock
-
-Future v1.2.0 axioms (`git_in_progress_decidable`,
-`consent_walk_reflects_fs_state`) land here in Commit C.
 
 ## Dependency graph
 
@@ -163,6 +169,83 @@ axiom sync_local_writes
 axiom sync_idempotent
     (parent : Path) (w : World) :
     sync parent (sync parent w) = sync parent w
+
+/-! ### v1.2.0 walker bridges (Stage 0.5.C) -/
+
+/-- **Bridge 5 (Stage 0.5.C).** The `.git/`-state markers probed by
+    Phase 1's `classify_dest` to detect a mid-flight git operation
+    (rebase, merge, cherry-pick, bisect, revert) are *decidable* at
+    every world point. I.e. for every `(p, w)`, `in_progress_at p w`
+    is either definitively true or definitively false — there is no
+    third "unknown" state.
+
+    **Rust contract:** the future `crates/grex-core/src/tree/walker.rs::probe_in_progress`
+    (to be added in Stage 1.e). The probe sequence is:
+
+    1. `dest.join(".git/rebase-merge")` exists?
+    2. `dest.join(".git/rebase-apply")` exists?
+    3. `dest.join(".git/MERGE_HEAD")` exists?
+    4. `dest.join(".git/CHERRY_PICK_HEAD")` exists?
+    5. `dest.join(".git/REVERT_HEAD")` exists?
+    6. `dest.join(".git/BISECT_LOG")` exists?
+
+    Each `exists?` call is an atomic syscall (`statx` on Linux,
+    `GetFileAttributes` on Windows); `Decidable` here is the Lean
+    encoding of "the syscall returns YES or NO, never indefinite". This
+    axiom is needed because `in_progress_at` is declared `opaque` (its
+    content is a Rust FS probe), and a `Decidable` instance is the
+    bridge that lets `classify_dest` pattern-match on it.
+
+    **Soundness assumption.** Atomicity of each individual probe is
+    guaranteed by the kernel; *consistency across the six probes* is
+    NOT — a concurrent git operation could land between probe 1 and
+    probe 2. The Rust impl mitigates by holding the per-pack
+    `fd-lock` for the duration of the classification (see
+    `concurrency.md` §Per-pack `PackLock`); this axiom encodes the
+    POST-lock state as decidable. Any change that classifies
+    *without* holding the pack lock would invalidate this axiom. -/
+axiom git_in_progress_decidable :
+    ∀ (p : Path) (w : World), Decidable (in_progress_at p w)
+
+/-- **Bridge 6 (Stage 0.5.C).** `recursive_consent_walk` faithfully
+    reflects the world's FS state, so `pruneAt` becomes inert whenever
+    the walk returns anything other than `Clean`.
+
+    Concretely: if `recursive_consent_walk d w ≠ Clean`, then
+    `pruneAt d w = w` (the world is unchanged — no FS mutation, no
+    lockfile mutation). This is the model-level statement that prune
+    refuses on any non-clean consent.
+
+    **Rust contract:** future
+    `crates/grex-core/src/tree/walker.rs::recursive_consent_walk`
+    (Stage 1.f) plus `prune_undeclared_dest` (Stage 1.f). The walk
+    runs `git status --porcelain --ignored` plus the in-progress
+    probes from `git_in_progress_decidable` recursively across `d`'s
+    subtree. The classification is total (covered by the five
+    `ConsentResult` constructors).
+
+    **Soundness assumption.**
+    * `git status --porcelain --ignored` is a faithful oracle for tree
+      dirtiness — i.e. its exit code and output line set fully
+      characterise FS state w.r.t. tracked + ignored files. This is
+      a libgit2 / git-cli invariant; we assume it holds.
+    * `recursive_consent_walk` aggregates child results without losing
+      information — a single `DirtyTree` anywhere in the subtree
+      bubbles up. Faithfully implemented in Rust; this axiom binds
+      the model to that implementation.
+    * `pruneAt` does NOT short-circuit *before* consulting the consent
+      walk; the Rust impl wires `prune_undeclared_dest` to call
+      `recursive_consent_walk` first and bail if non-clean.
+
+    **Why the converse direction is NOT axiomised.** This axiom only
+    asserts that non-Clean ⇒ no mutation. The Clean ⇒ mutation
+    direction is the actual prune action and is exercised by the
+    existing W7 (`cleanup_safety`) for lockfile-only pruning, and by
+    Stage 1.f's integration tests for FS-level pruning. -/
+axiom consent_walk_reflects_fs_state
+    (d : Path) (w : World) :
+    recursive_consent_walk d w ≠ ConsentResult.Clean →
+    pruneAt d w = w
 
 end Walker
 

@@ -130,4 +130,58 @@ theorem concurrency_safety
     sync p₁ (sync p₂ w) = sync p₂ (sync p₁ w) :=
   sync_disjoint_commutes p₁ p₂ w h₁ h₂
 
+/-! ### Stage 0.5.C — v1.2.0 walker theorems (stubs) -/
+
+/-- **`validator_strengthens_W1` (Stage 0.5.C, sorry — gates Stage 1.c).**
+
+    A *strengthening* of W1 (`boundary_preservation`) under the v1.2.0
+    Rust validator. If `Manifest.validated m` holds — i.e. `m` has been
+    accepted by the Rust validator gate (NFC-deduped, no `..`, no NTFS
+    junctions, no gitfile, no Windows-special device names) — then
+    every declared child of `m` rooted at `parent` descends from
+    `parent`.
+
+    The bare W1 already proves descent for ANY child (the empty-suffix
+    case yields `parent` itself, which trivially descends from
+    `parent`). The strengthening here is meaningful because Stage 1.c
+    will *also* prove that the post-validator child path is non-empty
+    AND not equal to `parent`, ruling out the trivial-empty case as a
+    backdoor. Discharge in commit D1.
+
+    **Note for D1.** The `sorry` body is intentional. The actual proof
+    will likely follow `descends_join` once the discharger unfolds
+    `Manifest.validated` to extract `c.segments ≠ []`. -/
+theorem validator_strengthens_W1
+    (parent : Path) (m : Manifest) (h : Manifest.validated m)
+    (c : ChildRef) (_ : c ∈ m.children) :
+    descends (parent.join c.segments) parent := by
+  sorry
+
+/-- **`fold_tree_lockfile_partition` (Stage 0.5.C, sorry — gates Stage 1.h.3).**
+
+    Folding the per-meta lockfile across a `ManifestTree` produces a
+    *disjoint partition* of lockentries by meta path: each entry
+    appears in exactly one meta's lockfile (its direct parent), no
+    entry is dropped, none is doubled.
+
+    Stated here in its W7-extended form: after `sync parent w` over
+    the entire tree, for every node at path `p` reached by the recursion,
+    `(sync parent w).lock p` equals exactly that node's manifest's
+    declared children mapped to `LockEntry`. Cross-node, the entry sets
+    are disjoint by construction (each entry's `segments` are
+    parent-relative to a unique meta).
+
+    **Note for D4.** This is essentially W2 (`distributed_isolation`)
+    lifted from a single `syncChildren` call to the recursive
+    `syncTree`. Discharge will likely require induction on
+    `ManifestTree` plus reuse of `distributed_isolation` for the leaf
+    case and `sync_local_writes` (bridge 3) for the disjointness across
+    siblings. The sorry placeholder lets `lake build` continue while
+    Stage 1.h.3 lands. -/
+theorem fold_tree_lockfile_partition
+    (parent : Path) (m : Manifest) (w : World) :
+    (sync parent w).lock parent =
+      m.children.map (fun c => ⟨c.segments, c.url⟩) := by
+  sorry
+
 end Grex.Walker
