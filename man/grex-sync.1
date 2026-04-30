@@ -4,7 +4,7 @@
 .SH NAME
 grex\-sync \- Git fetch and pull (recurse by default)
 .SH SYNOPSIS
-\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
+\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-force\-prune\fR] [\fB\-\-force\-prune\-with\-ignored\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
 .SH DESCRIPTION
 Git fetch and pull (recurse by default)
 .SH OPTIONS
@@ -32,6 +32,12 @@ Restrict sync to packs whose workspace\-relative path (or name) matches the glob
 .TP
 \fB\-\-force\fR
 Re\-execute every pack even when its `actions_hash` is unchanged from the prior lockfile. Overrides the M4\-B skip\-on\-hash short\-circuit; dry\-run semantics are unchanged
+.TP
+\fB\-\-force\-prune\fR
+v1.2.0 Stage 1.l — Override Phase 2 prune\-safety refusal for dirty (tracked or untracked\-non\-ignored) working trees. Still refuses ignored content unless `\-\-force\-prune\-with\-ignored` is also set. Never overrides `GitInProgress` (mid\-rebase / merge / cherry\-pick / revert / bisect)
+.TP
+\fB\-\-force\-prune\-with\-ignored\fR
+v1.2.0 Stage 1.l — Strongest prune override. Implies `\-\-force\-prune` and additionally drops trees whose only dirt is in `\-\-ignored` paths (build artefacts, `target/`, `node_modules/`). Never overrides `GitInProgress`
 .TP
 \fB\-\-parallel\fR \fI<PARALLEL>\fR
 Max parallel pack ops during this sync run (feat\-m6\-1).

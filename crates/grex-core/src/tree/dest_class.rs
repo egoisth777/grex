@@ -142,7 +142,7 @@ fn git_status_dirty(dest: &Path) -> bool {
 ///    .git" case at validator time).
 /// 3. [`git_in_progress_at`] returns `true` → [`DestClass::PresentInProgress`].
 /// 4. `!declared_in_manifest` → [`DestClass::PresentUndeclared`].
-/// 5. [`git_status_dirty`] returns `true` → [`DestClass::PresentDirty`].
+/// 5. `git_status_dirty` returns `true` → [`DestClass::PresentDirty`].
 /// 6. Otherwise → [`DestClass::PresentDeclared`].
 ///
 /// `lockfile_entry` is reserved for Stage 1.h's lockfile-vs-disk drift
@@ -154,7 +154,7 @@ fn git_status_dirty(dest: &Path) -> bool {
 /// # BoundedDir integration (Stage 1.d wiring)
 ///
 /// When `dest.parent()` is available, this function opens the parent
-/// as a [`BoundedDir`] and the relative dest as a child handle BEFORE
+/// as a `BoundedDir` and the relative dest as a child handle BEFORE
 /// any `.git/` probe. That binds the kernel resolution to an inode,
 /// closing the canonicalize→probe TOCTOU window. If the dirfd open
 /// fails (parent missing, traversal attempt, symlink escape), the

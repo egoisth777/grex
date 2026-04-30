@@ -31,7 +31,7 @@
 //! # Confinement
 //!
 //! Prune execution opens the dest's PARENT directory as a
-//! [`BoundedDir`] (Stage 1.d primitive) and removes the child by
+//! `BoundedDir` (Stage 1.d primitive) and removes the child by
 //! relative name. cap-std refuses to follow symlinks across the parent
 //! boundary, so a hostile pre-existing symlink at the dest slot cannot
 //! redirect the deletion outside the workspace.
@@ -154,7 +154,7 @@ enum StatusVerdict {
 ///    in-progress operation always wins; even a tracked-dirty tree on
 ///    top of a mid-rebase surfaces as [`ConsentResult::GitInProgress`]
 ///    so the override flags cannot wipe state mid-flight.
-/// 2. [`classify_status`] decides between
+/// 2. `classify_status` decides between
 ///    [`ConsentResult::DirtyTree`] and
 ///    [`ConsentResult::DirtyTreeWithIgnored`].
 /// 3. Sub-directories are recursed into. If `dir` is itself a git
@@ -178,74 +178,94 @@ pub fn recursive_consent_walk(dir: &Path) -> ConsentResult {
 fn walk_inner(dir: &Path, root: bool) -> ConsentResult {
     let dir_is_meta = dir.join(".git").exists();
 
-    // 1. If `dir` is itself a git repo, run the in-progress probe
-    //    UNCONDITIONALLY first. GitInProgress always wins over any
-    //    other verdict, anywhere in the tree.
-    if dir_is_meta && git_in_progress_at(dir) {
-        return ConsentResult::GitInProgress;
-    }
-
-    // 2. Classify `dir`'s own working tree, if it is one.
-    let self_verdict = if dir_is_meta {
-        match classify_status(dir) {
-            StatusVerdict::Clean => ConsentResult::Clean,
-            StatusVerdict::DirtyTree => ConsentResult::DirtyTree,
-            StatusVerdict::DirtyTreeWithIgnored => ConsentResult::DirtyTreeWithIgnored,
-        }
-    } else {
-        ConsentResult::Clean
+    // 1+2. If `dir` itself is a meta, classify its own state. An
+    //      in-progress operation here returns immediately and wins
+    //      over any other verdict in the tree.
+    let self_verdict = match self_dir_verdict(dir, dir_is_meta) {
+        Ok(v) => v,
+        Err(in_progress) => return in_progress,
     };
 
-    // 3. Recurse into sub-directories. We always descend so that an
+    // 3. Recurse into sub-directories. We always descend so an
     //    in-progress sub-meta or a dirty sub-meta hidden behind a
-    //    gitignore line surfaces; the outer's own status alone can
-    //    miss a sub-meta whose contents are gitignored at the parent
-    //    level. The descent short-circuits on GitInProgress.
-    let mut sub_meta_dirty = false;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(ft) = entry.file_type() else { continue };
-            // We only recurse into real directories. Symlinks are
-            // not followed — cap-std would refuse them on the prune
-            // side anyway, and on the walk side following them risks
-            // double-counting or escaping the workspace.
-            if !ft.is_dir() {
-                continue;
-            }
-            if path.file_name().is_some_and(|n| n == ".git") {
-                continue;
-            }
-            let child_verdict = walk_inner(&path, /* root */ false);
-            match child_verdict {
-                ConsentResult::Clean => continue,
-                ConsentResult::GitInProgress => return ConsentResult::GitInProgress,
-                _ => {
-                    sub_meta_dirty = true;
-                }
-            }
+    //    gitignore line still surfaces.
+    let _ = root;
+    match walk_children(dir) {
+        ChildVerdict::SawGitInProgress => ConsentResult::GitInProgress,
+        ChildVerdict::AllClean => self_verdict,
+        // 4. A descendant came back dirty. If `dir` is itself a
+        //    meta, wrap as SubMetaWithDirtyChildren; otherwise pass
+        //    the signal upward as DirtyTree and an outer meta will
+        //    wrap it on its own aggregation step.
+        ChildVerdict::SawDirty if dir_is_meta => ConsentResult::SubMetaWithDirtyChildren,
+        ChildVerdict::SawDirty => ConsentResult::DirtyTree,
+    }
+}
+
+/// Compute the local (non-recursive) verdict for `dir` given whether
+/// it is itself a git working tree. Returns `Err(GitInProgress)` to
+/// signal that the caller MUST short-circuit — an in-progress git
+/// operation always wins over any other verdict, anywhere in the
+/// tree, so no further classification is meaningful.
+fn self_dir_verdict(dir: &Path, dir_is_meta: bool) -> Result<ConsentResult, ConsentResult> {
+    if !dir_is_meta {
+        return Ok(ConsentResult::Clean);
+    }
+    if git_in_progress_at(dir) {
+        return Err(ConsentResult::GitInProgress);
+    }
+    Ok(match classify_status(dir) {
+        StatusVerdict::Clean => ConsentResult::Clean,
+        StatusVerdict::DirtyTree => ConsentResult::DirtyTree,
+        StatusVerdict::DirtyTreeWithIgnored => ConsentResult::DirtyTreeWithIgnored,
+    })
+}
+
+/// Aggregate verdict across `dir`'s sub-directories. Recurses via
+/// [`walk_inner`] and folds the per-child results into one of three
+/// outcomes the caller dispatches on.
+fn walk_children(dir: &Path) -> ChildVerdict {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return ChildVerdict::AllClean;
+    };
+    let mut saw_dirty = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(ft) = entry.file_type() else { continue };
+        // We only recurse into real directories. Symlinks are
+        // not followed — cap-std would refuse them on the prune
+        // side anyway, and on the walk side following them risks
+        // double-counting or escaping the workspace.
+        if !ft.is_dir() {
+            continue;
+        }
+        if path.file_name().is_some_and(|n| n == ".git") {
+            continue;
+        }
+        match walk_inner(&path, /* root */ false) {
+            ConsentResult::Clean => continue,
+            ConsentResult::GitInProgress => return ChildVerdict::SawGitInProgress,
+            _ => saw_dirty = true,
         }
     }
+    if saw_dirty {
+        ChildVerdict::SawDirty
+    } else {
+        ChildVerdict::AllClean
+    }
+}
 
-    // 4. Aggregate. If a descendant came back dirty AND `dir` is
-    //    itself a meta, that's the SubMetaWithDirtyChildren shape
-    //    regardless of `dir`'s own porcelain status. The wrap fires
-    //    at every meta level in the recursion (not just the root),
-    //    so an inner dirty sub-meta nested below a clean inner meta
-    //    still surfaces correctly when the outer call sees the wrap.
-    if sub_meta_dirty && dir_is_meta {
-        return ConsentResult::SubMetaWithDirtyChildren;
-    }
-    if sub_meta_dirty {
-        // `dir` is a plain directory holding a dirty sub-meta. Pass
-        // the dirtiness signal upward as DirtyTree; an outer meta
-        // will wrap it into SubMetaWithDirtyChildren on its own
-        // aggregation step.
-        return ConsentResult::DirtyTree;
-    }
-    // No descendant was dirty — `dir`'s own status is the verdict.
-    let _ = root;
-    self_verdict
+/// Folded result of [`walk_children`]. Three-way: every descendant was
+/// clean, at least one descendant was dirty (kind hoisted to a single
+/// flag — the caller decides whether to wrap into
+/// [`ConsentResult::SubMetaWithDirtyChildren`] or pass through as
+/// [`ConsentResult::DirtyTree`]), or a descendant was mid-flight in a
+/// git operation (always short-circuits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildVerdict {
+    AllClean,
+    SawDirty,
+    SawGitInProgress,
 }
 
 /// Phase 2 prune-safety entry point. Discharges Lean theorem
@@ -260,7 +280,7 @@ fn walk_inner(dir: &Path, root: bool) -> ConsentResult {
 ///    level matrix). If overridden → execute deletion. Otherwise →
 ///    return [`TreeError::DirtyTreeRefusal`] with the matching kind.
 ///
-/// Deletion is performed via cap-std under [`BoundedDir`] so a
+/// Deletion is performed via cap-std under `BoundedDir` so a
 /// hostile pre-existing symlink at the dest slot cannot redirect the
 /// rm-rf outside the workspace.
 ///
