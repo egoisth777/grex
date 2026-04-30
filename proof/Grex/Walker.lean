@@ -154,8 +154,8 @@ theorem concurrency_safety
 theorem validator_strengthens_W1
     (parent : Path) (m : Manifest) (h : Manifest.validated m)
     (c : ChildRef) (_ : c ∈ m.children) :
-    descends (parent.join c.segments) parent := by
-  sorry
+    descends (parent.join c.segments) parent :=
+  descends_join parent c.segments
 
 /-- **`fold_tree_lockfile_partition` (Stage 0.5.C, sorry — gates Stage 1.h.3).**
 
