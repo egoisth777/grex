@@ -8,7 +8,7 @@
 //! 3. Execute every action via a pluggable [`ActionExecutor`]
 //!    ([`PlanExecutor`] for dry-run, [`FsExecutor`] for wet-run).
 //! 4. Record each step as an [`Event::Sync`] entry in the pack-root's
-//!    `.grex/grex.jsonl` event log.
+//!    `.grex/events.jsonl` event log.
 //!
 //! # Traversal order
 //!
@@ -371,6 +371,11 @@ pub enum SyncError {
         #[source]
         source: globset::Error,
     },
+    /// Migrating the v1.x event log (`grex.jsonl`) to the v2 canonical
+    /// path (`.grex/events.jsonl`) failed. Operator-level resolution
+    /// (check filesystem permissions, free disk space, then retry).
+    #[error("event-log migration failed: {0}")]
+    EventLogMigration(#[source] crate::manifest::ManifestError),
 }
 
 impl Clone for SyncError {
@@ -418,6 +423,12 @@ impl Clone for SyncError {
                     required: format!("{pattern}: {source}"),
                 }],
             },
+            Self::EventLogMigration(source) => Self::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: "<event-log-migration>".into(),
+                    required: source.to_string(),
+                }],
+            },
         }
     }
 }
@@ -451,8 +462,7 @@ pub fn run(
     // Stage 2 is signature-only — silence "unused parameter" without
     // hiding it behind `_` (downstream stages will read it).
     let _ = cancel;
-    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
-    ensure_workspace_dir(&workspace)?;
+    let workspace = prepare_workspace(pack_root, opts)?;
     let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
     let _ws_guard = match ws_lock.try_acquire() {
         Ok(Some(g)) => g,
@@ -896,6 +906,16 @@ fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> PathBuf {
     pack_root_dir(pack_root)
 }
 
+/// Resolve the workspace, ensure the directory exists, and run the v1→v2
+/// event-log migration. Extracted so [`run`] and [`teardown`] stay under
+/// the workspace's 50-LOC per-function lint threshold.
+fn prepare_workspace(pack_root: &Path, opts: &SyncOptions) -> Result<PathBuf, SyncError> {
+    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
+    ensure_workspace_dir(&workspace)?;
+    crate::manifest::ensure_event_log_migrated(&workspace).map_err(SyncError::EventLogMigration)?;
+    Ok(workspace)
+}
+
 /// If `pack_root` points at a yaml file, use its parent; otherwise use it.
 fn pack_root_dir(pack_root: &Path) -> PathBuf {
     let is_yaml = matches!(pack_root.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"));
@@ -909,9 +929,12 @@ fn pack_root_dir(pack_root: &Path) -> PathBuf {
     }
 }
 
-/// Compute the `.grex/grex.jsonl` path next to the pack root.
+/// Compute the `.grex/events.jsonl` path next to the pack root.
+///
+/// Delegates to [`crate::manifest::event_log_path`] (single source of
+/// truth for the canonical event-log location).
 fn event_log_path(pack_root: &Path) -> PathBuf {
-    pack_root_dir(pack_root).join(".grex").join("grex.jsonl")
+    crate::manifest::event_log_path(&pack_root_dir(pack_root))
 }
 
 /// Compute the sidecar lock path next to the event log. One canonical slot
@@ -1770,8 +1793,7 @@ pub fn teardown(
     cancel: &CancellationToken,
 ) -> Result<SyncReport, SyncError> {
     let _ = cancel;
-    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
-    ensure_workspace_dir(&workspace)?;
+    let workspace = prepare_workspace(pack_root, opts)?;
     let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
     let _ws_guard = match ws_lock.try_acquire() {
         Ok(Some(g)) => g,

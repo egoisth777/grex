@@ -129,8 +129,8 @@ fn build_layout() -> Layout {
     fs::write(root.join(".grex/pack.yaml"), parent_yaml).unwrap();
 
     // Write a REPOS.json that mirrors the flat-sibling layout for the
-    // import step. `grex import` writes `grex.jsonl` rows; the parent
-    // `pack.yaml` is independent of that registry.
+    // import step. `grex import` writes `.grex/events.jsonl` rows; the
+    // parent `pack.yaml` is independent of that registry.
     let repos_json = format!(
         r#"[
   {{"url": "{}", "path": "{}"}},
@@ -254,7 +254,7 @@ fn sync_with_workspace_override_routes_children_to_override_dir() {
 #[test]
 fn import_writes_manifest_and_sync_walks_flat_siblings() {
     let layout = build_layout();
-    let manifest = layout.root.join("grex.jsonl");
+    let manifest = layout.root.join(".grex").join("events.jsonl");
     let repos_json = layout.root.join("REPOS.json");
 
     // Step 1: `grex import` — writes the manifest at the parent root.
@@ -268,7 +268,7 @@ fn import_writes_manifest_and_sync_walks_flat_siblings() {
         ])
         .assert()
         .success();
-    assert!(manifest.exists(), "import must produce grex.jsonl");
+    assert!(manifest.exists(), "import must produce .grex/events.jsonl");
     let manifest_lines: Vec<String> =
         fs::read_to_string(&manifest).unwrap().lines().map(str::to_string).collect();
     assert_eq!(manifest_lines.len(), 3, "one row per child");

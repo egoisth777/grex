@@ -35,7 +35,7 @@ fn seed_n(path: &Path, n: usize) {
 #[test]
 fn truncated_last_event_recovers_99() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 100);
 
     // Truncate a few bytes off the end to corrupt the final line.
@@ -51,7 +51,7 @@ fn truncated_last_event_recovers_99() {
 #[test]
 fn truncated_middle_event_corruption_error() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 100);
 
     // Scramble a byte somewhere in the middle.
@@ -107,7 +107,7 @@ fn atomic_write_interruption_keeps_original() {
 // boundary case — line is still complete; offset>=1 cuts actual JSON).
 fn run_truncation_sweep_for_offset(offset: u64) {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 100);
 
     // Measure the last line's content length (excluding trailing '\n')
@@ -181,7 +181,7 @@ fn truncation_byte_boundary_sweep_55() {
 #[test]
 fn truncation_in_middle_line_is_hard_error() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 100);
 
     // Locate the start of line 50 and overwrite its opening '{' with 'X'.
@@ -224,7 +224,7 @@ fn truncation_in_middle_line_is_hard_error() {
 #[test]
 fn semantic_corruption_wrong_event_is_flagged_or_documented() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 5);
 
     // Append a valid Event::Add but with an id that collides / is nonsense
@@ -257,7 +257,7 @@ fn semantic_corruption_wrong_event_is_flagged_or_documented() {
 #[test]
 fn non_utf8_byte_injection_in_tail() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 10);
 
     // Append a line of invalid UTF-8 terminated with \n. Since it is the
@@ -285,7 +285,7 @@ fn non_utf8_byte_injection_in_tail() {
 #[test]
 fn read_all_during_active_append_write_race() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
     seed_n(&p, 20);
 
     let write_lock = Arc::new(Mutex::new(()));
@@ -341,7 +341,7 @@ fn read_all_during_active_append_write_race() {
 #[test]
 fn nul_byte_in_line_handled() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     let with_nul = Event::Add {
         ts: base(),
@@ -372,7 +372,7 @@ fn nul_byte_in_line_handled() {
 #[test]
 fn oversized_line_handled() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
 
     let big = "A".repeat(10 * 1024 * 1024); // 10 MiB
     let ev = Event::Add {

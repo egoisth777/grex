@@ -6,7 +6,7 @@
 //! pins to stderr (`crates/grex-mcp/tests/stdout_discipline.rs`); this
 //! test pins the discipline for the rest of the CLI.
 //!
-//! Strategy: seed a workspace whose `grex.jsonl` ends with a torn
+//! Strategy: seed a workspace whose `.grex/events.jsonl` ends with a torn
 //! (incomplete) trailing line. The M3 manifest reader recovers from
 //! this by emitting a `tracing::warn!` ("discarding torn trailing
 //! line in manifest") and returning the prefix events. Running
@@ -29,10 +29,11 @@ fn bin() -> Command {
 fn doctor_json_stdout_stays_pure_when_tracing_warn_fires() {
     let dir = tempfile::tempdir().unwrap();
 
-    // Seed `grex.jsonl` with one valid Add event followed by a torn
-    // trailing line (no terminating newline, truncated JSON). The
+    // Seed `.grex/events.jsonl` with one valid Add event followed by a
+    // torn trailing line (no terminating newline, truncated JSON). The
     // M3 reader recovers from this by emitting a `tracing::warn!`.
-    let manifest = dir.path().join("grex.jsonl");
+    let manifest = dir.path().join(".grex/events.jsonl");
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
     let mut payload = String::new();
     payload.push_str(
         r#"{"op":"add","ts":"2026-04-23T10:00:00Z","id":"a","url":"https://example/a","path":"a","type":"declarative","schema_version":"1"}"#,

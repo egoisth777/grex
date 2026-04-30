@@ -17,7 +17,7 @@ fn add_url_only_writes_manifest_and_infers_path() {
         .success()
         .stdout(contains("added"));
 
-    let raw = fs::read_to_string(dir.path().join("grex.jsonl")).expect("manifest written");
+    let raw = fs::read_to_string(dir.path().join(".grex/events.jsonl")).expect("manifest written");
     assert_eq!(raw.lines().count(), 1);
     assert!(raw.contains(r#""id":"repo""#));
     assert!(raw.contains(r#""url":"https://example.com/org/repo.git""#));
@@ -36,7 +36,7 @@ fn add_explicit_path_is_preserved() {
         .success()
         .stdout(contains("custom-path"));
 
-    let raw = fs::read_to_string(dir.path().join("grex.jsonl")).expect("manifest written");
+    let raw = fs::read_to_string(dir.path().join(".grex/events.jsonl")).expect("manifest written");
     assert!(raw.contains(r#""id":"custom-path""#));
     assert!(raw.contains(r#""path":"custom-path""#));
 }
@@ -52,5 +52,5 @@ fn add_global_dry_run_does_not_write_manifest() {
         .success()
         .stdout(contains("DRY-RUN: would add"));
 
-    assert!(!dir.path().join("grex.jsonl").exists());
+    assert!(!dir.path().join(".grex/events.jsonl").exists());
 }

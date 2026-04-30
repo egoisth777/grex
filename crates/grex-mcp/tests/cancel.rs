@@ -224,7 +224,7 @@ async fn cancel_permit_released_under_budget() {
     let state = ServerState::new(
         grex_core::Scheduler::new(PARALLEL),
         grex_core::Registry::default(),
-        workspace.path().join("grex.jsonl"),
+        workspace.path().join(".grex").join("events.jsonl"),
         workspace.path().to_path_buf(),
     );
     let scheduler = state.scheduler.clone();
@@ -378,7 +378,7 @@ async fn cancel_pack_lock_released_under_budget() {
         // permit would mask a leaked PackLock; PARALLEL=2 disambiguates.
         grex_core::Scheduler::new(2),
         grex_core::Registry::default(),
-        workspace.path().join("grex.jsonl"),
+        workspace.path().join(".grex").join("events.jsonl"),
         workspace.path().to_path_buf(),
     );
     let server = GrexMcpServer::new(state);
@@ -527,7 +527,7 @@ async fn drive_cancel_for_verb(verb: &str) {
     let state = ServerState::new(
         grex_core::Scheduler::new(PARALLEL),
         grex_core::Registry::default(),
-        workspace.path().join("grex.jsonl"),
+        workspace.path().join(".grex").join("events.jsonl"),
         workspace.path().to_path_buf(),
     );
     let server = GrexMcpServer::new(state);

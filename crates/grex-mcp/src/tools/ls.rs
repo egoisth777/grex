@@ -81,7 +81,7 @@ mod tests {
         crate::ServerState::new(
             grex_core::Scheduler::new(1),
             grex_core::Registry::default(),
-            root.join("grex.jsonl"),
+            root.join(".grex").join("events.jsonl"),
             root.to_path_buf(),
         )
     }

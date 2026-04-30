@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn add_pack_appends_add_event() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         let report = add_pack(
             &manifest,
             AddRequest {
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn add_pack_dry_run_does_not_write_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = dir.path().join("grex.jsonl");
+        let manifest = dir.path().join(".grex/events.jsonl");
         let report = add_pack(
             &manifest,
             AddRequest { url: "".into(), path: "local".into(), pack_type: "declarative".into() },

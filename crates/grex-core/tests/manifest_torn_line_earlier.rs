@@ -57,7 +57,8 @@ fn corrupt_line(path: &Path, target: usize) {
 #[test]
 fn earlier_corruption_hard_errors() {
     let dir = tempdir().unwrap();
-    let p = dir.path().join("grex.jsonl");
+    let p = dir.path().join(".grex/events.jsonl");
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
 
     // Write garbage as line 1.
     let mut f = OpenOptions::new().create(true).append(true).open(&p).unwrap();
@@ -96,7 +97,7 @@ fn corruption_at_various_line_positions() {
 
     for &target in &targets {
         let dir = tempdir().unwrap();
-        let p = dir.path().join("grex.jsonl");
+        let p = dir.path().join(".grex/events.jsonl");
         write_n_events(&p, N);
         corrupt_line(&p, target);
 
