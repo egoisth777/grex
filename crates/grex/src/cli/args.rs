@@ -67,6 +67,11 @@ pub enum Verb {
     Exec(ExecArgs),
     /// Tear down a pack tree (reverse of `sync`/`install`).
     Teardown(TeardownArgs),
+    /// Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt-in,
+    /// idempotent). Thin shim over the v1.2.0 Stage 1.h library
+    /// migrator (`grex_core::lockfile::migrate_v1_1_1`).
+    #[command(name = "migrate-lockfile")]
+    MigrateLockfile(MigrateLockfileArgs),
 }
 
 #[derive(Args, Debug)]
@@ -276,6 +281,19 @@ pub struct ExecArgs {
     /// Shell command and args to execute.
     #[arg(trailing_var_arg = true)]
     pub cmd: Vec<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct MigrateLockfileArgs {
+    /// Workspace root (the meta whose `.grex/grex.lock.jsonl` to
+    /// migrate). Defaults to the current working directory.
+    #[arg(long, value_name = "PATH")]
+    pub workspace: Option<std::path::PathBuf>,
+
+    /// Inspect-only: detect schema version and report what would happen
+    /// without writing. Lockfile bytes are unchanged.
+    #[arg(long = "dry-run", short = 'n')]
+    pub dry_run: bool,
 }
 
 #[derive(Args, Debug)]
