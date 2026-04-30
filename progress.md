@@ -2,6 +2,7 @@
 
 ## Where we are
 **v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
+**v1.2.0 IN-FLIGHT** on `feat/v1.2.0-nested-children` @ `e55c0c3`. Stage 0 design SIGN-OFF complete (2026-04-29); 5 deferred decisions resolved (TOCTOU=hybrid `openat2(RESOLVE_BENEATH)`+`cap-std`, scheduler=rayon, glyph=keep-legacy `~`, Lean4=mandatory-gate, auto-migrate=default-off). No PR yet.
 
 ## Endpoint (2026-04-29, v1.2.0 design SIGN-OFF — ready for impl Stage 0)
 - **Active branch:** `feat/v1.2.0-nested-children` cut off `main` at SHA `d45a061`. 4 prior commits + this progress update:
@@ -788,3 +789,21 @@ M4 stage order (shipped 2026-04-20): A → B → C → D → E. All 5 stages ✓
 - E: Discovery hook (`inventory::submit!` behind `plugin-inventory` feature; default OFF); v2 foundation. [PR #21, squash-merge commit `5206f02` on `main`]
 
 See `.omne/cfg/m3-review-findings.md` for the M3 review-series master finding list and mapping table (finding → PR → resolution).
+
+## Endpoint (2026-04-29, feat/v1.2.0-nested-children — Stage 0 decisions locked)
+_(extends prior 2026-04-29 "v1.2.0 design SIGN-OFF" endpoint with locked open-question resolutions)_
+- **Branch / commit coords:** `feat/v1.2.0-nested-children` @ `e55c0c3` (cut off `main` SHA `d45a061`). No PR yet (Stage 0 in progress).
+- **5 deferred decisions — RESOLVED (carried forward from prior endpoint's open-question list):**
+  1. **TOCTOU mitigation: hybrid.** `openat2(RESOLVE_BENEATH)` on Linux (kernel-enforced boundary) + `cap-std` on Windows/Mac (capability-based dirfd handles, userspace). Closes the canonicalize→clone race window per `walker.md` §326. Walker.md already specifies this shape.
+  2. **Scheduler: rayon.** Sync work-stealing. Reasons: M6 invariants (Lean4 I1 `no_double_lock`) prove sync bounded-semaphore + per-pack `.grex-lock` + manifest fd-lock — reuse inherits proof. libgit2 (`git2` crate) is sync; tokio wrap = `spawn_blocking` thread-pool churn with no payoff. Disjoint-subtree parallelism (Invariant 8) = work-stealing native fit. No network multiplexing gain since each git fetch = one TCP/process.
+  3. **`ls` synthetic glyph: option (b) keep legacy.** Keep `~` marker for legacy lockentries with `synthetic: true` (v1.1.1 carryover). New v1.2.0 lockentries never set `synthetic` (field semantically dead per `walker.md` §302). Self-extincts as users re-sync. Preserves migration-window UX.
+  4. **Lean4 proof: MANDATORY GATE (elevated to permanent rule).** Lean4 proof for non-simple algorithms (incl. concurrent algos) must be written and compile-success (= proved) BEFORE any code change. New rule persists to `.omne/schemas/rules.md` as Rule 8. Implication for v1.2.0: bridge-axiom proof (already at `cee83d7`) covers walker invariants 1–8; new proof obligation for any scheduler/locking algo updates that go beyond M6 reuse. Lean CI gate = mandatory, NOT deferred.
+  5. **Auto-migrate v1.1.1→v1.2.0 lockfile: default-OFF.** Modular implementation, isolated unit, removable post-migration window without affecting other units. v1.2.0 binary encountering v1.1.1 lockfile errors with `v1.1.1 lockfile detected, run grex migrate-lockfile`. No silent rewrites. `--migrate-lockfile` flag opt-in.
+- **Symbol-explanation rule (collaboration):** Going forward, agent must explain new concepts/symbols with ambiguous meaning before first use. Persists to `.omne/schemas/rules.md` as Rule 9.
+- **Glyph clarification recorded:** `~` in `grex ls` output = "synthesized child marker" (walker fabricated scripted-no-hooks pack for child with `.git/` but no own `pack.yaml`). NOT a parent-pack symbol. Parent pack = `<meta>/.grex/pack.yaml`, has no glyph in `ls`.
+- **Next steps:**
+  1. Update openspec triplet `feat-v1.2.0-nested-children/{proposal,design,tasks}.md` to bake decisions (concurrent task — separate subagent in flight).
+  2. Update SSOT `.omne/schemas/rules.md` Rules 8+9 (concurrent task).
+  3. Self-review: spawn parallel zero-state review agents on each artifact.
+  4. Then: open openspec PR (Stage 0 close).
+  5. Then: cut impl branch, begin Stage 1a — but ONLY after Lean4 proof for any new concurrent-algo work compiles.
