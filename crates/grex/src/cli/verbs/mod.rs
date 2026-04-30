@@ -4,6 +4,7 @@ pub mod exec;
 pub mod import;
 pub mod init;
 pub mod ls;
+pub mod migrate_lockfile;
 pub mod rm;
 pub mod run;
 pub mod serve;

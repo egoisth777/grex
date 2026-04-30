@@ -27,5 +27,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Verb::Run(a) => verbs::run::run(a, &cli.global, &cancel),
         Verb::Exec(a) => verbs::exec::run(a, &cli.global, &cancel),
         Verb::Teardown(a) => verbs::teardown::run(a, &cli.global, &cancel),
+        Verb::MigrateLockfile(a) => verbs::migrate_lockfile::run(a, &cli.global, &cancel),
     }
 }
