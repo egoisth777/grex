@@ -141,6 +141,21 @@ pub struct SyncArgs {
     #[arg(long)]
     pub force: bool,
 
+    /// v1.2.0 Stage 1.l — Override Phase 2 prune-safety refusal for
+    /// dirty (tracked or untracked-non-ignored) working trees. Still
+    /// refuses ignored content unless `--force-prune-with-ignored` is
+    /// also set. Never overrides `GitInProgress` (mid-rebase / merge /
+    /// cherry-pick / revert / bisect).
+    #[arg(long = "force-prune")]
+    pub force_prune: bool,
+
+    /// v1.2.0 Stage 1.l — Strongest prune override. Implies
+    /// `--force-prune` and additionally drops trees whose only dirt is
+    /// in `--ignored` paths (build artefacts, `target/`, `node_modules/`).
+    /// Never overrides `GitInProgress`.
+    #[arg(long = "force-prune-with-ignored")]
+    pub force_prune_with_ignored: bool,
+
     /// Max parallel pack ops during this sync run (feat-m6-1).
     ///
     /// Semantics:
@@ -194,6 +209,15 @@ pub struct DoctorArgs {
     /// `.omne/cfg/*.md`). Skipped by default.
     #[arg(long = "lint-config")]
     pub lint_config: bool,
+
+    /// v1.2.0 Stage 1.j — bound the recursive ManifestTree walk.
+    /// Omitted: walk every nested meta exhaustively (default).
+    /// `--shallow 0`: root meta only.
+    /// `--shallow N`: recurse up to `N` levels of nesting (root is
+    /// depth 0; depth-`N` metas are visited but their children are
+    /// not). The walk is read-only at every frame.
+    #[arg(long = "shallow", value_name = "N")]
+    pub shallow: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -446,6 +470,63 @@ mod tests {
     fn unknown_flag_fails() {
         let err = parse(&["init", "--not-a-flag"]).expect_err("unknown flag must fail");
         assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn test_cli_force_prune_flag_parsed() {
+        // v1.2.0 Stage 1.l — `--force-prune` toggles the SyncArgs
+        // bool. Default is `false`.
+        let cli = parse(&["sync", "."]).expect("sync . parses");
+        match cli.verb {
+            Verb::Sync(ref a) => {
+                assert!(!a.force_prune, "default --force-prune must be false");
+                assert!(
+                    !a.force_prune_with_ignored,
+                    "default --force-prune-with-ignored must be false"
+                );
+            }
+            _ => panic!("expected Sync variant"),
+        }
+        let cli = parse(&["sync", ".", "--force-prune"]).expect("sync --force-prune parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert!(a.force_prune, "--force-prune must set true");
+                assert!(
+                    !a.force_prune_with_ignored,
+                    "--force-prune-with-ignored stays default false"
+                );
+            }
+            _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn test_cli_force_prune_with_ignored_flag_parsed() {
+        // v1.2.0 Stage 1.l — `--force-prune-with-ignored` toggles
+        // independently of `--force-prune`. Walker layer interprets the
+        // matrix; CLI just parses the bools.
+        let cli = parse(&["sync", ".", "--force-prune-with-ignored"])
+            .expect("sync --force-prune-with-ignored parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert!(
+                    !a.force_prune,
+                    "--force-prune is independent of --force-prune-with-ignored at parse layer"
+                );
+                assert!(a.force_prune_with_ignored, "--force-prune-with-ignored must set true");
+            }
+            _ => panic!("expected Sync variant"),
+        }
+        // Both flags together: caller's documented "stronger" combo.
+        let cli = parse(&["sync", ".", "--force-prune", "--force-prune-with-ignored"])
+            .expect("sync --force-prune --force-prune-with-ignored parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert!(a.force_prune);
+                assert!(a.force_prune_with_ignored);
+            }
+            _ => panic!("expected Sync variant"),
+        }
     }
 
     #[test]

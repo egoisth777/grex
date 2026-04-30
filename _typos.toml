@@ -6,3 +6,7 @@ invokable = "invokable"
 # `ratatui` is the canonical crate name of a Rust TUI library
 # (github.com/ratatui-org/ratatui). typos flags it as "ratatouille".
 ratatui = "ratatui"
+# `caf` is the NFC test fixture for the word "café" in
+# crates/grex-core/src/pack/validate/child_path.rs (Unicode NFC vs NFD
+# duplicate-path test). typos flags `caf` → `calf`.
+caf = "caf"
