@@ -3,26 +3,60 @@
 ## Where we are
 **v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
 
-## Endpoint (2026-04-29, v1.1.2 design intent — branch cut)
-- **Active branch:** `feat/v1.1.2-nested-children` cut off `main` at SHA `d45a061` (`docs(progress): v1.1.1 SHIPPED endpoint — all 4 crates live + manual verify`).
-- **Phase:** design-intent capture (pre-openspec, pre-impl). No code/manifest/openspec changes yet — this section locks the v1.1.2 contract before triplet drafting.
-- **What v1.1.2 changes (option c — hybrid declarative + synthesis at depth):**
-  - **Disk layout:** flat-sibling → nested. Walker resolves `dest = workspace.join(<nested-path>)` instead of `workspace.join(<bare-name>)`. Tree mirrors the manifest graph (e.g. `tools/foo`, `courses/cpp/cpp-grammar`).
-  - **Validator relaxation:** `crates/grex-core/src/pack/validate/child_path.rs:152` no longer requires bare-name. Nested relative paths allowed; security guards stay (`..`, absolute paths, symlink-cross-boundary still rejected).
-  - **Walker resolver:** `crates/grex-core/src/tree/walker.rs:217` switches from bare-name join to nested-path join. Manifest-graph traversal otherwise unchanged.
-  - **Synthesis at depth:** v1.1.1 in-memory `scripted`-no-hooks `PackManifest` synthesis (trigger: `.git/` present, no `.grex/pack.yaml`; `synthetic: true` lockfile flag) fires unchanged at arbitrary depth. No new trigger, no new flag.
-  - **Lockfile keying:** id-only key collides when `tools/foo` and `vendor/foo` both clone repos named `foo`. Must move to path-keyed or `parent_id+name` composite. Schema bump implied; migration path TBD in design phase.
-  - **Doctor walk scope:** current 1-level on-disk-drift walk under workspace root insufficient for nested layout. Two options to resolve in design: strict (only check declared paths) vs loose (walk to declared depths, warn on undeclared `.git/` dirs). No auto-discovery either way.
-  - **`grex ls`:** already renders manifest graph recursively; under v1.1.2 the rendered tree matches physical disk layout 1:1 (no rendering change required, semantics shift from logical-only to logical=physical).
-- **What v1.1.2 does NOT change:**
-  - Walker remains purely manifest-graph-driven; never reads filesystem to discover children. Undeclared dirs stay invisible to grex.
-  - No auto-discovery (option a, explicitly rejected).
-  - Synthesis trigger and `synthetic: true` flag semantics unchanged — only the resolution depth changes.
-  - Security guards on `child_path.rs` still active for `..`, absolute paths, symlink-cross-boundary.
-  - `pack.yaml` `children:` field shape (`{url, path?, ref?}`) unchanged at the schema level — only the validator's `path` regex relaxes.
-- **SemVer decision:** **MINOR bump 1.1.1 → 1.2.0**, NOT PATCH. Additive feature (nested paths now accepted), but breaks the bare-name-only contract for the `path:` field — any external tool relying on validator rejection of nested paths will see behavior change. User override does not apply here (v1.1.1 was a user-elected PATCH for an additive feature; v1.1.2 has a real semantic break in the validator surface).
-- **Parked:** YAML→TOML manifest format migration deferred to post-v1.1.2 (separate work, no overlap with nested-children scope).
-- **Next action:** draft openspec triplet at `openspec/changes/feat-v1.1.2-nested-children/{proposal,design,tasks}.md` covering: validator relaxation regex + test matrix, walker resolver delta, lockfile keying scheme decision (path-key vs composite + migration), doctor walk-scope decision (strict vs loose), e2e test layout (multi-level nested + mixed declarative/synthetic). Then Stage 1a–1k impl plan mirroring v1.1.1 cadence.
+## Endpoint (2026-04-29, v1.2.0 design SIGN-OFF — ready for impl Stage 0)
+- **Active branch:** `feat/v1.2.0-nested-children` cut off `main` at SHA `d45a061`. 4 prior commits + this progress update:
+  - `027032b` `feat(v2.0.0): rename event log to .grex/events.jsonl + auto-migrate` (subject misnamed v2.0.0; content valid under v1.2.0)
+  - `<TBD>` `docs(claude): forbid auto-memory writes (SSOT-only enforcement)`
+  - `<TBD>` `feat(lean): v1.2.0 walker proof — 8 invariants, 4 bridge axioms`
+  - `<TBD>` `feat(openspec): v1.2.0 nested-children triplet`
+  - `<TBD>` `docs(progress): v1.2.0 design SIGN-OFF endpoint` (this commit)
+  - *(maintainer: fill in 4 SHAs after `git log --oneline main..HEAD`)*
+- **Phase:** Design phase COMPLETE. Ready for impl Stage 0 (openspec PR + branch baseline). R3 review skipped per maintainer (design sound, move to impl).
+- **Architecture (LOCKED — canonical SSOT in grex-inst, mounted at `.omne/`):**
+  - Pack = directory with `.grex/`; `pack.yaml` lives INSIDE `.grex/`.
+  - Distributed lockfile (β): each meta owns `<meta>/.grex/grex.lock.jsonl`, tracking direct children only.
+  - Parent-relative resolution: `dest = current_meta.join(child.path)`. No global workspace anchor.
+  - Recursion entry: cwd at CLI invocation. Cargo-style parallel siblings + sub-meta recursion.
+  - Synthesis RETIRED at sync time — untracked `.git/` is ERROR, requires explicit `grex add`.
+  - `LockEntry.synthetic` kept for backward-compat reads; dead on new writes under v1.2.0.
+  - Cleanup: child removed from manifest → next CLI cmd `rm -rf` dest + delete lockentry.
+  - Validator: allow `/`; reject `..`, absolute paths, symlink-cross-parent-boundary, Unicode-NFC duplicates, Windows junctions, gitfile `.git`.
+  - 8 invariants Lean4-proven (W1–W8 in `lean/Grex/Walker.lean`).
+  - SemVer LOCKED: MINOR (1.1.1 → 1.2.0).
+- **Canonical SSOT artifacts (grex-inst repo, mounted at `.omne/`):**
+  - `.omne/cfg/walker.md` — 350 lines, signed algorithm + 8 invariants + acceptance criteria.
+  - `.omne/cfg/lockfile.md` — distributed model, schema, three-artifact disambiguation.
+  - `.omne/cfg/migration.md` — v1.1.1→v1.2.0 lockfile + synthetic + pack-template + API deprecation.
+  - `.omne/cfg/test-plan.md` — 9 unit + 20 integration + 6 property + CI gates.
+  - `.omne/cfg/api-contract.md` — NEW; SyncOptions deprecation + LockEntry schema + compat matrix.
+  - `.omne/cfg/rust-design-decisions.md` — NEW; 11 sections, 10 code-mechanism decisions + 7 maintainer Qs.
+  - `.omne/cfg/history.md` — milestone history + v1.2.0 retirement section.
+  - `.omne/cfg/mcp.md` — envelope semantic shift section.
+  - `.omne/schemas/rules.md` — 7 numbered behavior principles (added: progress-canonical, SemVer-authority, SSOT-separate-repo).
+- **Local artifacts (grex repo):**
+  - `lean/Grex/Walker.lean` — 445 lines, `lake build` exit 0, 0 sorry, 4 bridge axioms with Rust contract cites.
+  - `openspec/changes/feat-v1.2.0-nested-children/` — proposal.md (60 lines, 12 ACs) + design.md (255 lines) + tasks.md (198 lines, Stage 0 + 1a–1q).
+  - `CLAUDE.md` — `# Memory: SSOT-only (auto-memory DISABLED)` rule (lines 15–24).
+- **Review history:**
+  - R1: 4 reviewers (correctness PASS-with-fixes / adversarial FAIL / maintainability PASS-with-fixes / api-contract FAIL) → 4 fix agents → all R1 BLOCKERs closed.
+  - R2: 10 reviewers (correctness/citations PASS / lean PASS / security/dataloss/maintainability/api-contract/cross-doc PASS-with-fixes / walker-algo PASS-with-fixes / openspec NEEDS-PASS) → 7 fix-pass-2 agents → all R2 BLOCKERs closed.
+  - R3 skipped (maintainer call: design phase complete, move to impl).
+- **5 decisions deferred to maintainer (resolve at Stage 0 / impl):**
+  1. TOCTOU mitigation crate: `cap-std` vs `openat2(RESOLVE_BENEATH)` + `cap-std`.
+  2. Scheduler primitive: rayon vs tokio.
+  3. ls synthetic-marker glyph: keep `~` placeholder (likely fine).
+  4. Lean bridge-axiom CI gate: defer (out-of-scope for v1.2.0).
+  5. `--no-auto-migrate-lockfile` opt-out default-on; reconsider on user pushback.
+- **Memory→SSOT migration (this session):** 12 memory files folded into `.omne/cfg/history.md` + `.omne/schemas/rules.md`; `~/.claude/projects/.../memory/` empty; CLAUDE.md memory rule prevents future drift.
+- **Next actions for next session:**
+  1. Read this endpoint (`progress.md` lines 6–X).
+  2. Read `.omne/cfg/walker.md` for canonical algo.
+  3. Read `openspec/changes/feat-v1.2.0-nested-children/{proposal,design,tasks}.md`.
+  4. Resolve 5 deferred decisions with maintainer.
+  5. Open openspec PR (Stage 0).
+  6. Cut impl branch off `feat/v1.2.0-nested-children`; begin Stage 1a (`LockEntry.path` field add).
+  7. Commit checkpoint: grex-inst SSOT push (separate repo); grex commits `027032b` + 4 design commits to be pushed for openspec PR.
+- **Parked:** YAML→TOML migration (post-v1.2.0); three pre-session SSOT files (`.omne/cfg/{actions.md, plugin-api.md}`) folded into this session's commits — split history available via `git restore` patch on grex-inst working tree if maintainer wants; `crates/grex/.grex/` test artifact — add to `crates/grex/.gitignore` during Stage 1n test fixtures.
 
 ## Endpoint (2026-04-28, v1.1.1 SHIPPED)
 - **Squash-merge:** PR #56 squash-merged to `main`, SHA `3d1b963`. Branch `feat/v1.1.1-impl` deleted.
