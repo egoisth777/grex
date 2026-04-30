@@ -1,8 +1,67 @@
 # progress — grex
 
 ## Where we are
-**v1.1.1 SHIPPED 2026-04-28.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.1.1`). Tag `v1.1.1` on `main` at squash SHA `3d1b963` (PR #56 squash-merged via `gh pr merge 56 --squash --admin --delete-branch`). Manual real-world verify on `E:\repos\code` passes end-to-end: `grex sync .` exit 0 walking all 14 plain-git children (algo-leet, asm-x86, c-grammar, cherno-gl, cis5150-la, cis5190-ml, cis5600-gfx, cis5810-cv, cis6600-maya, course-proj, cpp-grammar, data-structs, demos, proj-starters); idempotent re-sync exit 0 with hash-skip on every child; `grex ls .` shows all 14 with `~ ... (scripted, synthetic)` marker; `grex doctor` reports `OK (synthetic)` for each, zero spurious `unregistered directory on disk` warnings. Auto-migration legacy WARN preserved (conservative — `.grex/workspace/algo-leet` still present, refused to clobber). Detailed v1.1.1 endpoint below.
-**v1.2.0 IN-FLIGHT** on `feat/v1.2.0-nested-children` @ `e55c0c3`. Stage 0 design SIGN-OFF complete (2026-04-29); 5 deferred decisions resolved (TOCTOU=hybrid `openat2(RESOLVE_BENEATH)`+`cap-std`, scheduler=rayon, glyph=keep-legacy `~`, Lean4=mandatory-gate, auto-migrate=default-off). No PR yet.
+**v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`. Stack ship sequence: PR #57 (Stage 0 intention alignment, squash `49c3ec6`) → PR #58 (Stage 0.5 Lean4 proof gate, squash `4501c87`) → PR #59 (Stage 1 Rust impl, squash `2c1791d`). 874 tests pass / 0 fail; `lake build` green / zero `sorry` / zero `admit`. Real-world verify on `E:\repos\code` (14 plain-git children) clean: `grex sync .` exit 0 (idempotent skip on all 14), `grex ls .` nested with legacy `~` glyph, `grex doctor` recursive all OK, installed `grex 1.2.0` reports new flags (`--shallow`, `--force-prune`, `--force-prune-with-ignored`). Detailed v1.2.0 endpoint below; v1.1.1 endpoint preserved further down.
+
+## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)
+**v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`.
+
+**Stack ship sequence:**
+- PR #57 (Stage 0 intention alignment): squash-merged at `49c3ec6`
+- PR #58 (Stage 0.5 Lean4 proof gate): squash-merged at `4501c87`
+- PR #59 (Stage 1 Rust impl): squash-merged at `2c1791d`
+
+**Stage 0.5 — Lean4 proof gate (HARD GATE):**
+- 14 substantive theorems (W1–W8, I1, no_deadlock, V1, C1, C2, F1) + 3 helper lemmas
+- 9 propositional bridge axioms in `proof/Grex/Bridge.lean` (extracted from M6 Walker.lean/Scheduler.lean + 3 v1.2.0 additions)
+- 3 model-placeholder axioms in `proof/Grex/Types.lean` (data-typed opaque stand-ins)
+- `lake build` green; CI module enforces zero `sorry`/`admit` + theorem count + axiom counts
+- SSOT documentation at `.omne/proof/impl-axiom-bridge.md` (separate `grex-inst` repo)
+
+**Stage 1 — Rust impl (13 commits, 11 TDD units):**
+- `LockEntry.path` field + v1.1.1 read-fallback (1.b)
+- Validator new rejects: NFC dup, colon/dollar/tilde-digit, Windows reserved, NTFS reparse, .git-as-file (1.c)
+- TOCTOU `BoundedDir` primitive via cap-std (uniform — Linux openat2 internal) (1.d)
+- `DestClass` 5-way classifier + `UntrackedGitRepos` aggregation (1.e)
+- `ConsentResult` + `recursive_consent_walk` + `phase2_prune` default-deny (1.f)
+- `sync_meta` walker scaffolding + Phase 1/2/3 wiring — sequential cut, rayon deferred to v1.2.x (1.g)
+- Distributed per-meta lockfile + isolated migrator module (1.h)
+- `grex ls` nested + legacy `~` glyph (1.i)
+- `grex doctor` recursive + `--shallow N` (1.j)
+- `--force-prune`/`--force-prune-with-ignored` flags + audit log (1.l)
+- 5 new error variants (1.k) + 5 new SyncOptions fields (1.m)
+
+**Real-world verify on `E:\repos\code` (14 plain-git children):**
+- `grex sync .` exit 0 — all 14 children skipped (no drift, idempotent)
+- `grex ls .` — nested rendering with `~` glyph for legacy synthetic
+- `grex doctor` — recursive scan, all 14 synthetic packs OK
+- Installed binary `grex 1.2.0` confirmed; new flags (`--shallow`, `--force-prune`, `--force-prune-with-ignored`) present in `--help`
+
+**Tests:** 874 total (~120 new since v1.1.1), 0 fail.
+
+**Stage 0 LOCKED decisions all delivered:**
+1. TOCTOU = hybrid (cap-std uniform; Linux openat2 internal)
+2. Scheduler = rayon DEFERRED to v1.2.x (1.g shipped sequential — sound under `sync_disjoint_commutes` single-permit)
+3. ls glyph = keep-legacy `~` for synthetic:true entries
+4. Lean4 = mandatory hard gate (CI enforced)
+5. Auto-migrate lockfile = default-OFF, isolated module per Rule 9 modular-removability
+
+**Deferred to v1.2.1+:**
+- Rayon parallel sibling sync
+- CLI `--migrate-lockfile` flag dispatcher + `grex migrate-lockfile` subcommand (library is in place)
+- Optional quarantine on force-prune
+- Full subtree scan (`grex doctor --scan-undeclared`)
+
+**Process notes:**
+- 3 stacked PRs merged in order (after manual rebase since GitHub didn't auto-update bases on stack PR merges)
+- Pre-PR review pass on Stage 0.5 caught 4 doc-consistency blockers (4 axioms / 8 theorems stale references) + 7 polish nits, all addressed before merge
+- Codex review attempted but Codex CLI unavailable in this environment — discarded per workflow policy
+- 4 PR #59 CI failures (typos, rustdoc, man-drift, code-metrics) caught + fixed in 1 follow-up commit `230ef77`
+
+**Next:**
+- Monitor crates.io install metrics
+- Plan v1.2.1: rayon parallel scheduler + CLI migrate-lockfile dispatcher
+- Continue v2.0 SemVer planning per progress.md long-arc roadmap
 
 ## Endpoint (2026-04-29, v1.2.0 design SIGN-OFF — ready for impl Stage 0)
 - **Active branch:** `feat/v1.2.0-nested-children` cut off `main` at SHA `d45a061`. 4 prior commits + this progress update:
