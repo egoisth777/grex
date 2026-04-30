@@ -8,7 +8,11 @@
 - [Architecture](./concepts/architecture.md)
 - [Pack spec](./concepts/pack-spec.md)
 - [Manifest](./concepts/manifest.md)
+- [Walker](./concepts/walker.md)
+- [Lockfile](./concepts/lockfile.md)
 - [Concurrency](./concepts/concurrency.md)
+- [Force-prune](./concepts/force-prune.md)
+- [TOCTOU](./concepts/toctou.md)
 
 # Reference
 
