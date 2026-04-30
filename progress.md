@@ -1,9 +1,45 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)` (further down). Active follow-up: v1.2.1 doc-debt + rayon + CLI migrate dispatcher (see `milestone.md` Phase v1.2.1). No active branch — main is shipped. Cut new branch off main when starting v1.2.1 impl.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, feat/v1.2.1 — kickoff)` (immediately below). Active branch: `feat/v1.2.1` (cut from `main @ 98d3910`). v1.2.1 is a PATCH release covering 5 deferred items from v1.2.0 — openspec spec landed at `openspec/feat-v1.2.1/spec.md`; next step = item 1 mdbook doc-debt.
+
+**v1.2.1 IN-FLIGHT 2026-04-30.** Branch `feat/v1.2.1` cut from `main @ 98d3910`. SemVer = PATCH (additive only). 5 sub-features in delivery order: (1) mdbook doc-debt, (2) CLI `grex migrate-lockfile` dispatcher, (3) rayon parallel sibling sync, (4) `grex doctor --scan-undeclared`, (5) `--quarantine` flag on force-prune (Lean4 proof-first per Rule 8 — theorem `Grex.Walker.quarantine_snapshot_precedes_delete`). Quarantine layout LOCKED: `<meta>/.grex/trash/<ISO8601>/<basename>/` recursive. See "## Endpoint (2026-04-30, feat/v1.2.1 — kickoff)" immediately below.
 
 **v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`. Stack ship sequence: PR #57 (Stage 0 intention alignment, squash `49c3ec6`) → PR #58 (Stage 0.5 Lean4 proof gate, squash `4501c87`) → PR #59 (Stage 1 Rust impl, squash `2c1791d`). 874 tests pass / 0 fail; `lake build` green / zero `sorry` / zero `admit`. Real-world verify on `E:\repos\code` (14 plain-git children) clean: `grex sync .` exit 0 (idempotent skip on all 14), `grex ls .` nested with legacy `~` glyph, `grex doctor` recursive all OK, installed `grex 1.2.0` reports new flags (`--shallow`, `--force-prune`, `--force-prune-with-ignored`). Detailed v1.2.0 endpoint below; v1.1.1 endpoint preserved further down.
+
+## Endpoint (2026-04-30, feat/v1.2.1 — kickoff)
+**Branch cut from `main @ 98d3910` (commit subject: `docs(handoff): v1.2.1 follow-up entry points + mdbook doc-debt`).** SemVer = PATCH (1.2.0 → 1.2.1; additive only). Openspec spec authored at `openspec/feat-v1.2.1/spec.md` (~250 lines). 5 sub-features queued in this delivery order:
+
+1. **mdbook doc-debt** (lowest risk, no code change). Touches `grex-doc/src/concepts/{walker,lockfile,concurrency,force-prune,toctou}.md` + parallel set under `man/concepts/`. NEW SSOT files `.omne/cfg/force-prune.md` and `.omne/cfg/toctou.md` ship via separate `grex-inst` SSOT-repo commit (per Rule 7), NOT in this branch.
+2. **CLI `grex migrate-lockfile [--dry-run] [--workspace <path>]` dispatcher** (thin shim — library `grex_core::lockfile::migrate_v1_1_1` already shipped v1.2.0 Stage 1.h).
+3. **Rayon parallel sibling sync** (Phase 1 + Phase 3; Phase 2 consent walk stays sequential). Covered by existing `sync_disjoint_commutes` axiom — no new Lean4 theorem.
+4. **`grex doctor --scan-undeclared [--depth N]`** — new walker mode reusing `TreeError::UntrackedChildren` aggregation; read-only diagnostic, no state mutation.
+5. **Optional `--quarantine` flag on `--force-prune` / `--force-prune-with-ignored`** — Lean4 proof-first per Rule 8.
+   - Theorem name: `Grex.Walker.quarantine_snapshot_precedes_delete`.
+   - Quarantine layout LOCKED: `<meta>/.grex/trash/<ISO8601>/<basename>/` per-meta, recursive snapshot, audit-log entry to `<meta>/.grex/events.jsonl` with fsync BEFORE copy fires; snapshot failure aborts prune (no delete). On-disk folder name is `trash/`; conceptual feature name remains "quarantine".
+   - Order of operations (Rule 8): write/extend `proof/Grex/Walker.lean` → `lake build` green → THEN add Rust `--quarantine` code.
+
+**Decisions LOCKED at kickoff:**
+- SemVer = PATCH (every delta is additive: new flag, new subcommand, internal scheduler swap, new doc chapters, new optional `SyncOptions::parallel` field).
+- Quarantine path = `<meta>/.grex/trash/<ISO8601>/<basename>/` (recursive snapshot).
+- Rayon scheduler = no new Lean4 theorem (existing `sync_disjoint_commutes` axiom suffices).
+- mdbook scope split: `grex-doc/` + `man/concepts/` updates land in this branch; `.omne/cfg/{force-prune,toctou}.md` ship via separate SSOT-repo commit.
+
+**Acceptance summary (release-level):**
+1. All 5 sub-features merged to `main`.
+2. `cargo test --workspace` 874+ tests green.
+3. `lake build` green; zero `sorry`/`admit`; new theorem `quarantine_snapshot_precedes_delete` present.
+4. `mdbook build grex-doc/` + `cargo xtask gen-man` exit 0.
+5. Real-world verify on `E:\repos\code` clean.
+6. All 4 crates published at `1.2.1`; tag `v1.2.1` on `main`.
+
+**Next:**
+- Pick up item 1 (mdbook doc-debt). Lowest risk, no code change, unblocks the docs gap on shipped v1.2.0 features.
+- Items 2 → 3 → 4 in order; item 5 starts when its Lean4 proof compiles.
+
+**Process notes:**
+- This kickoff endpoint = openspec spec + progress entry only. No code or doc work yet.
+- Run `python E:\repos\.scripts\test.py` (meta-repo test gate) before claiming work complete; `grex` repo itself has no `.scripts/`.
 
 ## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)
 **v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`.
