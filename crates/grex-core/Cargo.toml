@@ -33,6 +33,13 @@ async-trait = "0.1"
 # CLI override.
 num_cpus = "1.16"
 unicode-normalization = "0.1.25"
+# v1.2.0 Stage 1.d: capability-based dirfd primitive (`fs::boundary`) —
+# closes the canonicalize→clone TOCTOU race window in the walker. Pinned
+# to ^3 per design decision §6 (cap-std v4 dropped `Dir::open_ambient_dir`
+# which the boundary primitive depends on). Cross-platform: cap-std uses
+# `openat2(RESOLVE_BENEATH)` on Linux ≥ 5.6, falls back to manual
+# O_NOFOLLOW component-by-component checks elsewhere.
+cap-std = "3"
 
 [features]
 # Opt-in compile-time auto-registration of Tier-1 built-in action plugins
