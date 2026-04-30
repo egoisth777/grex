@@ -52,6 +52,11 @@ theorem classify_dest_total
     classify_dest parent child w = DestClass.PresentDirty ∨
     classify_dest parent child w = DestClass.PresentInProgress ∨
     classify_dest parent child w = DestClass.PresentUndeclared := by
-  sorry
+  cases h : classify_dest parent child w
+  · left; rfl
+  · right; left; rfl
+  · right; right; left; rfl
+  · right; right; right; left; rfl
+  · right; right; right; right; rfl
 
 end Grex.Walker
