@@ -63,16 +63,18 @@ Two parallel axes:
 
 The single scheduler instance is shared across all metas in the recursion. Each meta acquires an exclusive fd-lock on its own `.grex/` before writing its lockfile, preventing two walkers from racing on the same lockfile (which can happen if two parent metas both declare the same physical directory as a child — caught at validate-time, but the fd-lock is the belt-and-braces backstop).
 
-### Synthesis retired
+### Synthesis retired (Stage 0 decision: keep-legacy `~` glyph)
 
 v1.1.1's synthetic-pack fallback is removed at sync time. The new behaviour:
 
 - Walker scans `<meta>/` for any directory containing `.git/` that is **not** declared in `<meta>/.grex/pack.yaml`'s `children:` list.
 - Each such directory is collected into a `Vec<PathBuf>` accumulator.
 - At end of walk (after all sibling and sub-meta work completes), if the accumulator is non-empty, the walker raises a single `TreeError::UntrackedChildren { paths }` listing every offending path with a one-line fix (`grex add <path>`).
-- The `LockEntry.synthetic` field stays in the schema (forward-readable) but is always `false` for newly written entries under v1.2.0.
+- The `LockEntry.synthetic` field stays in the schema (forward-readable, read-only deprecated) but is always `false` for newly written entries under v1.2.0. The serializer omits the field when `false` to keep new lockfiles clean.
 
-`ls.rs`'s synthesis fallback path is dropped — it now reads strictly from each meta's lockfile.
+**`ls` synthetic glyph (Stage 0 LOCKED — keep-legacy).** `ls.rs` continues to render the `~` marker for any lockentry whose `synthetic` field is `true` (reading forward from v1.1.1 lockfiles). Newly written v1.2.0 entries never carry the marker because they never set `synthetic: true`. The glyph self-extincts as users re-sync; no flag, no migration script, no UX cliff. `ls.rs`'s synthesis *fallback* path (the v1.1.1 code that synthesized lockentries from on-disk `.git/` directories at render time) is dropped — `ls` now reads strictly from each meta's lockfile.
+
+Deprecation path for the `synthetic` field: read-only in v1.2.0; never written; serializer omits when `false`. Removal deferred to 2.0 along with the rest of the v1.1.x compat surface.
 
 ### Cleanup
 
@@ -87,6 +89,8 @@ A `--force-prune` flag bypasses the consent walk (audit-log entry written) for t
 ## 8 invariants (Lean-proven)
 
 Each is a theorem in `lean/Grex/Walker.lean` (368 lines, `lake build` clean, 4 bridge axioms link the abstract walker to the Rust impl).
+
+**Stage 0 LOCKED — Lean4 hard gate.** Per `.omne/schemas/rules.md` Rule 8: any v1.2.0 work introducing a non-simple algorithm beyond M6 reuse requires its Lean4 proof to compile clean (`lake build` green, zero `sorry`, zero `admit`) BEFORE any Rust change lands. The walker-invariant proof at commit `cee83d7` discharges I1–I8; new obligations (if any arise during impl) gate the corresponding Rust stages — see `tasks.md` Stage 0.5.
 
 | # | Invariant | Theorem name | Proof method |
 |---|-----------|--------------|--------------|
@@ -194,24 +198,41 @@ Display impls follow the existing pattern — single-line user-facing message + 
 
 - **Distributed lockfile**: each meta's `.grex/grex.lock.jsonl` is written under a per-meta fd-lock acquired on `<meta>/.grex/` (a flock-style lock on a sentinel file). Two walkers cannot write the same lockfile concurrently.
 - **Per-meta fd-lock**: a sentinel file at `<meta>/.grex/.lock` is `flock`-ed for the duration of the lockfile write. Lock is held only across the write, not the entire walk frame.
-- **Cargo-parallel scheduler**: a `tokio` or `rayon` task pool (final choice in [`rust-design-decisions.md`](./rust-design-decisions.md)). Sibling tasks within one meta and sub-meta tasks across the frontier all share the same pool.
+- **Cargo-parallel scheduler (Stage 0 LOCKED — rayon)**: a `rayon` sync work-stealing pool. Sibling tasks within one meta and sub-meta tasks across the frontier all share the same pool. Tokio is rejected: libgit2 is sync, `spawn_blocking` thread churn buys nothing, and there is no network-multiplexing payoff (each git fetch = one TCP/process). Rayon directly reuses the M6 concurrency primitives — bounded semaphore + per-pack `.grex-lock` + manifest fd-lock — whose correctness is already discharged by the Lean4 `I1 no_double_lock` invariant (commit `cee83d7`); the v1.2.0 scheduler inherits that proof rather than re-deriving it.
 - **No global lock**: there is intentionally no workspace-wide lockfile to lock — that is the entire point of distributing the lockfile.
 
 ## Security
 
-- **TOCTOU mitigation**: every dest path is resolved via `cap-std` (or `openat2(RESOLVE_BENEATH)` on Linux) so the symlink-resolution check and the subsequent `fs::read_dir` happen on the same kernel-confirmed handle. Crate selection final in [`rust-design-decisions.md`](./rust-design-decisions.md). The naive `Path::canonicalize` + `Path::starts_with` pattern is rejected — known TOCTOU race.
+- **TOCTOU mitigation (Stage 0 LOCKED — hybrid `openat2(RESOLVE_BENEATH)` + `cap-std`)**: every dest path is resolved on a kernel-confirmed handle so the symlink-resolution check and the subsequent `fs::read_dir`/`clone` happen against the same boundary-enforced fd. Closes the `canonicalize(dest) → clone(dest)` race window.
+  - **Linux**: `openat2(RESOLVE_BENEATH)` — single syscall, kernel-enforced boundary. Invocation via raw `libc::syscall(SYS_openat2, ...)` or the `openat2` crate (whichever has fewer transitive deps at impl time).
+  - **Windows / macOS**: `cap-std` — capability-based dirfd handles, userspace, cross-platform. Acts as the fallback for platforms without `RESOLVE_BENEATH`.
+  - The naive `Path::canonicalize` + `Path::starts_with` pattern is rejected unconditionally — known TOCTOU race, regardless of platform.
 - **Symlink/junction/gitfile policy**: proper symlinks (created via `New-Item -ItemType SymbolicLink` on Windows, `ln -s` on POSIX) are *allowed* as long as the resolved target stays within the parent meta. Junctions, NTFS reparse points (other than symlinks), and gitfile `.git` files are rejected unconditionally.
 - **Dirty-tree oracle expanded**: `git status --porcelain --ignored` (the `--ignored` flag is required to surface gitignored build artefacts that `--porcelain` alone would miss). In-progress state checks scan for `.git/rebase-merge/`, `.git/rebase-apply/`, `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/BISECT_LOG`, `.git/REVERT_HEAD`, and detached-HEAD detection via `git symbolic-ref HEAD` exit-1.
 
 ## Migration
 
-### v1.1.x → v1.2.0 lockfile read-fallback
+### v1.1.x → v1.2.0 lockfile (Stage 0 LOCKED — default-OFF, explicit opt-in)
 
 - v1.1.x lockfiles live at `<workspace>/.grex/grex.lock.jsonl` (single file, flat).
 - v1.2.0 reader, when invoked from cwd `<meta>`, reads `<meta>/.grex/grex.lock.jsonl` first.
-- If absent and the cwd is the v1.1.x `<workspace>`, the reader detects the legacy single-lockfile shape and migrates it: the v1.1.x lockfile is split into per-meta lockfiles (one per declared meta) and the legacy file is renamed to `grex.lock.jsonl.v1_1.bak`.
-- Per-`LockEntry`, missing `path` field falls back to `entry.id` (the v1.1.x bare-name == path invariant).
-- `synthetic: true` entries from v1.1.1 are accepted but trigger a per-entry advisory log line: `note: synthetic pack <id> — synthesis is retired in v1.2.0; consider 'grex add <path>' to declare it explicitly`.
+- **No silent rewrites.** If the reader detects a v1.1.1-shaped lockfile (single flat file at the cwd, no per-meta distribution), it errors out immediately:
+  > `v1.1.1 lockfile detected, run grex migrate-lockfile`
+- Migration is opt-in via the explicit `--migrate-lockfile` flag (or the `grex migrate-lockfile` subcommand). With the flag, the v1.1.x lockfile is split into per-meta lockfiles (one per declared meta) and the legacy file is renamed to `grex.lock.jsonl.v1_1.bak`.
+- Per-`LockEntry`, missing `path` field falls back to `entry.id` (the v1.1.x bare-name == path invariant) — this fallback is the *read* path; it does not trigger a write.
+- `synthetic: true` entries from v1.1.1 are accepted on read (preserving the `~` glyph in `ls`) but trigger a one-shot advisory log line per walk: `note: synthetic pack <id> — synthesis is retired in v1.2.0; consider 'grex add <path>' to declare it explicitly`.
+
+Rationale: default-OFF preserves the SemVer-MINOR contract. A v1.2.0 binary on a v1.1.1 lockfile must never silently mutate user state on disk. The explicit error + named command keeps users in control of their own data.
+
+### Migration module — isolation contract (Rule 9)
+
+The v1.1.x → v1.2.0 lockfile migrator lives as an **isolated module** with no inbound callers from steady-state code paths. Concrete shape:
+
+- Lives at `grex-core::lockfile::migrate_v1_1_1` (or equivalent — final path decided at impl time, but the module is single-purpose and self-contained).
+- **Inbound callers**: only the `grex migrate-lockfile` subcommand and the `--migrate-lockfile` flag dispatcher. Walker, sync, ls, doctor, remove, add, init — none of these reach into the migrator.
+- **Outbound dependencies**: read v1.1.x lockfile shape, write v1.2.0 per-meta lockfiles, rename legacy file. No coupling back to walker types or scheduler primitives.
+- **Removal path**: in a future minor release (e.g. v1.4 or v1.5), once telemetry shows v1.1.x lockfiles are extinct in the wild, the entire migrator module + its CLI flag + its subcommand can be deleted in a single PR without touching any other unit. This is a deliberate constraint: the migrator is a temporary bridge, not architecture.
+- **Test isolation**: migrator tests live in their own integration test file (`crates/grex-core/tests/lockfile_v1_1_compat.rs`); steady-state walker/sync/ls tests never invoke the migrator path.
 
 ### Event-log migration
 
@@ -229,9 +250,9 @@ The `pack-template` repo (seeded at v1.0.0) gets a v1.2.0 update PR demonstratin
 
 ## Open questions (12 R2 BLOCKERs)
 
-These are the 12 deduped BLOCKERs from the R2 review round. Proposed resolutions; final mechanism choices live in the sibling [`rust-design-decisions.md`](./rust-design-decisions.md) (in-flight, authored by rust-expert subagent).
+These are the 12 deduped BLOCKERs from the R2 review round. Stage 0 has now LOCKED the five mechanism-level decisions (TOCTOU, scheduler, ls glyph, Lean gate, lockfile migration default); the remaining items below carry their R2 resolutions verbatim.
 
-1. **TOCTOU symlink chain.** Resolve via `cap-std` on all platforms, OR `openat2(RESOLVE_BENEATH)` on Linux + `cap-std` elsewhere. Final crate selection deferred to rust-expert.
+1. **TOCTOU symlink chain (Stage 0 LOCKED — hybrid).** `openat2(RESOLVE_BENEATH)` on Linux (kernel-enforced boundary, single syscall) + `cap-std` on Windows/macOS (capability-based dirfd handles, userspace fallback). Closes the `canonicalize(dest) → clone(dest)` race window. Naive `Path::canonicalize` + `Path::starts_with` rejected on every platform. See §Security for invocation detail.
 2. **Windows junctions / NTFS reparse / gitfile `.git`.** Reject all three unconditionally. Proper symlinks (`SymbolicLink` reparse tag) allowed if target stays within parent. Detection via `std::os::windows::fs::FileTypeExt::is_symlink_dir` + reparse-tag inspection (`fsutil reparsepoint query` heuristic, or direct `DeviceIoControl` if a crate exposes it).
 3. **Validator missing Unicode-NFC normalize.** Add `unicode-normalization` crate dependency; NFC-normalise every segment before comparison. Add reject for `:`, `$`, `~<digit>`.
 4. **Detached HEAD / mid-rebase not in dirty-tree oracle.** Expand the oracle: scan `.git/rebase-merge/`, `.git/rebase-apply/`, `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/BISECT_LOG`, `.git/REVERT_HEAD`. Detached HEAD via `git symbolic-ref --quiet HEAD` exit-1.
@@ -250,6 +271,6 @@ Non-blocking R2 CONCERNs (~25) are routed to in-flight fix agents; their resolut
 
 1. **`cap-std` adoption may bring a transitive dep tree.** Mitigation: rust-expert evaluates dep-tree size in [`rust-design-decisions.md`](./rust-design-decisions.md); if the tree is heavy, an alternative is a thin in-house `RESOLVE_BENEATH` wrapper for Linux + a Windows-specific `CreateFileW` helper.
 2. **Cargo-parallel scheduler complicates error reporting.** Mitigation: errors are accumulated in a `Mutex<Vec<TreeError>>`; the walker returns a single aggregated `TreeError::Multiple { errors }` if the accumulator is non-empty at end of walk. Per-error provenance (which meta raised it) is preserved.
-3. **v1.1.x → v1.2.0 lockfile auto-migration writes a `.bak` file the user did not author.** Mitigation: the migration is opt-out via `--no-auto-migrate-lockfile`; with the flag, v1.2.0 errors out and tells the user to run `grex migrate-lockfile` manually. Default-on because v1.1.x users have small lockfiles and the migration is mechanically simple.
+3. **v1.1.x → v1.2.0 lockfile migration could surprise users by mutating on-disk state.** Mitigation (Stage 0 LOCKED — default-OFF): a v1.2.0 binary meeting a v1.1.1 lockfile errors with `v1.1.1 lockfile detected, run grex migrate-lockfile`. No silent rewrites, no `.bak` the user did not author. `--migrate-lockfile` is the explicit opt-in flag. The migrator is an isolated module (see §Migration module — isolation contract) deletable in a future minor release.
 4. **Per-meta fd-lock can deadlock if the same physical directory is declared by two parents.** Mitigation: the validator catches duplicate-physical-dest at validate-time (canonicalise dest, compare; raise `DuplicateChildDest`). Fd-lock is the belt-and-braces backstop.
 5. **Lean proof bridge axioms drift from Rust impl.** Mitigation: bridge axioms are documented in `lean/Grex/Bridge.md` with a "what each axiom assumes about the Rust side" section. Future Rust changes that touch bridge-relevant code paths must update the bridge doc; CI gate pending (out-of-scope for v1.2.0).

@@ -14,12 +14,30 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - [ ] 0.2 Cross-link `.omne/cfg/walker.md` → this triplet, and confirm walker.md acceptance-criteria block points back to `proposal.md`.
 - [ ] 0.3 Update `progress.md` with the v1.2.0 openspec endpoint + refreshed "Where we are" block.
 - [ ] 0.4 Confirm `lean/Grex/Walker.lean` builds clean under `lake build` and the 8 theorems are present (snapshot: 368 lines, 4 bridge axioms).
-- [ ] 0.5 PR description references the locked decisions (parent-relative resolution; distributed lockfile; cargo-parallel; synthesis retired; SemVer MINOR per maintainer override).
+- [ ] 0.5 PR description references the locked decisions: parent-relative resolution; distributed lockfile; rayon cargo-parallel (M6 reuse); synthesis retired with keep-legacy `~` glyph; hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` TOCTOU; Lean4 hard-gate before any Rust impl; default-OFF lockfile auto-migrate; SemVer MINOR per maintainer override.
 - [ ] 0.6 Required CI gates green (typos, build × 3, lake-build, etc.) — markdown-only, should pass trivially.
+- [ ] 0.7 Stage 0.5 (Lean4 proof gate) is queued as a hard prerequisite for Stage 1; cannot start 1a until 0.5 is green.
 
 ---
 
-## Stage 1 — implementation branch (after openspec PR merges)
+## Stage 0.5 — Lean4 proof gate (HARD GATE, blocks Stage 1)
+
+Stage 0 LOCKED decision #4: any new non-simple algorithm work — explicitly including concurrent algorithms beyond M6 reuse — requires the Lean4 proof to compile clean BEFORE any Rust code change lands. This stage is mandatory in v1.2.0; not deferred to v1.2.x.
+
+The bridge-axiom proof at commit `cee83d7` covers walker invariants 1–8 (boundary preservation, distributed isolation, termination, idempotency, sub-meta autonomy, no-untracked, cleanup safety, concurrency safety). Reuse is fine where it covers; new obligations require new theorems.
+
+- [ ] 0.5.1 Audit Stage 1 algorithm surface (validator hybrid TOCTOU resolution, walker phases 1–3, prune-safety + recursive-consent, distributed-lockfile fold, scheduler dispatch, migrator isolation). Identify which obligations are covered by existing invariants I1–I8 + bridge axioms vs. which need new theorems.
+- [ ] 0.5.2 If any new obligation is identified beyond M6 reuse (e.g. rayon scheduler dispatch correctness, recursive-consent walk totality, distributed-lockfile fold isolation), add the theorem stub to `lean/Grex/Walker.lean` (or a sibling module under `lean/Grex/`) with a clear name and statement. List the new theorems explicitly in this task list before discharging them.
+- [ ] 0.5.3 Discharge each new theorem (no `sorry`). Run `lake build` and confirm zero warnings.
+- [ ] 0.5.4 Update `lean/Grex/Bridge.md` if any new bridge axiom is required to link a new theorem to the Rust impl. Document what each new bridge axiom assumes about the Rust side.
+- [ ] 0.5.5 CI gate: `lake build` step in `.github/workflows/ci.yml` (or equivalent) is mandatory and blocking — must already exist; confirm it covers any new files added under `lean/`.
+- [ ] 0.5.6 Snapshot the post-0.5 Lean state in this tasks file: theorem count, file count, `lake build` wall-time. Commit the snapshot before opening the Stage 1 PR.
+- **HARD GATE**: Cannot proceed to Stage 1a until 0.5.1–0.5.6 are all checked and `lake build` is green with zero `sorry`.
+- **Verification**: `cd lean && lake build` exits 0 with no warnings; `grep -r 'sorry' lean/Grex/` returns no matches.
+
+---
+
+## Stage 1 — implementation branch (after openspec PR merges and Stage 0.5 is green)
 
 ### 1a — branch baseline
 
@@ -50,15 +68,17 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - **Verification**: `cargo test -p grex-core validator`.
 - **Depends on**: 1a.
 
-### 1d — TOCTOU mitigation crate adoption
+### 1d — TOCTOU mitigation: hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` (Stage 0 LOCKED)
 
-- [ ] 1d.1 Adopt the crate selected in [`rust-design-decisions.md`](./rust-design-decisions.md) (likely `cap-std`, possibly with `openat2` direct on Linux). Add to `crates/grex-core/Cargo.toml`.
-- [ ] 1d.2 Replace any `Path::canonicalize` + `Path::starts_with` patterns in dest-resolution with the cap-std handle-based check.
-- [ ] 1d.3 Symlink target check happens on the kernel-confirmed handle, not on the path string.
-- [ ] 1d.4 New `TreeError::SymlinkCrossesBoundary { src, target }` variant.
-- [ ] 1d.5 Test: a fixture with a symlink whose target escapes the parent meta is rejected with `SymlinkCrossesBoundary`. Test runs on POSIX + Windows (gated `cfg(unix)` / `cfg(windows)`).
+- [ ] 1d.1 Add `cap-std` to `crates/grex-core/Cargo.toml` for Windows/macOS dirfd handles. Add `openat2` crate (or wire raw `libc::syscall(SYS_openat2, ...)` — pick whichever has fewer transitive deps at impl time) gated `#[cfg(target_os = "linux")]`.
+- [ ] 1d.2 On Linux: dest resolution opens the parent meta dir, then `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` (or `RESOLVE_BENEATH` alone if proper symlinks must traverse) on the relative child path. Single syscall; kernel enforces the boundary.
+- [ ] 1d.3 On Windows/macOS: dest resolution goes through `cap-std::Dir::open_ambient_dir(parent_meta)?.open_dir(child_relative)?` so the boundary check and the subsequent fs ops happen on the same dirfd handle.
+- [ ] 1d.4 Replace every `Path::canonicalize` + `Path::starts_with` pattern in dest-resolution with the handle-based check. Add a clippy-friendly comment marking the naive pattern as TOCTOU-unsafe.
+- [ ] 1d.5 Symlink target check happens on the kernel-confirmed handle (Linux) or the cap-std capability dirfd (Windows/macOS), never on the path string.
+- [ ] 1d.6 New `TreeError::SymlinkCrossesBoundary { src, target }` variant.
+- [ ] 1d.7 Test: a fixture with a symlink whose target escapes the parent meta is rejected with `SymlinkCrossesBoundary`. Test runs on POSIX + Windows (gated `cfg(unix)` / `cfg(windows)`); a separate Linux-only variant exercises the `openat2` path explicitly.
 - **Verification**: `cargo test -p grex-core symlink_boundary`.
-- **Depends on**: 1c.
+- **Depends on**: 0.5 (Lean gate green), 1c.
 
 ### 1e — walker Phase 1 — 5-way branch + untracked aggregation
 
@@ -81,34 +101,39 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - **Verification**: `cargo test -p grex-core prune_consent`. New test `cleanup_consent.rs` end-to-end.
 - **Depends on**: 1e.
 
-### 1g — walker Phase 3 — parent-relative recursion + cargo-parallel
+### 1g — walker Phase 3 — parent-relative recursion + rayon scheduler (Stage 0 LOCKED)
 
 - [ ] 1g.1 Replace global-anchor resolution with `dest = current_meta.join(child.path)`.
 - [ ] 1g.2 Recursion entry: cwd of the CLI verb invocation. Drop the `Workspace`-anchor concept from the walker module.
-- [ ] 1g.3 Adopt the scheduler choice from [`rust-design-decisions.md`](./rust-design-decisions.md) (rayon vs tokio). Sibling tasks within one meta and sub-meta tasks across the recursion frontier share one pool.
-- [ ] 1g.4 Lockfile write under per-meta fd-lock (sentinel file at `<meta>/.grex/.lock`).
-- [ ] 1g.5 Unit test: 4 sibling sub-metas × 4 leaves each completes in ~slowest-chain time, not sum (timing-tolerant via `Barrier`).
+- [ ] 1g.3 Adopt **rayon** sync work-stealing pool (Stage 0 LOCKED). Sibling tasks within one meta and sub-meta tasks across the recursion frontier share one rayon pool. Tokio rejected: libgit2 is sync, no network-multiplexing payoff. Reuse the M6 concurrency primitives (bounded semaphore + per-pack `.grex-lock` + manifest fd-lock) — Lean4 `I1 no_double_lock` already proves these correct (commit `cee83d7`).
+- [ ] 1g.4 Lockfile write under per-meta fd-lock (sentinel file at `<meta>/.grex/.lock`). M6 fd-lock primitive reused verbatim — no new locking primitive.
+- [ ] 1g.5 If Stage 0.5 identified any new scheduler-correctness theorem (e.g. rayon dispatch totality, cross-meta isolation under work-stealing), confirm it is discharged and `lake build` is green before this task ships. Cite the theorem name in the impl PR body.
+- [ ] 1g.6 Unit test: 4 sibling sub-metas × 4 leaves each completes in ~slowest-chain time, not sum (timing-tolerant via `Barrier`).
 - **Verification**: `cargo test -p grex-core parallel_scheduler`.
-- **Depends on**: 1e, 1f.
+- **Depends on**: 0.5 (Lean gate green), 1e, 1f.
 
-### 1h — distributed lockfile (per-meta read/write/fold)
+### 1h — distributed lockfile (per-meta read/write/fold) + isolated migrator (Stage 0 LOCKED — default-OFF)
 
 - [ ] 1h.1 Lockfile reader operates on `<meta>/.grex/grex.lock.jsonl` only — never reads sub-meta lockfiles transitively.
 - [ ] 1h.2 Lockfile writer operates on `<meta>/.grex/grex.lock.jsonl` only — never writes sub-meta lockfiles.
 - [ ] 1h.3 Fold operation for `grex ls`: depth-first walk reading each meta's lockfile in turn.
-- [ ] 1h.4 v1.1.x → v1.2.0 auto-migration: detect single-flat-lockfile shape, split into per-meta lockfiles, rename legacy file to `grex.lock.jsonl.v1_1.bak`.
-- [ ] 1h.5 `--no-auto-migrate-lockfile` flag opts out; without auto-migrate, v1.2.0 errors with a manual migration hint.
-- [ ] 1h.6 Test: v1.1.1 fixture migrated cleanly; per-meta lockfiles correct; `.bak` present.
-- **Verification**: `cargo test -p grex-core distributed_lockfile`. New test `lockfile_v1_1_compat.rs`.
+- [ ] 1h.4 **No silent rewrites.** When a v1.2.0 binary detects a v1.1.1 lockfile shape (single flat file at the cwd), it errors with a typed `TreeError::LegacyLockfileDetected { path }` whose Display is `v1.1.1 lockfile detected, run grex migrate-lockfile`.
+- [ ] 1h.5 Add explicit opt-in surface: `--migrate-lockfile` flag on `grex sync` AND a standalone `grex migrate-lockfile` subcommand. Both routes invoke the same migrator entry point.
+- [ ] 1h.6 **Migrator is an isolated module** (Rule 9 modular-removability). Place at `crates/grex-core/src/lockfile/migrate_v1_1_1.rs` (or equivalent single-file module). Inbound callers: only the `--migrate-lockfile` flag dispatcher and the `grex migrate-lockfile` subcommand. Walker, sync, ls, doctor, remove, add, init must NOT reach into the migrator. Outbound deps: read v1.1.x shape, write v1.2.0 per-meta lockfiles, rename legacy to `.bak`. No coupling back to walker types or scheduler primitives.
+- [ ] 1h.7 With `--migrate-lockfile`: split v1.1.x lockfile into per-meta lockfiles, rename legacy file to `grex.lock.jsonl.v1_1.bak`. Without the flag: error path only; no on-disk mutation.
+- [ ] 1h.8 Module-isolation test (lint-style): a CI check (or dedicated test) confirms no file outside `crates/grex-core/src/lockfile/migrate_v1_1_1.rs` and the CLI dispatcher imports the migrator's public functions. Documents the removability constraint.
+- [ ] 1h.9 Test: v1.1.1 fixture errors out without `--migrate-lockfile`; with the flag, migrates cleanly; per-meta lockfiles correct; `.bak` present.
+- **Verification**: `cargo test -p grex-core distributed_lockfile`. New test `lockfile_v1_1_compat.rs` (migrator-only, no walker calls).
 - **Depends on**: 1b, 1g.
 
-### 1i — `ls.rs` migrate to parent-relative + drop synthesis fallback
+### 1i — `ls.rs` migrate to parent-relative + keep-legacy `~` glyph (Stage 0 LOCKED)
 
 - [ ] 1i.1 `crates/grex/src/cli/verbs/ls.rs`: render the parent-relative tree by reading each meta's lockfile in sequence.
-- [ ] 1i.2 Drop the v1.1.1 synthesis fallback path.
+- [ ] 1i.2 Drop the v1.1.1 synthesis *fallback* path (the code that synthesized lockentries from on-disk `.git/` directories at render time). `ls` reads strictly from each meta's lockfile.
 - [ ] 1i.3 `ls --json` output: nested children represented as nested JSON, one node per meta with its `path` (relative-to-parent) populated.
-- [ ] 1i.4 `~` synthetic marker preserved for entries that have `synthetic: true` (from v1.1.x lockfiles read forward); newly written entries never carry the marker.
-- [ ] 1i.5 Snapshot/golden tests updated for the nested rendering.
+- [ ] 1i.4 **Keep-legacy `~` glyph**: preserve the `~` marker for any lockentry whose `synthetic` field is `true` (forward-read from v1.1.1 lockfiles). Newly written v1.2.0 entries never set `synthetic: true`, so the glyph self-extincts as users re-sync. Migration-window UX preserved.
+- [ ] 1i.5 `LockEntry.synthetic: bool` is read-only deprecated. Confirm the serializer omits the field when `false` (clean v1.2.0 lockfiles); confirm v1.2.0 code never writes `true`.
+- [ ] 1i.6 Snapshot/golden tests updated for the nested rendering. Add a fixture that mixes a v1.1.x lockentry (`synthetic: true`, `~` glyph rendered) with v1.2.0 entries (no glyph).
 - **Verification**: `cargo test -p grex ls_nested`.
 - **Depends on**: 1h.
 
@@ -173,7 +198,7 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - [ ] 1o.9 MCP conformance gate green.
 - [ ] 1o.10 Workspace bump 1.1.1 → 1.2.0 across `Cargo.toml`, `[workspace.dependencies]`, `crates/xtask/Cargo.toml`.
 - [ ] 1o.11 `crates/xtask/tests/version_test.rs` bump assertion.
-- [ ] 1o.12 `CHANGELOG.md` `[1.2.0] - 2026-04-XX` section: parent-relative resolution; distributed lockfile; cargo-parallel; synthesis retired; new validator rules; v1.1.x lockfile auto-migration; deprecate `workspace` in favour of `cwd_meta`.
+- [ ] 1o.12 `CHANGELOG.md` `[1.2.0] - 2026-04-XX` section: parent-relative resolution; distributed lockfile; rayon cargo-parallel scheduler (M6 reuse); hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` TOCTOU mitigation; synthesis retired (`~` glyph kept-legacy for v1.1.x reads); new validator rules; explicit `grex migrate-lockfile` opt-in for v1.1.x → v1.2.0 lockfile migration (default-OFF, no silent rewrites); deprecate `workspace` in favour of `cwd_meta`.
 - [ ] 1o.13 `cargo metadata --format-version 1 --no-deps | jq -r '.packages[].version' | sort -u` returns only `1.2.0`.
 - [ ] 1o.14 `dist plan` (cargo-dist) green at v1.2.0.
 
