@@ -26,6 +26,7 @@
 //!    The node carries an `error: {kind, message}` envelope so JSON
 //!    consumers see the failure without the verb aborting.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -141,9 +142,20 @@ pub fn build_ls_tree(pack_root: &Path) -> Result<LsTree, String> {
     let loader = FsPackLoader::new();
     let root_manifest = loader.load(pack_root).map_err(|e| format!("{e}"))?;
     let workspace = workspace_dir_for(pack_root);
+    // v1.2.0 Stage 1.i: fold every per-meta lockfile in the tree into a
+    // single (meta_dir, segment) → synthetic lookup so the render layer
+    // can preserve the legacy `~` glyph for v1.1.1 carry-over entries
+    // even when the on-disk manifest is real (i.e., the walker's
+    // synthesis fallback no longer fires). Stage 0 LOCKED decision #3.
+    //
+    // Read-only and tolerant: any lockfile read failure degrades to an
+    // empty index — `ls` is a diagnostic surface, never aborts on
+    // missing/corrupt sidecars.
+    let synthetic_index = build_synthetic_index(&workspace);
     let mut counter: usize = 0;
     let id = next_id(&mut counter);
-    let children = walk_children(&loader, &workspace, &root_manifest, &mut counter);
+    let children =
+        walk_children(&loader, &workspace, &root_manifest, &mut counter, &synthetic_index);
     Ok(LsTree {
         workspace: workspace.display().to_string(),
         tree: vec![LsNode {
@@ -157,6 +169,46 @@ pub fn build_ls_tree(pack_root: &Path) -> Result<LsTree, String> {
             children,
         }],
     })
+}
+
+/// Build the parent-relative synthetic lookup: every per-meta lockfile
+/// folded into `(parent_meta_dir, segment) → synthetic`. Empty on any
+/// read error — `ls` stays best-effort. The recursive descent mirrors
+/// [`read_lockfile_tree`]'s topology; reading per-meta directly lets us
+/// key entries by their true parent meta, which the nested-walk render
+/// frame can then probe.
+fn build_synthetic_index(workspace: &Path) -> HashMap<(PathBuf, String), bool> {
+    let mut idx = HashMap::new();
+    populate_synthetic_index(workspace, &mut idx);
+    idx
+}
+
+/// Recursive descent that mirrors `read_lockfile_tree`'s fold, populating
+/// the `(parent_meta, segment) → synthetic` index. Tolerates missing /
+/// corrupt sidecars: a bad meta is skipped, never aborts the index.
+fn populate_synthetic_index(meta_dir: &Path, idx: &mut HashMap<(PathBuf, String), bool>) {
+    if let Ok(entries) = crate::lockfile::read_meta_lockfile(meta_dir) {
+        for entry in &entries {
+            idx.insert((meta_dir.to_path_buf(), entry.path.clone()), entry.synthetic);
+        }
+    }
+    // Discover declared children via the manifest, recurse into metas.
+    let manifest_path = meta_dir.join(".grex").join("pack.yaml");
+    let raw = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let manifest = match crate::pack::parse(&raw) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    for child in &manifest.children {
+        let segment = child.path.clone().unwrap_or_else(|| child.effective_path());
+        let child_meta = meta_dir.join(&segment);
+        if child_meta.join(".grex").join("pack.yaml").is_file() {
+            populate_synthetic_index(&child_meta, idx);
+        }
+    }
 }
 
 /// Resolve where children live on disk. When `pack_root` is a YAML
@@ -179,16 +231,29 @@ fn has_yaml_extension(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"))
 }
 
+/// Walk the children of a meta whose dir is `current_meta`. v1.2.0 makes
+/// child-dest resolution parent-relative — `dest = current_meta.join(
+/// child.effective_path())` — so a nested meta no longer flattens its
+/// grandchildren under the workspace root. The legacy
+/// `current_meta == workspace` shape (v1.1.x flat-sibling layout) is
+/// preserved by passing `workspace` as the initial frame.
 fn walk_children(
     loader: &FsPackLoader,
-    workspace: &Path,
+    current_meta: &Path,
     parent: &PackManifest,
     counter: &mut usize,
+    synthetic_index: &HashMap<(PathBuf, String), bool>,
 ) -> Vec<LsNode> {
     let mut out = Vec::with_capacity(parent.children.len());
     for child in &parent.children {
-        let dest = workspace.join(child.effective_path());
-        out.push(load_child_node(loader, workspace, child, &dest, counter));
+        let segment = child.effective_path();
+        let dest = current_meta.join(&segment);
+        // Stage 1.i: lockfile-driven synthetic glyph. Probe the index
+        // with the (parent_meta, segment) key. Missing or v1.2.0 entry
+        // (synthetic=false) → no glyph; legacy carry-over → `~`.
+        let lock_synthetic =
+            synthetic_index.get(&(current_meta.to_path_buf(), segment.clone())).copied();
+        out.push(load_child_node(loader, child, &dest, counter, synthetic_index, lock_synthetic));
     }
     out
 }
@@ -200,16 +265,24 @@ fn walk_children(
 /// errored (parse / read / other).
 fn load_child_node(
     loader: &FsPackLoader,
-    workspace: &Path,
     child: &ChildRef,
     dest: &Path,
     counter: &mut usize,
+    synthetic_index: &HashMap<(PathBuf, String), bool>,
+    lock_synthetic: Option<bool>,
 ) -> LsNode {
     match loader.load(dest) {
-        Ok(manifest) => loaded_node(loader, workspace, &manifest, dest, counter, false),
+        Ok(manifest) => {
+            // Stage 1.i: a real manifest is normally non-synthetic, but
+            // a v1.1.1 carry-over lockentry can flip the glyph back on
+            // (Stage 0 LOCKED decision #3). v1.2.0 entries always have
+            // synthetic=false so this collapses to non-synthetic.
+            let synthetic = lock_synthetic.unwrap_or(false);
+            loaded_node(loader, &manifest, dest, counter, synthetic, synthetic_index)
+        }
         Err(TreeError::ManifestNotFound(_)) if dest_has_git_repo(dest) => {
             let manifest = synthesize_plain_git_manifest(child);
-            loaded_node(loader, workspace, &manifest, dest, counter, true)
+            loaded_node(loader, &manifest, dest, counter, true, synthetic_index)
         }
         Err(TreeError::ManifestNotFound(_)) => unsynced_node(child, dest, counter),
         Err(e @ TreeError::ManifestParse { .. }) => errored_node(child, dest, counter, "parse", &e),
@@ -221,17 +294,18 @@ fn load_child_node(
 /// Build an `LsNode` for a successfully loaded (real) or
 /// canonical-synthesised manifest. Recurses through `walk_children` so
 /// any future synthesised manifest carrying nested children would walk
-/// transparently.
+/// transparently. The next recursion frame uses `dest` as its
+/// `current_meta` — that is the v1.2.0 parent-relative descent.
 fn loaded_node(
     loader: &FsPackLoader,
-    workspace: &Path,
     manifest: &PackManifest,
     dest: &Path,
     counter: &mut usize,
     synthetic: bool,
+    synthetic_index: &HashMap<(PathBuf, String), bool>,
 ) -> LsNode {
     let id = next_id(counter);
-    let children = walk_children(loader, workspace, manifest, counter);
+    let children = walk_children(loader, dest, manifest, counter, synthetic_index);
     LsNode {
         id,
         name: manifest.name.clone(),
@@ -403,5 +477,171 @@ mod tests {
         assert!(!err.message.is_empty());
         assert!(!child.synthetic);
         assert!(!child.unsynced);
+    }
+
+    // ---- Stage 1.i: v1.2.0 nested + lockfile-driven ~ glyph ----
+
+    use crate::lockfile::{write_meta_lockfile, LockEntry};
+    use chrono::{TimeZone, Utc};
+
+    fn ts_for_test() -> chrono::DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 4, 29, 10, 0, 0).unwrap()
+    }
+
+    fn entry_with_path(id: &str, path: &str, synthetic: bool) -> LockEntry {
+        let mut e = LockEntry::new(id, "deadbeef", "main", ts_for_test(), "h", "1");
+        e.path = path.into();
+        e.synthetic = synthetic;
+        e
+    }
+
+    /// AC: a v1.2.0 nested meta tree (root → meta-child → grandchild)
+    /// renders every level. Each level's manifest is real (no on-disk
+    /// synthesis), so the rendered tree exercises the recursive
+    /// `walk_children` path on real ManifestTree shape.
+    #[test]
+    fn test_ls_renders_v1_2_0_nested_layout() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join(".grex")).unwrap();
+        fs::write(
+            root.join(".grex/pack.yaml"),
+            "schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: alpha\n",
+        )
+        .unwrap();
+        // alpha is itself a meta with a grandchild.
+        fs::create_dir_all(root.join("alpha/.grex")).unwrap();
+        fs::write(
+            root.join("alpha/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: alpha\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: gamma\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("alpha/gamma/.grex")).unwrap();
+        fs::write(
+            root.join("alpha/gamma/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: gamma\ntype: declarative\n",
+        )
+        .unwrap();
+
+        let tree = build_ls_tree(root).expect("root manifest loads");
+        let root_node = &tree.tree[0];
+        assert_eq!(root_node.name, "root");
+        assert_eq!(root_node.children.len(), 1);
+        let alpha = &root_node.children[0];
+        assert_eq!(alpha.name, "alpha");
+        assert_eq!(alpha.pack_type, "meta");
+        assert_eq!(alpha.children.len(), 1, "nested meta must surface its grandchild");
+        let gamma = &alpha.children[0];
+        assert_eq!(gamma.name, "gamma");
+        assert_eq!(gamma.pack_type, "declarative");
+        assert!(!gamma.synthetic);
+    }
+
+    /// AC: a v1.1.1 carry-over lockentry (synthetic=true) drives the
+    /// `~` glyph even when the on-disk manifest is real. Stage 0 LOCKED
+    /// decision #3: keep `~` for legacy synthetic; v1.2.0 entries never
+    /// set the flag.
+    #[test]
+    fn test_ls_renders_legacy_synthetic_with_tilde_glyph() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join(".grex")).unwrap();
+        fs::write(
+            root.join(".grex/pack.yaml"),
+            "schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: legacy\n",
+        )
+        .unwrap();
+        // Real manifest on the child — the on-disk synthesis fallback is
+        // NOT triggered here. Synthetic-ness must come from the lockfile.
+        fs::create_dir_all(root.join("legacy/.grex")).unwrap();
+        fs::write(
+            root.join("legacy/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: legacy\ntype: scripted\n",
+        )
+        .unwrap();
+        // Legacy lockentry: synthetic=true.
+        write_meta_lockfile(root, &[entry_with_path("legacy", "legacy", true)]).unwrap();
+
+        let tree = build_ls_tree(root).expect("root manifest loads");
+        let child = &tree.tree[0].children[0];
+        assert_eq!(child.name, "legacy");
+        assert!(
+            child.synthetic,
+            "legacy lockentry with synthetic=true must drive the ~ glyph in render layer",
+        );
+    }
+
+    /// AC: a fresh v1.2.0 lockentry (synthetic=false) must NOT carry
+    /// the `~` glyph. The flag self-extincts as v1.1.1 carryovers are
+    /// rewritten under v1.2.0.
+    #[test]
+    fn test_ls_v1_2_0_entry_no_glyph() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join(".grex")).unwrap();
+        fs::write(
+            root.join(".grex/pack.yaml"),
+            "schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: fresh\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("fresh/.grex")).unwrap();
+        fs::write(
+            root.join("fresh/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: fresh\ntype: scripted\n",
+        )
+        .unwrap();
+        // v1.2.0-shaped entry: synthetic=false.
+        write_meta_lockfile(root, &[entry_with_path("fresh", "fresh", false)]).unwrap();
+
+        let tree = build_ls_tree(root).expect("root manifest loads");
+        let child = &tree.tree[0].children[0];
+        assert_eq!(child.name, "fresh");
+        assert!(!child.synthetic, "v1.2.0 entry (synthetic=false) must not carry the ~ glyph");
+    }
+
+    /// AC: `read_lockfile_tree` is wired across multi-meta trees so a
+    /// legacy synthetic entry under a nested meta still flips the glyph.
+    /// Disjoint-partition fold (W2) means each meta's lockfile drives its
+    /// own children's flags.
+    #[test]
+    fn test_ls_uses_read_lockfile_tree() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        // root (meta) → alpha (meta with legacy synthetic lockentry on root) →
+        //                 gamma (real declarative grandchild, fresh under alpha).
+        fs::create_dir_all(root.join(".grex")).unwrap();
+        fs::write(
+            root.join(".grex/pack.yaml"),
+            "schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: alpha\n",
+        )
+        .unwrap();
+        // root lockfile: alpha is legacy synthetic.
+        write_meta_lockfile(root, &[entry_with_path("alpha", "alpha", true)]).unwrap();
+
+        fs::create_dir_all(root.join("alpha/.grex")).unwrap();
+        fs::write(
+            root.join("alpha/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: alpha\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: gamma\n",
+        )
+        .unwrap();
+        // alpha's per-meta lockfile: gamma is fresh v1.2.0 (synthetic=false).
+        write_meta_lockfile(&root.join("alpha"), &[entry_with_path("gamma", "gamma", false)])
+            .unwrap();
+
+        fs::create_dir_all(root.join("alpha/gamma/.grex")).unwrap();
+        fs::write(
+            root.join("alpha/gamma/.grex/pack.yaml"),
+            "schema_version: \"1\"\nname: gamma\ntype: declarative\n",
+        )
+        .unwrap();
+
+        let tree = build_ls_tree(root).expect("root manifest loads");
+        let alpha = &tree.tree[0].children[0];
+        assert_eq!(alpha.name, "alpha");
+        assert!(alpha.synthetic, "root's lockfile flags alpha synthetic");
+        assert_eq!(alpha.children.len(), 1);
+        let gamma = &alpha.children[0];
+        assert_eq!(gamma.name, "gamma");
+        assert!(!gamma.synthetic, "alpha's lockfile leaves gamma fresh (synthetic=false)");
     }
 }
