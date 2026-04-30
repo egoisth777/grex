@@ -16,14 +16,21 @@
 //! This module adds no new crate dependencies beyond those already pulled
 //! in by slices 1–3.
 
+pub mod consent;
+pub mod dest_class;
 pub mod error;
 pub mod graph;
 pub mod loader;
 pub mod ls;
 pub mod walker;
 
+pub use consent::{phase2_prune, recursive_consent_walk, ConsentResult};
+pub use dest_class::{aggregate_untracked, classify_dest, git_in_progress_at, DestClass};
 pub use error::TreeError;
 pub use graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 pub use loader::{FsPackLoader, PackLoader};
 pub use ls::{build_ls_tree, LsNode, LsNodeError, LsTree};
-pub use walker::{dest_has_git_repo, synthesize_plain_git_manifest, Walker};
+pub use walker::{
+    dest_has_git_repo, sync_meta, synthesize_plain_git_manifest, SyncMetaOptions, SyncMetaReport,
+    Walker,
+};

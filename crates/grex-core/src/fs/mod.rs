@@ -4,6 +4,7 @@
 //! here so higher layers stay platform-agnostic.
 
 pub mod atomic;
+pub(crate) mod boundary;
 pub mod gitignore;
 pub mod lock;
 

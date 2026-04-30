@@ -54,7 +54,9 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
         .with_workspace(args.workspace.clone())
         .with_ref_override(args.ref_override.clone())
         .with_only_patterns(only_patterns)
-        .with_force(args.force);
+        .with_force(args.force)
+        .with_force_prune(args.force_prune)
+        .with_force_prune_with_ignored(args.force_prune_with_ignored);
     match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::UsageError => std::process::exit(2),

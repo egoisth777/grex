@@ -40,6 +40,46 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## v1.2.0 — 2026-04-30
+
+### Added — Nested-Children Walker
+
+- Distributed lockfile: each meta owns `<meta>/.grex/grex.lock.jsonl` with entries for ITS direct children only (Lean theorem W2).
+- Walker Phase 1: 5-way DestClass classifier (Missing/PresentDeclared/PresentDirty/PresentInProgress/PresentUndeclared) per child + UntrackedGitRepos error aggregation.
+- Walker Phase 2: prune-safety with recursive consent walk (Clean/DirtyTree/DirtyTreeWithIgnored/GitInProgress/SubMetaWithDirtyChildren).
+- Walker Phase 3: parent-relative recursion into nested metas (sequential; rayon deferred to v1.2.x).
+- Validator: rejects Unicode-NFC duplicates, colon/dollar/tilde-digit segments, Windows reserved names, NTFS reparse points, .git-as-file references.
+- TOCTOU: `BoundedDir` primitive via cap-std (Linux openat2(RESOLVE_BENEATH) under the hood; Win/Mac via cap-std handles).
+- `LockEntry.path` field with v1.1.1 read-fallback (path derived from id).
+- SyncOptions: force_prune, force_prune_with_ignored, migrate_lockfile, recurse, max_depth.
+- `--force-prune` / `--force-prune-with-ignored` CLI flags + audit-log entry on override.
+- `grex ls` walks ManifestTree via read_lockfile_tree; nested rendering preserved.
+- `grex doctor` walks recursively by default; new `--shallow N` flag for depth bounds.
+
+### Lean4 Proof
+
+- 4 new theorems: validator_strengthens_W1 (V1), classify_dest_total (C1), prune_only_on_clean_consent (C2), fold_tree_lockfile_partition (F1).
+- 3 new bridge axioms in proof/Grex/Bridge.lean: git_in_progress_decidable, consent_walk_reflects_fs_state, sync_lock_partition.
+- Bridge.lean now houses 9 propositional bridge axioms (extracted from Walker.lean / Scheduler.lean).
+- New Types.lean module with shared model + 3 helper lemmas (descends_refl/trans/join).
+- lake build green, zero sorry, zero admit. CI gates: theorem count ≥17, axiom counts (=9 in Bridge.lean, =3 in Types.lean), no axioms outside.
+- SSOT documentation at `.omne/proof/impl-axiom-bridge.md` (separate repo).
+
+### Migration (v1.1.x → v1.2.0)
+
+- **Lockfile auto-migrate is OFF by default.** Walker errors with `LegacyLockfileDetected` when v1.1.1 single-flat lockfile is detected.
+- Migrator module `lockfile::migrate_v1_1_1` is an isolated unit with no inbound callers from steady-state code paths. Designed for clean removal in a future minor release.
+- Opt-in via `--migrate-lockfile` flag (TODO: CLI dispatcher to be wired in v1.2.1+ when subcommand surface is finalized).
+
+### Renamed
+
+- Top-level `lean/` → `proof/` directory.
+
+### Internal
+
+- 874 tests pass (~120 new since v1.1.1).
+- Stage 0 LOCKED decisions: TOCTOU=hybrid, scheduler=rayon (deferred to v1.2.x), glyph=keep-legacy, Lean4=mandatory-gate, auto-migrate=default-off.
+
 ## [1.1.1] - 2026-04-27
 
 ### Added
@@ -396,7 +436,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/egoisth777/grex/releases/tag/v1.2.0
 [1.1.1]: https://github.com/egoisth777/grex/releases/tag/v1.1.1
 [1.1.0]: https://github.com/egoisth777/grex/releases/tag/v1.1.0
 [1.0.3]: https://github.com/egoisth777/grex/releases/tag/v1.0.3

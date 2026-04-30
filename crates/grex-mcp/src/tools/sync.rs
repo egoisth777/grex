@@ -22,6 +22,18 @@ use tokio_util::sync::CancellationToken;
 /// Args for `sync`. Mirrors the CLI's `--json` shape — JSON-only fields,
 /// no positional args. `pack_root` is required at the MCP edge because
 /// the legacy "no-arg stub print" branch makes no sense for an agent.
+//
+// TODO(v2.0.0): deprecate this envelope shape — the v1.2.0 walker
+// (Stage 1.m and beyond) introduces additional `SyncOptions` knobs
+// (`force_prune`, `force_prune_with_ignored`, `migrate_lockfile`,
+// `recurse`, `max_depth`) that should land on a future `grex.sync`
+// v2 envelope rather than further widening this v1 surface. The
+// `#[deprecated]` attribute is intentionally NOT applied yet — there
+// is no v2 envelope to point callers at, so emitting a deprecation
+// warning today would be noise without a migration target. When the
+// v2 envelope ships, replace this comment with
+// `#[deprecated(since = "2.0.0", note = "Use grex.sync v2 envelope")]`
+// on this struct and on its handler entry point.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SyncParams {

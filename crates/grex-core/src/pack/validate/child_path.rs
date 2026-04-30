@@ -179,6 +179,222 @@ fn matches_bare_name_regex(s: &str) -> bool {
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+// ---------------------------------------------------------------------------
+// v1.2.0 Stage 1.c — boundary-preservation rejects.
+//
+// These checks are layered ON TOP of [`reject_reason`]. They surface via
+// `TreeError::ManifestPathEscape` (in the walker's pre-clone gate) and
+// catch boundary hazards that the bare-name regex by itself cannot
+// distinguish: Unicode normalization collisions, Windows reserved /
+// special-char segments, and FS-resident junctions or `.git`-as-file
+// references.
+//
+// Additivity rationale: the existing `reject_reason` continues to be the
+// source of truth for literal-syntax violations (separators, dots,
+// charset). The boundary helpers below answer a different question —
+// "does this NAME (or the on-disk thing it resolves to) re-introduce a
+// parent-boundary escape on a case-insensitive or reparse-aware FS?".
+// They are intentionally stricter than `reject_reason` so the walker can
+// fail fast with a more diagnostic error message.
+//
+// See `walker.md` §boundary-preservation; the discharge maps to the V1
+// Lean theorem that says a validated manifest's children must descend
+// from the parent.
+// ---------------------------------------------------------------------------
+
+/// Static list of Win32 device names. Per MSDN the same names are
+/// reserved with or without an extension; comparison is on the
+/// case-insensitive *stem* (everything before the first `.`).
+const WINDOWS_RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Boundary-preservation reject for a single child path segment.
+///
+/// Returns `Some(reason)` for entries that pass [`reject_reason`] (or
+/// would, on a relaxed regex) but still re-open the parent-boundary
+/// escape on case-insensitive / reparse-aware filesystems. Returns
+/// `None` when the path is acceptable from a boundary standpoint.
+///
+/// Visibility: `pub(crate)` — called from the tree walker's pre-clone
+/// gate and exercised directly by this module's tests.
+#[must_use]
+pub(crate) fn boundary_reject_reason(path: &str) -> Option<&'static str> {
+    // 1. Colon — Windows drive separator (`C:`) and ADS marker
+    //    (`name:stream`). Either form opens the boundary.
+    if path.contains(':') {
+        return Some("colon `:` is not allowed in a child path (Windows drive / ADS hazard)");
+    }
+    // 2. Dollar — env-var-style interpolation hazard. Forbidden so a
+    //    later release can introduce expansion without re-relaxing the
+    //    schema.
+    if path.contains('$') {
+        return Some("dollar `$` is not allowed in a child path (env-var interpolation hazard)");
+    }
+    // 3. Tilde-digit — Windows 8.3 short-name pattern (`FOO~1.TXT`).
+    //    Two distinct long names can collapse onto the same short
+    //    alias, so any `~<digit>` segment is rejected. Tilde NOT
+    //    followed by a digit is left to the bare-name regex (which
+    //    rejects it anyway today; a future regex relaxation that
+    //    permits `~` would still need to forbid the `~\d` class).
+    if has_tilde_digit_pattern(path) {
+        return Some("tilde-digit (`~1`/`~9`/...) is not allowed (Windows short-name hazard)");
+    }
+    // 4. Windows reserved device names — case-insensitive, with or
+    //    without an extension. The stem (everything before the first
+    //    `.`) is compared.
+    if is_windows_reserved_name(path) {
+        return Some(
+            "child path is a Windows reserved device name (CON/PRN/AUX/NUL/COM1-9/LPT1-9)",
+        );
+    }
+    None
+}
+
+/// Returns `true` when `path` contains a tilde immediately followed by
+/// at least one ASCII digit (e.g. `foo~1`, `bar~12`, `~9abc`).
+fn has_tilde_digit_pattern(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes
+        .iter()
+        .enumerate()
+        .any(|(i, &b)| b == b'~' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit))
+}
+
+/// Returns `true` when the *stem* of `path` (everything before the
+/// first `.`) matches a Win32 reserved device name, case-insensitive.
+fn is_windows_reserved_name(path: &str) -> bool {
+    let stem = path.split('.').next().unwrap_or(path);
+    WINDOWS_RESERVED.iter().any(|reserved| stem.eq_ignore_ascii_case(reserved))
+}
+
+/// NFC-duplicate detection across a manifest's `children[]`.
+///
+/// On case-insensitive Unicode filesystems (HFS+, APFS-default, NTFS
+/// when mounted with `nocaseinsensitive`), two paths whose Unicode
+/// normalization forms differ but whose NFC-collapsed forms agree will
+/// land at the same on-disk slot. The first such offender's *literal*
+/// path string is returned so the operator can pinpoint the duplicate.
+///
+/// Visibility: `pub(crate)` — called from the tree walker's pre-clone
+/// gate. Returns `None` when no NFC collision exists.
+#[must_use]
+pub(crate) fn nfc_duplicate_path(children: &[ChildRef]) -> Option<String> {
+    use std::collections::BTreeSet;
+    use unicode_normalization::UnicodeNormalization;
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for child in children {
+        let effective = child.effective_path();
+        // Skip empty / dot segments — those carry no semantic name to
+        // normalise. `reject_reason` will surface them via the syntactic
+        // gate; adding a "duplicate-of-empty" signal here would only
+        // confuse. We intentionally do NOT skip charset / regex
+        // failures — when the bare-name regex relaxes (planned for
+        // Stage 1c.1), this helper must still detect Unicode-form
+        // collisions.
+        if effective.is_empty() || effective == "." || effective == ".." {
+            continue;
+        }
+        let nfc: String = effective.nfc().collect();
+        if !seen.insert(nfc) {
+            // First collision wins — surface the offending literal so
+            // the operator's error frame echoes what they wrote.
+            return Some(effective);
+        }
+    }
+    None
+}
+
+/// Filesystem-resident boundary check for a resolved child destination.
+///
+/// Returns `Some(reason)` when the destination *exists* and is one of:
+/// * a Windows reparse point (junction or symlink)
+/// * a directory whose `.git` entry is a regular file (gitfile-style
+///   `gitdir:` redirect)
+///
+/// Returns `None` when the destination does not exist (the normal
+/// pre-clone case — the walker hasn't materialised the child yet) or
+/// is a plain directory with either no `.git` or a `.git/` directory.
+///
+/// Visibility: `pub(crate)` — called from the tree walker's pre-clone
+/// gate, AFTER the destination path has been resolved against the
+/// parent workspace. Pure `&Path` interface so the helper composes
+/// cleanly with the resolution pipeline.
+#[must_use]
+pub(crate) fn boundary_fs_reject_reason(dest: &std::path::Path) -> Option<&'static str> {
+    let Ok(meta) = std::fs::symlink_metadata(dest) else {
+        // Pre-clone: dest doesn't exist yet. Defer junction / gitfile
+        // checks to the post-clone verifier (out of scope for this
+        // gate). Absence is the happy path here.
+        return None;
+    };
+    let ft = meta.file_type();
+    // Symlinks (POSIX symlink, Windows symlink_dir/symlink_file).
+    if ft.is_symlink() {
+        return Some(
+            "child destination is a symlink — refusing to walk into it (boundary escape hazard)",
+        );
+    }
+    // Windows-only: junctions / non-symlink reparse points. `is_symlink`
+    // returns `false` for junctions on Windows, so a dedicated probe is
+    // required.
+    #[cfg(target_os = "windows")]
+    {
+        if is_windows_reparse_point(&meta) {
+            return Some(
+                "child destination is a Windows junction or reparse point — refusing to walk into it",
+            );
+        }
+    }
+    // Gitfile redirect: `<dest>/.git` is a regular file containing
+    // `gitdir: <path>` rather than a directory. The redirect target is
+    // unverified by the walker, so we refuse the whole entry.
+    let git_entry = dest.join(".git");
+    if let Ok(git_meta) = std::fs::symlink_metadata(&git_entry) {
+        if git_meta.file_type().is_file() && file_is_gitfile(&git_entry) {
+            return Some(
+                "child destination's `.git` is a gitfile redirect (boundary escape hazard)",
+            );
+        }
+    }
+    None
+}
+
+/// Windows-only: detect a non-symlink reparse point (junction / mount
+/// point). Reparse points carry the
+/// `FILE_ATTRIBUTE_REPARSE_POINT` (0x400) attribute regardless of
+/// whether the OS classifies them as symlinks.
+#[cfg(target_os = "windows")]
+fn is_windows_reparse_point(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}
+
+/// Returns `true` when the file at `path` looks like a git-worktree
+/// gitfile redirect — a regular text file whose first non-whitespace
+/// content is the literal prefix `gitdir:`.
+///
+/// We read at most a small prefix to bound IO; a malformed or
+/// truncated gitfile is also treated as suspicious (returns `true`)
+/// because the redirect intent is what we're refusing to honour.
+fn file_is_gitfile(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut buf = [0u8; 32];
+    let n = match f.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let prefix = match std::str::from_utf8(&buf[..n]) {
+        Ok(s) => s.trim_start(),
+        Err(_) => return false,
+    };
+    prefix.starts_with("gitdir:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,5 +604,266 @@ mod tests {
             ("https://x/b.git", Some("good")),
         ]);
         assert!(DupChildPathValidator.check(&pack).is_empty());
+    }
+
+    // ---- v1.2.0 Stage 1.c: boundary-preservation new rejects ----
+    //
+    // These rejects layer ON TOP of the bare-name regex / separator /
+    // dot-segment checks owned by `reject_reason`. They surface via
+    // `TreeError::ManifestPathEscape` (not `ChildPathInvalid`) so the
+    // walker's pre-clone gate distinguishes "literal syntax violation"
+    // from "post-resolution boundary escape".
+    //
+    // See `walker.md` §boundary-preservation; tests here drive the
+    // helpers `boundary_reject_reason`, `nfc_duplicate_path`, and
+    // `boundary_fs_reject_reason`. The existing `reject_reason` is
+    // unchanged (additive layering only — `min-scope` per Stage 1.c).
+
+    #[test]
+    fn test_validator_rejects_colon_in_segment() {
+        let reason = boundary_reject_reason("child:foo")
+            .expect("colon must be rejected as a boundary-preservation hazard");
+        assert!(
+            reason.to_ascii_lowercase().contains("colon"),
+            "reason should mention `colon`: {reason}",
+        );
+    }
+
+    #[test]
+    fn test_validator_rejects_dollar_in_segment() {
+        let reason = boundary_reject_reason("$home")
+            .expect("dollar must be rejected as a boundary-preservation hazard");
+        assert!(
+            reason.contains('$') || reason.to_ascii_lowercase().contains("dollar"),
+            "reason should mention `$`/dollar: {reason}",
+        );
+    }
+
+    #[test]
+    fn test_validator_rejects_tilde_digit_segment() {
+        // `foo~1`, `bar~9`, `x~12` are Windows 8.3 short-name patterns —
+        // forbidden because the resolver could collapse two distinct
+        // long names onto the same short alias.
+        for bad in ["foo~1", "bar~9", "x~12", "abc~3"] {
+            let reason = boundary_reject_reason(bad)
+                .unwrap_or_else(|| panic!("`{bad}` must be rejected (Windows 8.3 short-name)"));
+            assert!(
+                reason.contains('~') || reason.to_ascii_lowercase().contains("short"),
+                "reason should mention `~`/short-name: {reason}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_validator_accepts_tilde_without_digit() {
+        // `foo~bar` (tilde NOT followed by a digit) is not a short-name
+        // pattern. The boundary check must not over-reach. The bare-name
+        // regex still rejects `~` separately, but `boundary_reject_reason`
+        // is layered, not replacing — it should return None here.
+        assert!(boundary_reject_reason("foo~bar").is_none());
+    }
+
+    #[test]
+    fn test_validator_rejects_windows_reserved_name_bare() {
+        // Case-insensitive: every casing must reject. The list is the
+        // Win32 device namespace per MSDN — bare or with extension.
+        for variant in ["CON", "con", "Con", "PRN", "prn", "AUX", "NUL", "COM1", "com9", "LPT5"] {
+            let reason = boundary_reject_reason(variant)
+                .unwrap_or_else(|| panic!("`{variant}` must be rejected (Windows reserved)"));
+            assert!(
+                reason.to_ascii_lowercase().contains("reserved")
+                    || reason.to_ascii_lowercase().contains("windows"),
+                "reason should mention `reserved`/`windows` for {variant}: {reason}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_validator_rejects_windows_reserved_name_with_ext() {
+        // Same list, but with an extension — also reserved per MSDN
+        // (Win32 special-cases the stem regardless of suffix).
+        for variant in ["con.txt", "CON.TXT", "nul.dat", "lpt1.log", "com3.bak"] {
+            let reason = boundary_reject_reason(variant)
+                .unwrap_or_else(|| panic!("`{variant}` must be rejected (Windows reserved + ext)"));
+            assert!(
+                reason.to_ascii_lowercase().contains("reserved")
+                    || reason.to_ascii_lowercase().contains("windows"),
+                "reason should mention `reserved`/`windows` for {variant}: {reason}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_validator_accepts_windows_reserved_name_as_substring() {
+        // `concert`, `console`, `comic`, `lpton` etc. embed a reserved
+        // stem but are NOT exactly the reserved name — must accept.
+        for ok in ["concert", "console", "comic", "lpton", "auxiliary", "nullable"] {
+            assert!(
+                boundary_reject_reason(ok).is_none(),
+                "`{ok}` is a normal name, must NOT be flagged as Windows-reserved",
+            );
+        }
+    }
+
+    #[test]
+    fn test_validator_accepts_clean_paths() {
+        // Sanity: clean bare names that pass the existing regex must
+        // also pass the new boundary check (additive layering — no
+        // regression on the happy path).
+        for ok in ["foo", "a", "algo-leet", "foo-bar", "foo123", "a1-b2", "pkg-name"] {
+            assert!(boundary_reject_reason(ok).is_none(), "`{ok}` should pass boundary check",);
+        }
+    }
+
+    #[test]
+    fn test_validator_rejects_unicode_nfc_duplicate() {
+        // `café` exists in two Unicode normal forms:
+        //   NFC: "caf\u{00e9}"           (é as a single precomposed code point)
+        //   NFD: "cafe\u{0301}"          (e + combining acute accent)
+        // On case-insensitive FAT/HFS+/APFS-default filesystems they
+        // collapse to the same on-disk name. The validator must reject
+        // a sibling pair that differs only by NFC form.
+        let nfc = "caf\u{00e9}";
+        let nfd = "cafe\u{0301}";
+        let children = vec![
+            ChildRef {
+                url: "https://x/a.git".to_string(),
+                path: Some(nfc.to_string()),
+                r#ref: None,
+            },
+            ChildRef {
+                url: "https://x/b.git".to_string(),
+                path: Some(nfd.to_string()),
+                r#ref: None,
+            },
+        ];
+        let dup = nfc_duplicate_path(&children)
+            .expect("NFC vs NFD siblings must be flagged as a duplicate");
+        // The reported path is one of the two literal forms — either is
+        // acceptable; assert it's whichever is the second occurrence (NFD
+        // here, because the NFC form lands first and the second collides).
+        assert!(
+            dup == nfc || dup == nfd,
+            "duplicate path must be one of the offending pair, got {dup:?}",
+        );
+    }
+
+    #[test]
+    fn test_validator_accepts_distinct_unicode_paths() {
+        // Two distinct names — even with diacritics — must NOT trip the
+        // NFC dup detector. `café` (NFC) and `cafe` (plain) are
+        // different names regardless of normalization.
+        let children = vec![
+            ChildRef {
+                url: "https://x/a.git".to_string(),
+                path: Some("caf\u{00e9}".to_string()),
+                r#ref: None,
+            },
+            ChildRef {
+                url: "https://x/b.git".to_string(),
+                path: Some("cafe".to_string()),
+                r#ref: None,
+            },
+        ];
+        assert!(nfc_duplicate_path(&children).is_none());
+    }
+
+    #[test]
+    fn test_validator_fs_accepts_nonexistent_path() {
+        // FS-based checks defer when the path doesn't exist — clone
+        // hasn't fired yet at validation time, so absence is the
+        // happy-path signal.
+        let outer = tempfile::tempdir().unwrap();
+        let dest = outer.path().join("not-yet-cloned");
+        assert!(boundary_fs_reject_reason(&dest).is_none());
+    }
+
+    #[test]
+    fn test_validator_fs_accepts_plain_directory() {
+        // A regular directory (no `.git`, no junction, no reparse) is
+        // fine — the FS check is concerned only with hostile entries.
+        let outer = tempfile::tempdir().unwrap();
+        let dest = outer.path().join("plain-dir");
+        std::fs::create_dir(&dest).unwrap();
+        assert!(boundary_fs_reject_reason(&dest).is_none());
+    }
+
+    #[test]
+    fn test_validator_rejects_gitfile_reference() {
+        // `.git` as a regular file containing `gitdir: ...` is git's
+        // worktree-redirect mechanism. If a child path's `.git` is a
+        // file (not a directory), trust is delegated to whatever path
+        // the file points at — exactly the boundary escape we forbid.
+        let outer = tempfile::tempdir().unwrap();
+        let dest = outer.path().join("gitfile-child");
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(dest.join(".git"), "gitdir: ../elsewhere/.git\n").unwrap();
+        let reason = boundary_fs_reject_reason(&dest)
+            .expect("gitfile-style `.git` reference must be rejected");
+        assert!(
+            reason.to_ascii_lowercase().contains("gitfile")
+                || reason.to_ascii_lowercase().contains(".git"),
+            "reason should mention `.git`/`gitfile`: {reason}",
+        );
+    }
+
+    #[test]
+    fn test_validator_accepts_gitdir_directory() {
+        // `.git` AS A DIRECTORY (the normal case for a clone) is fine.
+        // We only reject the gitfile-redirect form.
+        let outer = tempfile::tempdir().unwrap();
+        let dest = outer.path().join("normal-clone");
+        std::fs::create_dir_all(dest.join(".git")).unwrap();
+        assert!(boundary_fs_reject_reason(&dest).is_none());
+    }
+
+    /// NTFS junction / Windows reparse-point rejection. Junctions are
+    /// reparse points without symlink semantics — `is_symlink()` returns
+    /// false on Windows for them, so a dedicated check is required.
+    /// The fixture uses the `mklink /J` semantics via
+    /// `std::os::windows::fs::symlink_dir` is NOT correct (that creates
+    /// a real symlink); junctions are created via the `cmd /c mklink /J`
+    /// shell-out — but the test would then depend on the host's `cmd`,
+    /// which fights the `no shell=True` invariant. Pragmatic compromise:
+    /// the test creates a real Windows symlink_dir (the closest analog
+    /// available without spawning `cmd`) and asserts the rejector flags
+    /// any reparse point. If symlink creation fails (no Developer Mode),
+    /// the test no-ops — the protection is still in place.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_validator_rejects_ntfs_reparse_point() {
+        let outer = tempfile::tempdir().unwrap();
+        let real = outer.path().join("real-target");
+        std::fs::create_dir(&real).unwrap();
+        let link = outer.path().join("via-reparse");
+        if std::os::windows::fs::symlink_dir(&real, &link).is_err() {
+            // Host won't let us create a reparse point — nothing to
+            // exercise. The validator is still defended against the
+            // attack on hosts that DO allow it.
+            return;
+        }
+        let reason =
+            boundary_fs_reject_reason(&link).expect("Windows reparse-point dest must be rejected");
+        assert!(
+            reason.to_ascii_lowercase().contains("reparse")
+                || reason.to_ascii_lowercase().contains("symlink")
+                || reason.to_ascii_lowercase().contains("junction"),
+            "reason should mention reparse/symlink/junction: {reason}",
+        );
+    }
+
+    /// Non-Windows stub: confirms the FS rejector compiles and runs
+    /// cleanly on platforms where reparse points don't apply. Without
+    /// this stub the `cfg(target_os = "windows")` test above would be
+    /// the only signal of "this was tested" — and CI on Linux/macOS
+    /// would silently skip it. The stub asserts a nonexistent path
+    /// passes (the trivial baseline) so CI on any platform records a
+    /// signal.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_validator_ntfs_reparse_point_stub_non_windows() {
+        let outer = tempfile::tempdir().unwrap();
+        let dest = outer.path().join("missing");
+        assert!(boundary_fs_reject_reason(&dest).is_none());
     }
 }

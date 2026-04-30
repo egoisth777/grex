@@ -172,6 +172,17 @@ pub struct DoctorOpts {
     /// Run the opt-in config-lint check. When `false`,
     /// [`CheckKind::ConfigLint`] never appears in the report.
     pub lint_config: bool,
+    /// v1.2.0 Stage 1.j — depth bound on recursive ManifestTree walk.
+    ///
+    /// * `None` (default) → walk every nested meta exhaustively.
+    /// * `Some(0)` → root meta only (no recursion).
+    /// * `Some(n)` → recurse up to `n` levels of nesting (root is
+    ///   depth 0; depth-`n` metas are visited but their children are
+    ///   not).
+    ///
+    /// The walk is read-only — no clones, fetches, or filesystem
+    /// mutations happen at any frame regardless of `shallow`.
+    pub shallow: Option<usize>,
 }
 
 /// Errors produced during doctor orchestration that are NOT surfaced as
@@ -191,16 +202,88 @@ pub enum DoctorError {
 /// `opts.lint_config`. Applies `--fix` to gitignore findings after the
 /// initial scan, then re-runs the gitignore check to record the healed
 /// state.
+///
+/// v1.2.0 Stage 1.j: walks the ManifestTree depth-first by default,
+/// running every per-meta check at each frame. `opts.shallow` bounds
+/// the recursion (`None` = unbounded, `Some(0)` = root-only,
+/// `Some(n)` = up to `n` nested levels). Recursion is read-only —
+/// no clones, fetches, or filesystem mutations happen at any frame.
 pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, DoctorError> {
     // Auto-migrate v1.x `<ws>/grex.jsonl` → v2 `<ws>/.grex/events.jsonl`
     // before the schema check so doctor sees a consistent canonical
     // location whether the workspace was synced under v1.x or v2.0+.
-    let manifest_path =
-        manifest::ensure_event_log_migrated(workspace).map_err(DoctorError::ManifestIo)?;
-
-    let (schema_result, events_opt) = check_manifest_schema(&manifest_path);
+    // Migration is the ONLY write doctor ever performs at the root
+    // frame (and only when a legacy v1.x layout is present); the
+    // recursive `walk_meta` step never migrates sub-meta event logs.
+    manifest::ensure_event_log_migrated(workspace).map_err(DoctorError::ManifestIo)?;
 
     let mut report = DoctorReport::default();
+    walk_meta(workspace, opts, /* depth */ 0, &mut report);
+
+    if opts.lint_config {
+        let cfg_result = check_config_lint(workspace);
+        report.findings.extend(cfg_result.findings);
+    }
+
+    if opts.fix {
+        // `--fix` heals only the root meta's gitignore. Sub-meta
+        // gitignore drift is reported but never auto-healed — the
+        // recursive walk is read-only by contract.
+        let manifest_path = workspace.join(".grex").join("events.jsonl");
+        let packs = match manifest::read_all(&manifest_path) {
+            Ok(evs) => Some(manifest::fold(evs)),
+            Err(_) => None,
+        };
+        apply_fixes(workspace, packs.as_ref(), &mut report)?;
+    }
+
+    Ok(report)
+}
+
+/// Run the per-meta checks at `meta_dir`, then recurse into every child
+/// whose dest carries its own `<dest>/.grex/pack.yaml` while
+/// `depth + 1 <= shallow_cap`. Mirrors the topology of
+/// [`crate::lockfile::read_lockfile_tree`] (1.h) so doctor and the
+/// distributed-lockfile fold agree on what counts as a sub-meta.
+///
+/// Read-only: no FS mutations. The schema check uses the per-meta
+/// `<meta>/.grex/events.jsonl`; the gitignore-sync, on-disk-drift, and
+/// synthetic-pack checks use the per-meta `<meta>/.grex/grex.lock.jsonl`.
+fn walk_meta(meta_dir: &Path, opts: &DoctorOpts, depth: usize, report: &mut DoctorReport) {
+    run_meta_checks(meta_dir, report);
+
+    if let Some(cap) = opts.shallow {
+        if depth >= cap {
+            return;
+        }
+    }
+
+    // Discover nested metas via the manifest, exactly like
+    // `read_lockfile_tree`'s fold.
+    let manifest_path = meta_dir.join(".grex").join("pack.yaml");
+    let raw = match std::fs::read_to_string(&manifest_path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let manifest = match crate::pack::parse(&raw) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    for child in &manifest.children {
+        let segment = child.path.clone().unwrap_or_else(|| child.effective_path());
+        let child_meta = meta_dir.join(&segment);
+        if child_meta.join(".grex").join("pack.yaml").is_file() {
+            walk_meta(&child_meta, opts, depth + 1, report);
+        }
+    }
+}
+
+/// Run the per-meta checks (schema + gitignore-sync + on-disk-drift +
+/// synthetic-pack) for a single meta directory and append their findings
+/// to `report`. Pure read-only: never mutates the filesystem.
+fn run_meta_checks(meta_dir: &Path, report: &mut DoctorReport) {
+    let manifest_path = meta_dir.join(".grex").join("events.jsonl");
+    let (schema_result, events_opt) = check_manifest_schema(&manifest_path);
     report.findings.extend(schema_result.findings.clone());
 
     // Subsequent pack-level checks need the folded state. If the
@@ -209,20 +292,16 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
     let packs = events_opt.map(manifest::fold);
 
     // v1.1.1 — load the lockfile so per-pack checks can branch on
-    // `LockEntry::synthetic`. A missing lockfile is tolerated silently
-    // (workspaces that have never synced are a normal state); a
-    // corrupt / unreadable lockfile produces an empty map AND a
-    // warning finding so operators see the root cause instead of the
-    // downstream "unregistered directory on disk" warnings the on-disk
-    // drift check would otherwise emit (those warnings rely on the
-    // synthetic flag that was just swallowed).
-    let (lock, lock_finding) = read_synthetic_lock(workspace);
+    // `LockEntry::synthetic`. A missing lockfile is tolerated silently;
+    // a corrupt / unreadable lockfile produces an empty map AND a
+    // warning finding.
+    let (lock, lock_finding) = read_synthetic_lock(meta_dir);
     if let Some(f) = lock_finding {
         report.findings.push(f);
     }
 
     let gi_result = match &packs {
-        Some(p) => check_gitignore_sync(workspace, p),
+        Some(p) => check_gitignore_sync(meta_dir, p),
         None => CheckResult::single(Finding {
             check: CheckKind::GitignoreSync,
             severity: Severity::Warning,
@@ -232,10 +311,10 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
             synthetic: false,
         }),
     };
-    report.findings.extend(gi_result.findings.clone());
+    report.findings.extend(gi_result.findings);
 
     let drift_result = match &packs {
-        Some(p) => check_on_disk_drift(workspace, p, &lock),
+        Some(p) => check_on_disk_drift(meta_dir, p, &lock),
         None => CheckResult::single(Finding {
             check: CheckKind::OnDiskDrift,
             severity: Severity::Warning,
@@ -247,23 +326,8 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
     };
     report.findings.extend(drift_result.findings);
 
-    // v1.1.1 — synthetic plain-git children only ever land in the
-    // lockfile (no `Event::Add` is logged for them). Iterate the
-    // lockfile, not the manifest-derived `packs` map, so the canonical
-    // sync-only flow surfaces an `OK (synthetic)` row per child.
     let synth = check_synthetic_packs(&lock);
     report.findings.extend(synth.findings);
-
-    if opts.lint_config {
-        let cfg_result = check_config_lint(workspace);
-        report.findings.extend(cfg_result.findings);
-    }
-
-    if opts.fix {
-        apply_fixes(workspace, packs.as_ref(), &mut report)?;
-    }
-
-    Ok(report)
 }
 
 /// Run fixes and rebuild the gitignore-sync rows in `report`. Only
@@ -1050,7 +1114,7 @@ mod tests {
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
         upsert_managed_block(&d.path().join(".gitignore"), "a", &["drift"]).unwrap();
-        let opts = DoctorOpts { fix: true, lint_config: false };
+        let opts = DoctorOpts { fix: true, lint_config: false, ..DoctorOpts::default() };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 0, "fix must zero out exit code");
         // Confirm idempotence: running again without --fix also returns 0.
@@ -1080,7 +1144,7 @@ mod tests {
         let before_bytes = fs::read(&m).unwrap();
         let before = fs_snapshot(d.path());
 
-        let opts = DoctorOpts { fix: true, lint_config: false };
+        let opts = DoctorOpts { fix: true, lint_config: false, ..DoctorOpts::default() };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 2, "schema error → exit 2");
 
@@ -1107,7 +1171,7 @@ mod tests {
         // presence/absence of the missing pack dir.
         let before = fs_snapshot(d.path());
 
-        let opts = DoctorOpts { fix: true, lint_config: false };
+        let opts = DoctorOpts { fix: true, lint_config: false, ..DoctorOpts::default() };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 2);
 
@@ -1153,7 +1217,7 @@ mod tests {
         .unwrap();
         fs::create_dir_all(d.path().join("openspec")).unwrap();
         fs::write(d.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
-        let opts = DoctorOpts { fix: false, lint_config: true };
+        let opts = DoctorOpts { fix: false, lint_config: true, ..DoctorOpts::default() };
         let report = run_doctor(d.path(), &opts).unwrap();
         assert_eq!(report.exit_code(), 1);
         assert!(report.findings.iter().any(|f| f.check == CheckKind::ConfigLint));
@@ -1188,6 +1252,7 @@ mod tests {
             "a".to_string(),
             LockEntry {
                 id: "a".into(),
+                path: "a".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),
@@ -1271,6 +1336,249 @@ mod tests {
         assert!(
             report.findings.iter().any(|f| f.check == CheckKind::OnDiskDrift),
             "on-disk-drift check must still run",
+        );
+    }
+
+    // --- v1.2.0 Stage 1.j: recursive ManifestTree walk + --shallow ---
+
+    /// Build a meta directory at `meta_dir` with a `pack.yaml` declaring
+    /// `children`. Each child is `(segment, url)`. The pack type is
+    /// `meta` so the manifest is shaped like a workspace orchestrator.
+    fn write_meta_manifest(meta_dir: &Path, name: &str, children: &[(&str, &str)]) {
+        let grex_dir = meta_dir.join(".grex");
+        fs::create_dir_all(&grex_dir).unwrap();
+        let mut yaml = format!("schema_version: \"1\"\nname: {name}\ntype: meta\n");
+        if !children.is_empty() {
+            yaml.push_str("children:\n");
+            for (segment, url) in children {
+                yaml.push_str(&format!("  - url: {url}\n    path: {segment}\n"));
+            }
+        }
+        fs::write(grex_dir.join("pack.yaml"), yaml).unwrap();
+    }
+
+    /// Build a leaf meta whose own `events.jsonl` registers one pack
+    /// `pack_id` at sub-path `pack_id` so the per-meta on-disk-drift
+    /// check sees a clean pack. Does NOT touch the parent.
+    fn seed_meta_with_pack(meta_dir: &Path, meta_name: &str, pack_id: &str) {
+        write_meta_manifest(meta_dir, meta_name, &[]);
+        let m = meta_dir.join(".grex").join("events.jsonl");
+        append_event(
+            &m,
+            &Event::Add {
+                ts: ts(),
+                id: pack_id.into(),
+                url: format!("https://example/{pack_id}"),
+                path: pack_id.into(),
+                pack_type: "declarative".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+        fs::create_dir_all(meta_dir.join(pack_id)).unwrap();
+    }
+
+    /// AC: by default, doctor walks every nested meta. A 3-level tree
+    /// (root → alpha → gamma) yields one ManifestSchema finding per
+    /// meta (3 total).
+    #[test]
+    fn test_doctor_recurses_default() {
+        let d = tempdir().unwrap();
+        let root = d.path();
+
+        // Root meta declares child `alpha`.
+        write_meta_manifest(root, "root", &[("alpha", "https://example.invalid/alpha.git")]);
+        // Root's events.jsonl registers `alpha` so on-disk-drift is clean.
+        let m = root.join(".grex").join("events.jsonl");
+        append_event(
+            &m,
+            &Event::Add {
+                ts: ts(),
+                id: "alpha".into(),
+                url: "https://example.invalid/alpha.git".into(),
+                path: "alpha".into(),
+                pack_type: "meta".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+
+        // Alpha meta declares child `gamma`.
+        let alpha = root.join("alpha");
+        write_meta_manifest(&alpha, "alpha", &[("gamma", "https://example.invalid/gamma.git")]);
+        let am = alpha.join(".grex").join("events.jsonl");
+        append_event(
+            &am,
+            &Event::Add {
+                ts: ts(),
+                id: "gamma".into(),
+                url: "https://example.invalid/gamma.git".into(),
+                path: "gamma".into(),
+                pack_type: "declarative".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+        fs::create_dir_all(alpha.join("gamma")).unwrap();
+
+        // Gamma is a leaf meta with one registered pack `delta`.
+        let gamma = alpha.join("gamma");
+        seed_meta_with_pack(&gamma, "gamma", "delta");
+
+        let report = run_doctor(root, &DoctorOpts::default()).unwrap();
+
+        let schema_oks: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.check == CheckKind::ManifestSchema && f.severity == Severity::Ok)
+            .collect();
+        assert_eq!(
+            schema_oks.len(),
+            3,
+            "three metas visited (root + alpha + gamma); got: {:?}",
+            report.findings,
+        );
+    }
+
+    /// AC: `--shallow 0` halts at the root meta — only one
+    /// ManifestSchema finding even when the root has nested metas.
+    #[test]
+    fn test_doctor_shallow_zero_root_only() {
+        let d = tempdir().unwrap();
+        let root = d.path();
+
+        write_meta_manifest(root, "root", &[("alpha", "https://example.invalid/alpha.git")]);
+        let m = root.join(".grex").join("events.jsonl");
+        append_event(
+            &m,
+            &Event::Add {
+                ts: ts(),
+                id: "alpha".into(),
+                url: "https://example.invalid/alpha.git".into(),
+                path: "alpha".into(),
+                pack_type: "meta".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+        let alpha = root.join("alpha");
+        seed_meta_with_pack(&alpha, "alpha", "leaf");
+
+        let opts = DoctorOpts { shallow: Some(0), ..DoctorOpts::default() };
+        let report = run_doctor(root, &opts).unwrap();
+        let schema_oks: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.check == CheckKind::ManifestSchema && f.severity == Severity::Ok)
+            .collect();
+        assert_eq!(schema_oks.len(), 1, "shallow=0 must halt at root; got: {:?}", report.findings,);
+    }
+
+    /// AC: `--shallow 1` visits root + depth-1 metas but not deeper.
+    /// A 3-level tree (root → alpha → gamma) yields 2 ManifestSchema
+    /// findings (root + alpha) under shallow=1.
+    #[test]
+    fn test_doctor_shallow_n_stops_at_n() {
+        let d = tempdir().unwrap();
+        let root = d.path();
+
+        write_meta_manifest(root, "root", &[("alpha", "https://example.invalid/alpha.git")]);
+        let m = root.join(".grex").join("events.jsonl");
+        append_event(
+            &m,
+            &Event::Add {
+                ts: ts(),
+                id: "alpha".into(),
+                url: "https://example.invalid/alpha.git".into(),
+                path: "alpha".into(),
+                pack_type: "meta".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+
+        let alpha = root.join("alpha");
+        write_meta_manifest(&alpha, "alpha", &[("gamma", "https://example.invalid/gamma.git")]);
+        let am = alpha.join(".grex").join("events.jsonl");
+        append_event(
+            &am,
+            &Event::Add {
+                ts: ts(),
+                id: "gamma".into(),
+                url: "https://example.invalid/gamma.git".into(),
+                path: "gamma".into(),
+                pack_type: "meta".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+        fs::create_dir_all(alpha.join("gamma")).unwrap();
+
+        let gamma = alpha.join("gamma");
+        seed_meta_with_pack(&gamma, "gamma", "delta");
+
+        let opts = DoctorOpts { shallow: Some(1), ..DoctorOpts::default() };
+        let report = run_doctor(root, &opts).unwrap();
+        let schema_oks: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.check == CheckKind::ManifestSchema && f.severity == Severity::Ok)
+            .collect();
+        assert_eq!(
+            schema_oks.len(),
+            2,
+            "shallow=1 must visit root + depth-1; got: {:?}",
+            report.findings,
+        );
+    }
+
+    /// AC: doctor performs zero filesystem mutations on a multi-level
+    /// tree even when sub-meta gitignores have drift. Read-only by
+    /// contract — only the root frame's `--fix` is allowed to write.
+    /// Here `--fix` is OFF, so every byte of the fixture is preserved.
+    #[test]
+    fn test_doctor_no_fs_mutations() {
+        let d = tempdir().unwrap();
+        let root = d.path();
+
+        // Root meta with declared child `alpha`.
+        write_meta_manifest(root, "root", &[("alpha", "https://example.invalid/alpha.git")]);
+        let m = root.join(".grex").join("events.jsonl");
+        append_event(
+            &m,
+            &Event::Add {
+                ts: ts(),
+                id: "alpha".into(),
+                url: "https://example.invalid/alpha.git".into(),
+                path: "alpha".into(),
+                pack_type: "meta".into(),
+                schema_version: SCHEMA_VERSION.into(),
+            },
+        )
+        .unwrap();
+
+        // Alpha meta carries DRIFT in its own .gitignore — its managed
+        // block body deviates from the expected list. The recursive
+        // walk must observe it (Warning finding) but mutate nothing.
+        let alpha = root.join("alpha");
+        seed_meta_with_pack(&alpha, "alpha", "leaf");
+        upsert_managed_block(&alpha.join(".gitignore"), "leaf", &["drifted-pattern"]).unwrap();
+
+        let before = fs_snapshot(root);
+        let report = run_doctor(root, &DoctorOpts::default()).unwrap();
+        let after = fs_snapshot(root);
+
+        assert_eq!(before, after, "recursive doctor walk must perform zero writes");
+        // Sanity: the sub-meta drift was actually observed (so the
+        // mutation-check isn't passing trivially because the walker
+        // didn't recurse).
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.check == CheckKind::GitignoreSync && f.severity == Severity::Warning),
+            "expected sub-meta gitignore-drift warning; got: {:?}",
+            report.findings,
         );
     }
 

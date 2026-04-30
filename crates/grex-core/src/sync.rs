@@ -99,6 +99,31 @@ pub struct SyncOptions {
     /// * `Some(1)` → serial fast-path.
     /// * `Some(n >= 2)` → bounded parallel.
     pub parallel: Option<usize>,
+    /// v1.2.0 Stage 1.l prep — when `true`, walker Phase 2 may drop
+    /// dirty trees during prune. Still refuses ignored content unless
+    /// [`SyncOptions::force_prune_with_ignored`] is also `true`.
+    /// Default `false` preserves v1.1.1 behavior (refuse all dirty
+    /// drops).
+    pub force_prune: bool,
+    /// v1.2.0 Stage 1.l prep — when `true` (implies
+    /// [`SyncOptions::force_prune`]), walker Phase 2 also drops
+    /// ignored content. Hard override — the strongest level. Default
+    /// `false` preserves v1.1.1 behavior.
+    pub force_prune_with_ignored: bool,
+    /// v1.2.0 Stage 1.h opt-in — when `true`, the walker rewrites a
+    /// legacy v1.1.1 lockfile in place to the v1.2.0 shape. When
+    /// `false` (default), the walker errors on the legacy shape so
+    /// migration is always an explicit caller decision.
+    pub migrate_lockfile: bool,
+    /// v1.2.0 Stage 1.j prep — when `true` (default), the walker
+    /// descends into nested meta-children. `doctor --shallow` flips
+    /// this to `false` so only the immediate workspace is inspected.
+    pub recurse: bool,
+    /// v1.2.0 Stage 1.j prep — pairs with
+    /// [`SyncOptions::recurse`] for `--shallow=N`. `None` (default)
+    /// is unbounded recursion when `recurse` is `true`. `Some(n)`
+    /// caps depth at `n` levels of nesting.
+    pub max_depth: Option<usize>,
 }
 
 impl Default for SyncOptions {
@@ -111,6 +136,14 @@ impl Default for SyncOptions {
             only_patterns: None,
             force: false,
             parallel: None,
+            // v1.2.0 Stage 1.m additions — defaults preserve v1.1.1
+            // behavior. Each field is a dormant placeholder until
+            // its corresponding walker stage wires it.
+            force_prune: false,
+            force_prune_with_ignored: false,
+            migrate_lockfile: false,
+            recurse: true,
+            max_depth: None,
         }
     }
 }
@@ -190,6 +223,23 @@ impl SyncOptions {
     #[must_use]
     pub fn with_parallel(mut self, parallel: Option<usize>) -> Self {
         self.parallel = parallel;
+        self
+    }
+
+    /// Set `force_prune` (`--force-prune`). See
+    /// [`SyncOptions::force_prune`] for the override matrix.
+    #[must_use]
+    pub fn with_force_prune(mut self, force_prune: bool) -> Self {
+        self.force_prune = force_prune;
+        self
+    }
+
+    /// Set `force_prune_with_ignored` (`--force-prune-with-ignored`).
+    /// See [`SyncOptions::force_prune_with_ignored`] for the override
+    /// matrix.
+    #[must_use]
+    pub fn with_force_prune_with_ignored(mut self, force_prune_with_ignored: bool) -> Self {
+        self.force_prune_with_ignored = force_prune_with_ignored;
         self
     }
 }
@@ -376,6 +426,13 @@ pub enum SyncError {
     /// (check filesystem permissions, free disk space, then retry).
     #[error("event-log migration failed: {0}")]
     EventLogMigration(#[source] crate::manifest::ManifestError),
+    /// Cooperative cancellation fired (Ctrl-C / SIGTERM) during a
+    /// parallel sync. v1.2.0 Stage 1.g wires the rayon walker to surface
+    /// this distinct-from-failure variant so the CLI can exit with a
+    /// dedicated cancellation code instead of a generic sync error.
+    /// Dormant until Stage 1.g — the existing CLI does not yet emit it.
+    #[error("sync cancelled by user")]
+    SchedulerCancelled,
 }
 
 impl Clone for SyncError {
@@ -429,6 +486,7 @@ impl Clone for SyncError {
                     required: source.to_string(),
                 }],
             },
+            Self::SchedulerCancelled => Self::SchedulerCancelled,
         }
     }
 }
@@ -1547,6 +1605,10 @@ fn upsert_lock_entry(
     let entry = next_lock.get(pack_name).map_or_else(
         || LockEntry {
             id: pack_name.to_string(),
+            // v1.1.1 convention: path == id (1:1 id↔folder). Stage 1.e
+            // (walker rewrite) will replace this with the parent-relative
+            // manifest path captured during the walk.
+            path: pack_name.to_string(),
             sha: commit_sha.to_string(),
             branch: String::new(),
             installed_at,
@@ -2153,6 +2215,7 @@ mod synthetic_transition_tests {
     fn prior_entry(synthetic: bool) -> LockEntry {
         LockEntry {
             id: "alpha".into(),
+            path: "alpha".into(),
             sha: "deadbeef".into(),
             branch: "main".into(),
             installed_at: ts(),
@@ -2206,6 +2269,7 @@ mod synthetic_transition_tests {
             "beta".into(),
             LockEntry {
                 id: "beta".into(),
+                path: "beta".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),
@@ -2234,6 +2298,7 @@ mod synthetic_transition_tests {
             "gamma".into(),
             LockEntry {
                 id: "gamma".into(),
+                path: "gamma".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),
@@ -2248,5 +2313,129 @@ mod synthetic_transition_tests {
 
         let entry = next.get("gamma").expect("entry must be upserted");
         assert!(entry.synthetic, "synthetic must remain true on no-op refresh");
+    }
+}
+
+#[cfg(test)]
+mod error_display_tests {
+    //! v1.2.0 Stage 1.k — `SyncError` Display assertions.
+    //!
+    //! Pure construction + `to_string()` checks. Variants land dormant —
+    //! Stage 1.g (rayon scheduler) wires `SchedulerCancelled` once
+    //! cooperative cancel polls reach the parallel walker.
+    use super::SyncError;
+
+    #[test]
+    fn test_sync_error_scheduler_cancelled_display() {
+        let err = SyncError::SchedulerCancelled;
+        assert_eq!(err.to_string(), "sync cancelled by user");
+    }
+}
+
+#[cfg(test)]
+mod sync_options_v1_2_0_tests {
+    //! v1.2.0 Stage 1.m — leaf cover for new [`SyncOptions`] fields.
+    //!
+    //! These tests are mechanical default-value assertions plus simple
+    //! builder/clone round-trips. They exist to lock down that:
+    //!
+    //! 1. Adding the new fields preserves v1.1.1 behavior (defaults
+    //!    leave existing call sites observably unchanged).
+    //! 2. The shape is what later walker stages (1.h / 1.j / 1.l) will
+    //!    consume — if any of these fields are renamed or change type,
+    //!    those stages must update in lock-step.
+    //!
+    //! The fields themselves are *dormant placeholders* at 1.m scope —
+    //! no behavior wiring lives in this stage.
+    use super::SyncOptions;
+
+    /// `force_prune` defaults to `false` so existing call sites refuse
+    /// to drop dirty trees (v1.1.1 behavior).
+    #[test]
+    fn test_sync_options_default_force_prune_false() {
+        let opts = SyncOptions::default();
+        assert!(!opts.force_prune, "force_prune must default to false");
+    }
+
+    /// `force_prune_with_ignored` defaults to `false` so existing call
+    /// sites refuse to drop ignored content (v1.1.1 behavior).
+    #[test]
+    fn test_sync_options_default_force_prune_with_ignored_false() {
+        let opts = SyncOptions::default();
+        assert!(!opts.force_prune_with_ignored, "force_prune_with_ignored must default to false");
+    }
+
+    /// `migrate_lockfile` defaults to `false` so the walker errors on
+    /// legacy v1.1.1 lockfile shapes unless the caller opts in.
+    #[test]
+    fn test_sync_options_default_migrate_lockfile_false() {
+        let opts = SyncOptions::default();
+        assert!(!opts.migrate_lockfile, "migrate_lockfile must default to false");
+    }
+
+    /// `recurse` defaults to `true` — the walker descends into nested
+    /// meta-children unless `--shallow` is requested.
+    #[test]
+    fn test_sync_options_default_recurse_true() {
+        let opts = SyncOptions::default();
+        assert!(opts.recurse, "recurse must default to true");
+    }
+
+    /// `max_depth` defaults to `None` — unbounded recursion when
+    /// `recurse` is `true`.
+    #[test]
+    fn test_sync_options_default_max_depth_none() {
+        let opts = SyncOptions::default();
+        assert!(opts.max_depth.is_none(), "max_depth must default to None");
+    }
+
+    /// Setting `force_prune_with_ignored = true` alongside
+    /// `force_prune = true` is the documented "stronger" combination.
+    /// No contradiction: `with_ignored` is the harder override and
+    /// implies the base `force_prune` semantics. This test guards the
+    /// invariant that both flags coexist as plain `bool` (not enum)
+    /// so callers can set them independently without runtime panic.
+    #[test]
+    fn test_sync_options_force_prune_with_ignored_implies_force_prune() {
+        let opts = SyncOptions {
+            force_prune: true,
+            force_prune_with_ignored: true,
+            ..SyncOptions::default()
+        };
+        assert!(opts.force_prune);
+        assert!(opts.force_prune_with_ignored);
+    }
+
+    /// `max_depth = Some(n)` paired with `recurse = true` is the
+    /// documented `--shallow=N` shape. The fields are independent
+    /// `bool` / `Option<usize>` so callers may set `max_depth` while
+    /// `recurse` is left at its default (`true`). Stage 1.j will
+    /// later define the precise interaction; this test only locks
+    /// the two fields' types and defaults.
+    #[test]
+    fn test_sync_options_max_depth_pairs_with_recurse() {
+        let opts = SyncOptions { max_depth: Some(2), ..SyncOptions::default() };
+        assert_eq!(opts.max_depth, Some(2));
+        assert!(opts.recurse, "recurse stays at its default (true) when only max_depth is set");
+    }
+
+    /// Round-trip via `Clone` — guards that all new fields participate
+    /// in the existing `Clone` derive (no `#[clone(skip)]` slipped in).
+    #[test]
+    fn test_sync_options_clone_preserves_new_fields() {
+        let opts = SyncOptions {
+            force_prune: true,
+            force_prune_with_ignored: true,
+            migrate_lockfile: true,
+            recurse: false,
+            max_depth: Some(7),
+            ..SyncOptions::default()
+        };
+        let cloned = opts.clone();
+        assert_eq!(cloned.force_prune, opts.force_prune);
+        assert_eq!(cloned.force_prune_with_ignored, opts.force_prune_with_ignored);
+        assert_eq!(cloned.migrate_lockfile, opts.migrate_lockfile);
+        assert_eq!(cloned.recurse, opts.recurse);
+        assert_eq!(cloned.max_depth, opts.max_depth);
     }
 }

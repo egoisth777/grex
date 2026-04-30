@@ -56,6 +56,9 @@ fn apply(state: &mut HashMap<PackId, PackState>, event: Event) {
         Event::ActionStarted { .. }
         | Event::ActionCompleted { .. }
         | Event::ActionHalted { .. } => {}
+        // v1.2.0 Stage 1.l — workspace-scoped audit; no pack state to
+        // mutate.
+        Event::ForcePruneExecuted { .. } => {}
     }
 }
 
