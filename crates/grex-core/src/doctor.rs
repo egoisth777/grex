@@ -1188,6 +1188,7 @@ mod tests {
             "a".to_string(),
             LockEntry {
                 id: "a".into(),
+                path: "a".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),

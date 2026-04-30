@@ -62,6 +62,7 @@ mod tests {
     fn entry(id: &str) -> LockEntry {
         LockEntry {
             id: id.into(),
+            path: id.into(),
             sha: "abc".into(),
             branch: "main".into(),
             installed_at: Utc.with_ymd_and_hms(2026, 4, 19, 10, 0, 0).unwrap(),

@@ -1547,6 +1547,10 @@ fn upsert_lock_entry(
     let entry = next_lock.get(pack_name).map_or_else(
         || LockEntry {
             id: pack_name.to_string(),
+            // v1.1.1 convention: path == id (1:1 id↔folder). Stage 1.e
+            // (walker rewrite) will replace this with the parent-relative
+            // manifest path captured during the walk.
+            path: pack_name.to_string(),
             sha: commit_sha.to_string(),
             branch: String::new(),
             installed_at,
@@ -2153,6 +2157,7 @@ mod synthetic_transition_tests {
     fn prior_entry(synthetic: bool) -> LockEntry {
         LockEntry {
             id: "alpha".into(),
+            path: "alpha".into(),
             sha: "deadbeef".into(),
             branch: "main".into(),
             installed_at: ts(),
@@ -2206,6 +2211,7 @@ mod synthetic_transition_tests {
             "beta".into(),
             LockEntry {
                 id: "beta".into(),
+                path: "beta".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),
@@ -2234,6 +2240,7 @@ mod synthetic_transition_tests {
             "gamma".into(),
             LockEntry {
                 id: "gamma".into(),
+                path: "gamma".into(),
                 sha: "deadbeef".into(),
                 branch: "main".into(),
                 installed_at: ts(),
