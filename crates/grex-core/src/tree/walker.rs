@@ -26,7 +26,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::git::GitBackend;
-use crate::pack::validate::child_path::check_one as check_child_path;
+use crate::pack::validate::child_path::{
+    boundary_fs_reject_reason, boundary_reject_reason, check_one as check_child_path,
+    nfc_duplicate_path,
+};
 use crate::pack::{ChildRef, PackManifest, PackType, PackValidationError, SchemaVersion};
 
 use super::error::TreeError;
@@ -166,6 +169,19 @@ impl<'a> Walker<'a> {
             chain.push(identity);
             return Err(TreeError::CycleDetected { chain });
         }
+        // v1.2.0 Stage 1.c: FS-resident boundary check fires BEFORE
+        // any clone / fetch. Junctions, reparse points, and
+        // `.git`-as-file (gitfile redirect) all re-open the
+        // parent-boundary escape that the syntactic gate closes on
+        // the path string itself; running the check on the prospective
+        // dest path means a hostile pre-existing slot is rejected
+        // before the GitBackend writes anything into (or through) it.
+        // The prospective path is reconstructed here so the helper
+        // can interrogate the slot before `resolve_destination`
+        // materialises a clone — pre-clone runs return `Ok(())` because
+        // the slot doesn't exist yet, and the walk continues normally.
+        let prospective_dest = self.workspace.join(child.effective_path());
+        check_dest_boundary(&prospective_dest, &child.effective_path())?;
         let dest = self.resolve_destination(child, state)?;
         // v1.1.1 plain-git children: when the destination has no
         // `.grex/pack.yaml` but does carry a `.git/`, synthesize a
@@ -377,7 +393,33 @@ fn find_node_id_by_name_or_url(nodes: &[PackNode], dep: &str) -> Option<usize> {
 /// future variant the helper grows surfaces as a compile-time
 /// failure here rather than as a silently swallowed `Some(other)`.
 fn validate_children_paths(manifest: &PackManifest) -> Result<(), TreeError> {
+    // v1.2.0 Stage 1.c: NFC-duplicate sweep across the sibling list.
+    // Runs first because it's a cross-cutting check (one offender
+    // implicates the WHOLE list, not a single child). Surfaces as
+    // `TreeError::ManifestPathEscape` per walker.md
+    // §boundary-preservation — a NFC-collapsed name re-introduces the
+    // very boundary escape the regex was meant to close on
+    // case-insensitive filesystems.
+    if let Some(path) = nfc_duplicate_path(&manifest.children) {
+        return Err(TreeError::ManifestPathEscape {
+            path,
+            reason: "duplicate child path under Unicode NFC normalization (case-insensitive FS collision risk)"
+                .to_string(),
+        });
+    }
     for child in &manifest.children {
+        // v1.2.0 Stage 1.c: per-segment boundary-preservation rejects.
+        // Layered AHEAD of the syntactic gate so the more specific
+        // `ManifestPathEscape` diagnostic wins for entries that would
+        // also fail the bare-name regex (e.g. `child:foo` is rejected
+        // here as a colon hazard instead of a generic charset miss).
+        let segment = child.path.as_deref().map_or_else(|| child.effective_path(), str::to_string);
+        if let Some(reason) = boundary_reject_reason(&segment) {
+            return Err(TreeError::ManifestPathEscape {
+                path: segment,
+                reason: reason.to_string(),
+            });
+        }
         let Some(err) = check_child_path(child) else { continue };
         match err {
             PackValidationError::ChildPathInvalid { child_name, path, reason } => {
@@ -398,6 +440,33 @@ fn validate_children_paths(manifest: &PackManifest) -> Result<(), TreeError> {
                 debug_assert!(false, "check_child_path returned unexpected variant: {other:?}");
             }
         }
+    }
+    Ok(())
+}
+
+/// v1.2.0 Stage 1.c: filesystem-resident boundary check. Run AFTER
+/// the destination has been resolved against the parent workspace but
+/// BEFORE any clone / fetch fires. Catches the case where the slot
+/// the walker is about to materialise into is already a junction,
+/// reparse point, symlink, or `.git`-as-file — each of which would
+/// re-introduce a parent-boundary escape.
+///
+/// Pre-clone: a non-existent destination is the happy path; the
+/// helper returns `None` and the walk continues. Post-clone or on a
+/// re-walk where the destination is already populated, the helper
+/// inspects the on-disk entry and surfaces a `ManifestPathEscape`
+/// when the entry violates the boundary contract.
+///
+/// Visibility: `pub(super)` — used by the walker's `handle_child`
+/// path-resolution step (wired in 1.c follow-up; this commit lands
+/// the helper itself and the boundary-check call site for the
+/// path-segment rejects).
+pub(super) fn check_dest_boundary(dest: &Path, segment: &str) -> Result<(), TreeError> {
+    if let Some(reason) = boundary_fs_reject_reason(dest) {
+        return Err(TreeError::ManifestPathEscape {
+            path: segment.to_string(),
+            reason: reason.to_string(),
+        });
     }
     Ok(())
 }

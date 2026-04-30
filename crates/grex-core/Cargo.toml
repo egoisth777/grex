@@ -32,6 +32,7 @@ async-trait = "0.1"
 # the host's logical CPU count when the library is driven without a
 # CLI override.
 num_cpus = "1.16"
+unicode-normalization = "0.1.25"
 
 [features]
 # Opt-in compile-time auto-registration of Tier-1 built-in action plugins
