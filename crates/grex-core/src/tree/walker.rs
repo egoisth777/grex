@@ -753,12 +753,22 @@ fn phase2_prune_orphans(
     opts: &SyncMetaOptions,
     report: &mut SyncMetaReport,
 ) {
+    // v1.2.0 Stage 1.l — postmortem audit log path. Resolved once per
+    // meta from the canonical `<meta_dir>/.grex/events.jsonl` slot;
+    // `phase2_prune` only writes to it when an override flag actually
+    // consumed a non-Clean verdict (clean prunes never log).
+    let audit_log = crate::manifest::event_log_path(meta_dir);
     for candidate in prune_candidates {
         // Candidates are parent-relative POSIX paths
         // (`LockEntry::validate_path` invariant from 1.b). Resolve
         // against `meta_dir` to get the absolute dest.
         let dest = meta_dir.join(candidate);
-        match phase2_prune(&dest, opts.force_prune, opts.force_prune_with_ignored) {
+        match phase2_prune(
+            &dest,
+            opts.force_prune,
+            opts.force_prune_with_ignored,
+            Some(audit_log.as_path()),
+        ) {
             Ok(()) => report.phase2_pruned.push(dest),
             Err(e) => report.errors.push(e),
         }

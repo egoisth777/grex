@@ -266,6 +266,9 @@ fn emit_semantic_warnings(events: &[Event]) {
             Event::ActionStarted { .. }
             | Event::ActionCompleted { .. }
             | Event::ActionHalted { .. } => {}
+            // v1.2.0 Stage 1.l — workspace-scoped audit; not tied to a
+            // pack id so it has no live-set check.
+            Event::ForcePruneExecuted { .. } => {}
         }
     }
 }

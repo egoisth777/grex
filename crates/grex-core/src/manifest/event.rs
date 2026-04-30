@@ -134,6 +134,29 @@ pub enum Event {
         /// [`ACTION_ERROR_SUMMARY_MAX`] bytes).
         error_summary: String,
     },
+    /// v1.2.0 Stage 1.l — A walker Phase 2 prune fired against a
+    /// non-Clean consent verdict because the operator requested
+    /// `--force-prune` (or the stronger `--force-prune-with-ignored`).
+    /// Postmortem-only: emitted ONLY when the override flags actually
+    /// consumed a non-Clean verdict; clean-consent prunes do not write
+    /// this event. Tracks the dest path, the refusal kind that was
+    /// overridden, and whether the stronger ignored-content override
+    /// was in effect.
+    ForcePruneExecuted {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Absolute path of the dest that was pruned (display form).
+        path: String,
+        /// Stable lowercase tag for the refusal kind that was
+        /// overridden (`"dirty_tree"`, `"dirty_tree_with_ignored"`,
+        /// `"sub_meta_with_dirty_children"`). `GitInProgress` is never
+        /// overridable so it never appears here.
+        kind: String,
+        /// `true` when the stronger `--force-prune-with-ignored` was
+        /// in effect at the time of the override; `false` when only
+        /// the base `--force-prune` was set.
+        force_prune_with_ignored: bool,
+    },
 }
 
 /// Max bytes retained in [`Event::ActionHalted::error_summary`].
@@ -147,7 +170,10 @@ impl Event {
     /// Return the pack id the event applies to.
     ///
     /// Action-audit variants return the `pack` field; legacy variants
-    /// return their `id`.
+    /// return their `id`. Workspace-scoped variants
+    /// ([`Event::ForcePruneExecuted`]) return the dest `path` as their
+    /// identifier — there is no single owning pack for an audit-only
+    /// override record.
     pub fn id(&self) -> &PackId {
         match self {
             Event::Add { id, .. }
@@ -157,6 +183,7 @@ impl Event {
             Event::ActionStarted { pack, .. }
             | Event::ActionCompleted { pack, .. }
             | Event::ActionHalted { pack, .. } => pack,
+            Event::ForcePruneExecuted { path, .. } => path,
         }
     }
 
@@ -169,7 +196,8 @@ impl Event {
             | Event::Sync { ts, .. }
             | Event::ActionStarted { ts, .. }
             | Event::ActionCompleted { ts, .. }
-            | Event::ActionHalted { ts, .. } => *ts,
+            | Event::ActionHalted { ts, .. }
+            | Event::ForcePruneExecuted { ts, .. } => *ts,
         }
     }
 }

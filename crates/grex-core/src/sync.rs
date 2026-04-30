@@ -225,6 +225,23 @@ impl SyncOptions {
         self.parallel = parallel;
         self
     }
+
+    /// Set `force_prune` (`--force-prune`). See
+    /// [`SyncOptions::force_prune`] for the override matrix.
+    #[must_use]
+    pub fn with_force_prune(mut self, force_prune: bool) -> Self {
+        self.force_prune = force_prune;
+        self
+    }
+
+    /// Set `force_prune_with_ignored` (`--force-prune-with-ignored`).
+    /// See [`SyncOptions::force_prune_with_ignored`] for the override
+    /// matrix.
+    #[must_use]
+    pub fn with_force_prune_with_ignored(mut self, force_prune_with_ignored: bool) -> Self {
+        self.force_prune_with_ignored = force_prune_with_ignored;
+        self
+    }
 }
 
 /// One executed (or planned) action step in a sync run.

@@ -39,6 +39,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::fs::boundary::BoundedDir;
+use crate::manifest::event::Event;
 
 use super::dest_class::git_in_progress_at;
 use super::error::{DirtyTreeRefusalKind, TreeError};
@@ -280,15 +281,66 @@ pub fn phase2_prune(
     dest: &Path,
     force_prune: bool,
     force_prune_with_ignored: bool,
+    audit_log: Option<&Path>,
 ) -> Result<(), TreeError> {
     let verdict = recursive_consent_walk(dest);
     if should_execute(verdict, force_prune, force_prune_with_ignored) {
+        // v1.2.0 Stage 1.l — emit a postmortem audit event ONLY when
+        // an override flag actually consumed a non-Clean verdict.
+        // Clean prunes never write to the audit log; the event is a
+        // forensic record of "the operator deliberately overrode
+        // safety here, on this path, on this date". Failure to write
+        // the event is logged via `tracing` but never aborts the
+        // prune — best-effort, like the rest of the manifest writes.
+        if let Some(log_path) = audit_log {
+            if let Some(kind) = verdict.refusal_kind() {
+                emit_force_prune_event(log_path, dest, kind, force_prune_with_ignored);
+            }
+        }
         return execute_prune(dest);
     }
     let kind = verdict
         .refusal_kind()
         .expect("Clean verdicts always pass should_execute and never reach the refusal arm");
     Err(TreeError::DirtyTreeRefusal { path: dest.to_path_buf(), kind })
+}
+
+/// Map a [`DirtyTreeRefusalKind`] to its stable lowercase audit tag.
+/// `GitInProgress` is included for completeness even though the
+/// override matrix never reaches this code path with that verdict.
+fn refusal_kind_tag(kind: DirtyTreeRefusalKind) -> &'static str {
+    match kind {
+        DirtyTreeRefusalKind::DirtyTree => "dirty_tree",
+        DirtyTreeRefusalKind::DirtyTreeWithIgnored => "dirty_tree_with_ignored",
+        DirtyTreeRefusalKind::GitInProgress => "git_in_progress",
+        DirtyTreeRefusalKind::SubMetaWithDirtyChildren => "sub_meta_with_dirty_children",
+    }
+}
+
+/// Best-effort append of a [`Event::ForcePruneExecuted`] to the
+/// supplied audit log. Failures are logged via `tracing::warn!` but do
+/// not propagate — the audit-log write is informational, not
+/// transactional. Callers always own the prune decision regardless of
+/// whether the event made it to disk.
+fn emit_force_prune_event(
+    log_path: &Path,
+    dest: &Path,
+    kind: DirtyTreeRefusalKind,
+    force_prune_with_ignored: bool,
+) {
+    let event = Event::ForcePruneExecuted {
+        ts: chrono::Utc::now(),
+        path: dest.display().to_string(),
+        kind: refusal_kind_tag(kind).to_string(),
+        force_prune_with_ignored,
+    };
+    if let Err(e) = crate::manifest::append::append_event(log_path, &event) {
+        tracing::warn!(
+            audit_log = %log_path.display(),
+            error = %e,
+            "failed to append ForcePruneExecuted audit event; prune still executed",
+        );
+    }
 }
 
 /// Decide whether to execute the prune given a consent verdict and
@@ -547,7 +599,7 @@ mod tests {
         if !try_git_init(&dest) {
             return;
         }
-        let res = phase2_prune(&dest, false, false);
+        let res = phase2_prune(&dest, false, false, None);
         assert!(res.is_ok(), "clean prune must succeed: {res:?}");
         assert!(!dest.exists(), "dest must be removed after a clean prune");
     }
@@ -561,7 +613,7 @@ mod tests {
             return;
         }
         fs::write(dest.join("scratch.txt"), b"changes").unwrap();
-        let res = phase2_prune(&dest, false, false);
+        let res = phase2_prune(&dest, false, false, None);
         match res {
             Err(TreeError::DirtyTreeRefusal { kind: DirtyTreeRefusalKind::DirtyTree, .. }) => {}
             other => panic!("expected DirtyTreeRefusal{{DirtyTree}}, got {other:?}"),
@@ -578,7 +630,7 @@ mod tests {
             return;
         }
         fs::write(dest.join("scratch.txt"), b"changes").unwrap();
-        let res = phase2_prune(&dest, true, false);
+        let res = phase2_prune(&dest, true, false, None);
         assert!(res.is_ok(), "force_prune must consume DirtyTree: {res:?}");
         assert!(!dest.exists(), "dest must be removed under force_prune");
     }
@@ -609,7 +661,7 @@ mod tests {
         fs::write(dest.join("target/build.out"), b"artefact").unwrap();
         // force_prune alone is INSUFFICIENT: ignored content needs
         // the stronger flag.
-        let res = phase2_prune(&dest, true, false);
+        let res = phase2_prune(&dest, true, false, None);
         match res {
             Err(TreeError::DirtyTreeRefusal {
                 kind: DirtyTreeRefusalKind::DirtyTreeWithIgnored,
@@ -644,7 +696,7 @@ mod tests {
             .status();
         fs::create_dir_all(dest.join("target")).unwrap();
         fs::write(dest.join("target/build.out"), b"artefact").unwrap();
-        let res = phase2_prune(&dest, true, true);
+        let res = phase2_prune(&dest, true, true, None);
         assert!(res.is_ok(), "force_prune_with_ignored must consume ignored-only dirt: {res:?}");
         assert!(!dest.exists(), "dest must be removed under force_prune_with_ignored");
     }
@@ -657,7 +709,7 @@ mod tests {
         fs::write(dest.join(".git/MERGE_HEAD"), b"deadbeef\n").unwrap();
         // Even the strongest override flag must NOT consume an
         // in-progress git operation.
-        let res = phase2_prune(&dest, true, true);
+        let res = phase2_prune(&dest, true, true, None);
         match res {
             Err(TreeError::DirtyTreeRefusal {
                 kind: DirtyTreeRefusalKind::GitInProgress, ..
@@ -696,5 +748,62 @@ mod tests {
         assert!(should_execute(ConsentResult::SubMetaWithDirtyChildren, true, false));
         assert!(should_execute(ConsentResult::SubMetaWithDirtyChildren, false, true));
         assert!(should_execute(ConsentResult::SubMetaWithDirtyChildren, true, true));
+    }
+
+    /// Stage 1.l — when an override flag actually consumes a non-Clean
+    /// verdict, `phase2_prune` MUST emit a `ForcePruneExecuted` event
+    /// to the audit log so the postmortem trail records the override.
+    #[test]
+    fn test_phase2_prune_emits_audit_log_on_force() {
+        use crate::manifest::append::read_all;
+        let tmp = tempdir().unwrap();
+        let dest = tmp.path().join("dirty");
+        fs::create_dir(&dest).unwrap();
+        if !try_git_init(&dest) {
+            return;
+        }
+        // Untracked-non-ignored content → DirtyTree.
+        fs::write(dest.join("scratch.txt"), b"changes").unwrap();
+        let log = tmp.path().join(".grex/events.jsonl");
+        let res = phase2_prune(&dest, true, false, Some(log.as_path()));
+        assert!(res.is_ok(), "force_prune must consume DirtyTree: {res:?}");
+        assert!(!dest.exists(), "dest must be removed after override");
+        let events = read_all(&log).expect("audit log readable");
+        assert_eq!(events.len(), 1, "exactly one audit event must land");
+        match &events[0] {
+            Event::ForcePruneExecuted { kind, force_prune_with_ignored, path, .. } => {
+                assert_eq!(kind, "dirty_tree", "kind tag must be dirty_tree");
+                assert!(!force_prune_with_ignored, "stronger flag must NOT be in effect here");
+                assert!(
+                    path.contains("dirty"),
+                    "path must reference the pruned dest, got {path:?}",
+                );
+            }
+            other => panic!("expected ForcePruneExecuted, got {other:?}"),
+        }
+    }
+
+    /// Stage 1.l — Clean prunes are routine and MUST NOT pollute the
+    /// audit log. The `ForcePruneExecuted` event records "operator
+    /// overrode a refusal"; a clean prune is not an override.
+    #[test]
+    fn test_phase2_prune_no_audit_when_clean() {
+        let tmp = tempdir().unwrap();
+        let dest = tmp.path().join("clean");
+        fs::create_dir(&dest).unwrap();
+        if !try_git_init(&dest) {
+            return;
+        }
+        let log = tmp.path().join(".grex/events.jsonl");
+        let res = phase2_prune(&dest, true, true, Some(log.as_path()));
+        assert!(res.is_ok(), "clean prune must succeed: {res:?}");
+        assert!(!dest.exists(), "dest must be removed after a clean prune");
+        // No audit event was emitted, so the file MUST NOT exist.
+        // (`append_event` would have created the parent dir + file.)
+        assert!(
+            !log.exists(),
+            "audit log must NOT be created by a clean prune (was: {})",
+            log.display(),
+        );
     }
 }
