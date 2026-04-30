@@ -88,22 +88,22 @@ A `--force-prune` flag bypasses the consent walk (audit-log entry written) for t
 
 ## 8 invariants (Lean-proven)
 
-Each is a theorem in `lean/Grex/Walker.lean` (368 lines, `lake build` clean, 4 bridge axioms link the abstract walker to the Rust impl).
+Each is a theorem in `proof/Grex/Walker.lean` under `namespace Grex.Walker` (`lake build` clean; bridge axioms collected in `proof/Grex/Bridge.lean` link the abstract walker to the Rust impl).
 
-**Stage 0 LOCKED — Lean4 hard gate.** Per `.omne/schemas/rules.md` Rule 8: any v1.2.0 work introducing a non-simple algorithm beyond M6 reuse requires its Lean4 proof to compile clean (`lake build` green, zero `sorry`, zero `admit`) BEFORE any Rust change lands. The walker-invariant proof at commit `cee83d7` discharges I1–I8; new obligations (if any arise during impl) gate the corresponding Rust stages — see `tasks.md` Stage 0.5.
+**Stage 0 LOCKED — Lean4 hard gate.** Per `.omne/schemas/rules.md` Rule 8: any v1.2.0 work introducing a non-simple algorithm beyond M6 reuse requires its Lean4 proof to compile clean (`lake build` green, zero `sorry`, zero `admit`) BEFORE any Rust change lands. The walker-invariant proof at commit `cee83d7` discharges W1–W8; new obligations (if any arise during impl) gate the corresponding Rust stages — see `tasks.md` Stage 0.5.
 
 | # | Invariant | Theorem name | Proof method |
 |---|-----------|--------------|--------------|
-| I1 | **Boundary preservation** | `Walker.boundary_preserved` | Structural induction on the meta tree; symlink-cross-boundary excluded by validator. |
-| I2 | **Distributed isolation** | `Walker.lockfile_isolation` | Each `LockfileWrite` event has a `meta_id` field; a meta's lockfile is touched only by its own walker frame. Proven by case-analysis on the event log. |
-| I3 | **Termination** | `Walker.terminates` | Well-founded recursion on a strict-decreasing measure (remaining-undeclared-meta-count). |
-| I4 | **Idempotency** | `Walker.idempotent` | Pure functional walker over a fixed meta tree; second walk produces the same lockfile-write event sequence (modulo timestamps, factored out). |
-| I5 | **Sub-meta autonomy** | `Walker.sub_meta_autonomy` | A walker frame rooted at meta `M` writes only to lockfiles in `M`'s subtree; proven by induction on the recursion frame. |
-| I6 | **No untracked (declared paths)** | `Walker.no_untracked` | Every `.git/` reachable under a declared meta is either declared (in lockfile) or surfaces in the `UntrackedChildren` error accumulator at end of walk. |
-| I7 | **Cleanup safety** | `Walker.cleanup_safe` | Prune executes only when the recursive consent walk returns `Clean`; dirty/in-progress states block the prune. |
-| I8 | **Concurrency safety** | `Walker.concurrency_safe` | Per-meta fd-lock guarantees mutual exclusion on lockfile writes; proven by reduction to the lock-acquisition order. |
+| W1 | **Boundary preservation** | `boundary_preservation` | Pure consequence of `Path.join` semantics (`descends_join`); symlink-cross-boundary excluded by validator. |
+| W2 | **Distributed isolation** | `distributed_isolation` | After `syncChildren parent m`, the lockfile at `parent` lists exactly the direct children of `m`; proven by `simp [syncChildren]`. |
+| W3 | **Termination** | `termination` | Lean kernel's structural-recursion check on `syncTree`'s definition (kernel-verified at definition time). |
+| W4 | **Idempotency** | `idempotency` | Delegated to bridge axiom `sync_idempotent`: `sync ∘ sync = sync` for stable inputs. |
+| W5 | **Sub-meta autonomy** | `sub_meta_autonomy` | Delegated to bridge axiom `sync_local_writes`: paths outside the invocation subtree are untouched. |
+| W6 | **No untracked (declared paths)** | `no_untracked` | Delegated to bridge axiom `sync_no_untracked` (scoped to `child ∈ m.children`); the Rust algorithm iterates `manifest.children` and never scans for `.git/` at non-declared paths. |
+| W7 | **Cleanup safety** | `cleanup_safety` | `pruneLock` keeps an entry iff its path is in the manifest's declared children (`simp [pruneLock]`); equivalent to deleting exactly the stale entries. |
+| W8 | **Concurrency safety** | `concurrency_safety` | Delegated to bridge axiom `sync_disjoint_commutes`; combined with structural recursion on `ManifestTree`, lifts to the full parallel walker. |
 
-Bridge axioms (4) live in `lean/Grex/Bridge.lean` and link Lean's abstract `Path`/`Meta`/`LockEntry` to the Rust types. Documented in `lean/Grex/Bridge.md`.
+Bridge axioms (9) live in `proof/Grex/Bridge.lean` and link Lean's abstract `Path`/`Manifest`/`LockEntry` to the Rust types. Documented in `.omne/proof/impl-axiom-bridge.md` (SSOT, separate repo).
 
 ## Algorithm (lifted from `.omne/cfg/walker.md`)
 
@@ -265,7 +265,7 @@ These are the 12 deduped BLOCKERs from the R2 review round. Stage 0 has now LOCK
 11. **test-plan.md is v1.0-vintage; no v1.2.0 scenarios.** New v1.2.0 test fixtures live under `crates/grex/tests/fixtures/nested-children/` and `crates/grex-core/tests/fixtures/`. test-plan.md updated in-flight.
 12. **Sub-meta prune consent (overlaps walker-algo).** Resolved together with #5. The consent walk is the single mechanism for both BLOCKERs.
 
-Non-blocking R2 CONCERNs (~25) are routed to in-flight fix agents; their resolutions land in subsequent commits referenced from the impl PR.
+Non-blocking R2 nits (~25) are routed to in-flight fix agents; their resolutions land in subsequent commits referenced from the impl PR.
 
 ## Risks
 
@@ -273,4 +273,4 @@ Non-blocking R2 CONCERNs (~25) are routed to in-flight fix agents; their resolut
 2. **Cargo-parallel scheduler complicates error reporting.** Mitigation: errors are accumulated in a `Mutex<Vec<TreeError>>`; the walker returns a single aggregated `TreeError::Multiple { errors }` if the accumulator is non-empty at end of walk. Per-error provenance (which meta raised it) is preserved.
 3. **v1.1.x → v1.2.0 lockfile migration could surprise users by mutating on-disk state.** Mitigation (Stage 0 LOCKED — default-OFF): a v1.2.0 binary meeting a v1.1.1 lockfile errors with `v1.1.1 lockfile detected, run grex migrate-lockfile`. No silent rewrites, no `.bak` the user did not author. `--migrate-lockfile` is the explicit opt-in flag. The migrator is an isolated module (see §Migration module — isolation contract) deletable in a future minor release.
 4. **Per-meta fd-lock can deadlock if the same physical directory is declared by two parents.** Mitigation: the validator catches duplicate-physical-dest at validate-time (canonicalise dest, compare; raise `DuplicateChildDest`). Fd-lock is the belt-and-braces backstop.
-5. **Lean proof bridge axioms drift from Rust impl.** Mitigation: bridge axioms are documented in `lean/Grex/Bridge.md` with a "what each axiom assumes about the Rust side" section. Future Rust changes that touch bridge-relevant code paths must update the bridge doc; CI gate pending (out-of-scope for v1.2.0).
+5. **Lean proof bridge axioms drift from Rust impl.** Mitigation: bridge axioms are documented in `.omne/proof/impl-axiom-bridge.md` (SSOT, separate repo) with a "what each axiom assumes about the Rust side" section. Future Rust changes that touch bridge-relevant code paths must update the bridge doc; CI gate pending (out-of-scope for v1.2.0).

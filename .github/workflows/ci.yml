@@ -144,15 +144,128 @@ jobs:
   # `.omne/cfg/concurrency.md` §Lean4 invariant. Linux-only is acceptable
   # per `.omne/cfg/test-plan.md` §Lean4 proof verification — `.olean` is
   # platform-agnostic, so one successful build proves the invariant
-  # everywhere. Fails CI if `lake build` emits any error or any `sorry`.
+  # everywhere.
+  #
+  # Stage 0.5.F hard gate. `lake build` alone tolerates `sorry` warnings
+  # and exits 0; the grep step mechanically enforces Rule 8
+  # (`.omne/schemas/rules.md`): "any non-simple algorithm requires Lean4
+  # proof to compile clean — zero sorry, zero admit — BEFORE any Rust
+  # code change lands". All steps below are gating (no continue-on-error,
+  # no conditional `if:`).
+  #
+  # Job key `lean-proof` is preserved (branch-protection refs intact);
+  # only the display `name:` changed.
   lean-proof:
-    name: Lean4 proof (lake build)
+    name: Lean4 proof gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: leanprover/lean-action@v1
+      - name: Set up Lean toolchain
+        uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: lean
+          lake-package-directory: proof
+          # We invoke `lake build` manually below to capture wall-time;
+          # tell the action to skip its own build pass.
+          build: false
+      - name: lake build (with wall-time capture)
+        id: lake-build
+        working-directory: proof
+        shell: bash
+        run: |
+          start=$(date +%s%N)
+          lake build 2>&1 | tee build.log
+          rc=${PIPESTATUS[0]}
+          end=$(date +%s%N)
+          echo "wall_time_ns=$((end - start))" >> "$GITHUB_OUTPUT"
+          echo "wall_time_ms=$(( (end - start) / 1000000 ))" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: Reject sorry / admit in proof source
+        working-directory: proof
+        shell: bash
+        run: |
+          # Strict patterns target proof-body shapes (tactic positions and
+          # `:=` RHS), not docstring/comment mentions like
+          # `zero \`sorry\` / zero \`admit\``. If a future tactic shape
+          # leaks through, tighten here — do NOT relax to whole-word
+          # `\bsorry\b` (catches docstrings).
+          if grep -rE '^\s*sorry\s*$|:=\s*sorry\b|:=\s*by\s+sorry\b|\bby\s+sorry\b|\bexact\s+sorry\b|;>\s*sorry\b|<;>\s*sorry\b|^\s*admit\s*$|\bby\s+admit\b|\bexact\s+admit\b' Grex/ Grex.lean; then
+            echo "ERROR: sorry or admit found in proof source — Stage 0.5 hard gate violation."
+            exit 1
+          fi
+          echo "OK: zero sorry, zero admit in proof bodies."
+      - name: Verify theorem count (>=17)
+        working-directory: proof
+        shell: bash
+        run: |
+          # Column-0 anchor: actual `theorem` declarations sit at column 0
+          # in this codebase (no namespace nesting). Avoids matching
+          # docstring continuations that happen to start with the word
+          # "theorem". Recursive find so nested files (e.g.
+          # `Grex/Sub/Foo.lean`) are not silently missed.
+          # W1-W8 + I1 + no_deadlock + V1 + C1 + C2 + F1 = 14 substantive
+          # + 3 Types.lean helpers (descends_refl/trans/join) = 17 total.
+          count=$(find Grex -name '*.lean' -print0 | xargs -0 grep -hE '^theorem\b' | wc -l)
+          # `grep -c` prints the count and exits 1 when 0 matches; under
+          # `set -e` that aborts. `|| true` drops the exit; `grep -c` still
+          # printed the number. Cannot use `|| echo 0` (would double-print).
+          root_count=$(grep -cE '^theorem\b' Grex.lean || true)
+          count=$((count + root_count))
+          echo "Theorem count: $count"
+          if [ "$count" -lt 17 ]; then
+            echo "ERROR: expected >=17 theorems (14 substantive: W1-W8 + I1 + no_deadlock + V1 + C1 + C2 + F1; plus 3 Types.lean helpers: descends_refl/trans/join), found $count."
+            exit 1
+          fi
+      - name: Verify bridge axiom count (=9 propositional in Bridge.lean)
+        working-directory: proof
+        shell: bash
+        run: |
+          # Bridge.lean = canonical home for propositional bridge axioms only.
+          # Types.lean separately declares data-typed model placeholders
+          # (classify_dest, recursive_consent_walk, pruneAt) that are NOT bridge
+          # axioms — they're opaque-with-no-Inhabited stand-ins.
+          # Column-0 anchor: real `axiom` declarations are unindented. An
+          # indented `axiom` token inside a /-- ... -/ docstring (e.g.
+          # `    axiom is needed because ...`) must NOT count.
+          count=$(grep -cE '^axiom\b' Grex/Bridge.lean || true)
+          echo "Bridge axiom count: $count"
+          if [ "$count" -ne 9 ]; then
+            echo "ERROR: expected exactly 9 propositional bridge axioms in Bridge.lean, found $count."
+            echo "Audit Bridge.lean and update CI count if intentional."
+            exit 1
+          fi
+      - name: Verify model-placeholder axiom count (=3 in Types.lean)
+        working-directory: proof
+        shell: bash
+        run: |
+          # Types.lean houses opaque-with-no-Inhabited stand-ins
+          # (classify_dest, recursive_consent_walk, pruneAt). These are
+          # model definitions, not Rust trust contracts — distinct from
+          # Bridge.lean's propositional bridge axioms.
+          count=$(grep -cE '^axiom\b' Grex/Types.lean || true)
+          echo "Model-placeholder axiom count: $count"
+          if [ "$count" -ne 3 ]; then
+            echo "ERROR: expected exactly 3 model-placeholder axioms in Types.lean, found $count."
+            echo "If you intentionally added/removed a model placeholder, update this CI check."
+            exit 1
+          fi
+      - name: No axioms outside Bridge.lean and Types.lean
+        working-directory: proof
+        shell: bash
+        run: |
+          # Meta-check: no other proof file may declare an axiom. Drift
+          # detector — if a future commit drops an `axiom` into
+          # Walker.lean (or any sibling), this fails the gate.
+          stragglers=$(find Grex -name '*.lean' -not -path 'Grex/Bridge.lean' -not -path 'Grex/Types.lean' -exec grep -lE '^axiom\b' {} + || true)
+          stragglers="$stragglers $(grep -lE '^axiom\b' Grex.lean 2>/dev/null || true)"
+          if [ -n "$(echo $stragglers | tr -d ' ')" ]; then
+            echo "ERROR: axiom keywords found outside Bridge.lean and Types.lean:"
+            echo "$stragglers"
+            exit 1
+          fi
+      - name: Snapshot wall-time
+        shell: bash
+        run: |
+          echo "::notice title=Lake build wall-time::${{ steps.lake-build.outputs.wall_time_ms }}ms"
 
   # Gate: MCP protocol conformance (L6) — external-oracle gate.
   # Runs `mcp-validator` (Janix-ai) against a release build of `grex serve`

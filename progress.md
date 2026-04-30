@@ -22,7 +22,7 @@
   - `LockEntry.synthetic` kept for backward-compat reads; dead on new writes under v1.2.0.
   - Cleanup: child removed from manifest → next CLI cmd `rm -rf` dest + delete lockentry.
   - Validator: allow `/`; reject `..`, absolute paths, symlink-cross-parent-boundary, Unicode-NFC duplicates, Windows junctions, gitfile `.git`.
-  - 8 invariants Lean4-proven (W1–W8 in `lean/Grex/Walker.lean`).
+  - 8 invariants Lean4-proven (W1–W8 in `proof/Grex/Walker.lean`).
   - SemVer LOCKED: MINOR (1.1.1 → 1.2.0).
 - **Canonical SSOT artifacts (grex-inst repo, mounted at `.omne/`):**
   - `.omne/cfg/walker.md` — 350 lines, signed algorithm + 8 invariants + acceptance criteria.
@@ -35,7 +35,7 @@
   - `.omne/cfg/mcp.md` — envelope semantic shift section.
   - `.omne/schemas/rules.md` — 7 numbered behavior principles (added: progress-canonical, SemVer-authority, SSOT-separate-repo).
 - **Local artifacts (grex repo):**
-  - `lean/Grex/Walker.lean` — 445 lines, `lake build` exit 0, 0 sorry, 4 bridge axioms with Rust contract cites.
+  - `proof/Grex/Walker.lean` — 445 lines, `lake build` exit 0, 0 sorry, 4 bridge axioms with Rust contract cites.
   - `openspec/changes/feat-v1.2.0-nested-children/` — proposal.md (60 lines, 12 ACs) + design.md (255 lines) + tasks.md (198 lines, Stage 0 + 1a–1q).
   - `CLAUDE.md` — `# Memory: SSOT-only (auto-memory DISABLED)` rule (lines 15–24).
 - **Review history:**
@@ -78,9 +78,9 @@
   - 7 (mixed-tree workspace) — `mixed_tree_meta_with_declarative_and_plain_git_children` ✓.
   - 8 (meta-pack with declared `children:` resolving to plain-git) — covered by `plain_git_children_sync_walks_to_completion` (parent meta declares `children:` URLs that resolve to plain-git seed clones) ✓.
 - **PR #56 review methodology:**
-  - 4 parallel reviewers (correctness / adversarial / maintainability / api-contract) round 1 against impl HEAD pre-commit. Findings: 1 BLOCKER + ~10 CONCERNs + ~15 NITs.
+  - 4 parallel reviewers (correctness / adversarial / maintainability / api-contract) round 1 against impl HEAD pre-commit. Findings: 1 BLOCKER + ~10 nits + ~15 NITs.
   - 3 parallel fix agents partitioned by scope (core / walker+ls / MCP+docs) closed all R1 findings.
-  - 4 parallel reviewers round 2 confirmed all R1 CLOSED + surfaced 1 NEW BLOCKER (tracing→stdout pollutes `--json`) + 2 CONCERNs (cli-json.md case mismatch, doctor swallows corrupt lockfile silently).
+  - 4 parallel reviewers round 2 confirmed all R1 CLOSED + surfaced 1 NEW BLOCKER (tracing→stdout pollutes `--json`) + 2 nits (cli-json.md case mismatch, doctor swallows corrupt lockfile silently).
   - R2 fix-sweep agent closed all 3 (`tracing_subscriber::fmt().with_writer(io::stderr)` in main.rs; cli-json.md kebab/lowercase; `read_synthetic_lock` returns `(map, Option<Finding>)` and surfaces corruption as `Severity::Warning`).
 - **Final gates pre-commit:** fmt ✓ clippy -D warnings ✓ test 752/0/0 ✓ gen-man drift expected (intentional v1.1.1 changes only) ✓ doc-site-prep ✓ mdbook HTML ✓ cargo-deny ok ✓ typos ✓ cargo metadata reports 1.1.1 across 5 packages ✓.
 - **CI status at merge:** 31 pass / 0 fail / 1 pending (CodeRabbit, advisory, non-required) / 8 skipping. All 8 required checks pass: `build / ubuntu-latest / stable`, `build / windows-latest / stable`, `build / macos-latest / stable`, `cargo-deny`, `MCP protocol conformance (2025-06-18)`, `man-drift (clap_mangen)`, `release-plan (cargo-dist)`, `typos`. Merged via `--admin` (solo maintainer pattern; CodeRabbit advisory only).
@@ -471,7 +471,7 @@ M7 remains fully shipped on `main` (see prior endpoint block). Post-merge of PR 
 - **M6 — Concurrency + Lean4 proof** — fully shipped to main 2026-04-21 via 1 squash PR (#24) chaining 3 OpenSpec changes.
   - **feat-m6-1 — Parallel scheduler**: `tokio::sync::Semaphore` gated by `--parallel N` flag (default `num_cpus`); dynamic `worker_threads` on the tokio runtime; `ExecCtx` wired with scheduler permit + cancellation handle; pack execution acquires a semaphore slot before action dispatch. Covers M6 req "bounded Semaphore gated by --parallel N".
   - **feat-m6-2 — Per-pack `.grex-lock` + 5-tier ordering**: per-pack fd-lock file at `<path>/.grex-lock` prevents same-pack double-exec; 5-tier global ordering (workspace → manifest → registry → per-pack → per-action) enforced at runtime via `TierGuard` + `tokio::task_local!` tier stack (migrated from `thread_local!` during CI fix pass to survive work-stealing); `PackLock` acquire is async-safe via `spawn_blocking` for fd-lock syscalls. Covers M6 req "per-pack .grex-lock + global ordering prevents deadlock".
-  - **feat-m6-3 — Lean4 mechanized proof**: `lean/` project with `Grex.Scheduler.no_double_lock` + `Grex.Scheduler.no_deadlock` theorems formally verifying that (a) no two tasks hold the per-pack lock for the same path simultaneously and (b) the 5-tier total order on lock acquisition admits no cycle. `lake build` added to CI matrix — green on close. Covers M6 req "Lean4 `.olean` builds green".
+  - **feat-m6-3 — Lean4 mechanized proof**: `proof/` project (renamed from `lean/` in v1.2.0 Stage 0.5) with `Grex.Scheduler.no_double_lock` + `Grex.Scheduler.no_deadlock` theorems formally verifying that (a) no two tasks hold the per-pack lock for the same path simultaneously and (b) the 5-tier total order on lock acquisition admits no cycle. `lake build` added to CI matrix — green on close. Covers M6 req "Lean4 `.olean` builds green".
   - **Review findings addressed pre-merge (Codex + CE parallel reviews)**:
     - **B1 scheduler wiring**: `--parallel N` flag was parsed but not threaded to the semaphore; fixed by flowing through `SyncOptions::parallel` → `Scheduler::new(n)` → `ExecCtx`.
     - **B2 duplicate `--parallel` flag**: two clap definitions collided in `sync.rs` + `cli/args.rs`; deduped to single source in `cli/args.rs`.

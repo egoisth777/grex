@@ -1,4 +1,4 @@
-# `lean/` — Lean4 mechanised proof of grex runtime invariant I1
+# `proof/` — Lean4 mechanised proof of grex runtime invariant I1
 
 This directory contains the Lean4 formalisation of grex's core concurrency
 invariant **I1 (no double lock)**: no two distinct concurrent tasks
@@ -10,7 +10,7 @@ invariant for the primary specification.
 ## Layout
 
 ```
-lean/
+proof/
 ├── lean-toolchain        # pinned to leanprover/lean4:v4.16.0
 ├── lakefile.lean         # single `lean_lib Grex` target, no external deps
 ├── Grex.lean             # root module — re-exports Grex.Scheduler
@@ -23,7 +23,7 @@ No `mathlib` — keeps CI wall-time minimal and avoids toolchain drift.
 ## Build
 
 ```bash
-cd lean
+cd proof
 lake build
 ```
 
