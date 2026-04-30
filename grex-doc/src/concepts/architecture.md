@@ -85,7 +85,7 @@ grex/
 │   ├── doctor_drift.rs
 │   ├── pack_types_end_to_end.rs
 │   └── property_manifest.rs
-├── lean/
+├── proof/
 │   ├── lakefile.lean
 │   └── Grex/
 │       └── Scheduler.lean

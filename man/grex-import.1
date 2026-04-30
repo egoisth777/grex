@@ -13,7 +13,7 @@ Import legacy REPOS.json
 Path to a legacy REPOS.json file
 .TP
 \fB\-\-manifest\fR \fI<PATH>\fR
-Target manifest (`grex.jsonl`). Defaults to `<cwd>/grex.jsonl`
+Target event log (`.grex/events.jsonl`). Defaults to `<workspace>/.grex/events.jsonl` where `<workspace>` is resolved by walking up from cwd to the nearest `.grex/` marker
 .TP
 \fB\-n\fR, \fB\-\-dry\-run\fR
 Verb\-scoped dry\-run. Alias for the global `\-\-dry\-run`; either flag short\-circuits before any manifest write

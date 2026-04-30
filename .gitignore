@@ -19,10 +19,10 @@ grex.jsonl
 .DS_Store
 Thumbs.db
 
-# Lean4 build artifacts (lean/ — see .omne/cfg/concurrency.md §Lean4 invariant)
-lean/build/
-lean/.lake/
-lean/lake-packages/
+# Lean4 build artifacts (proof/ — see .omne/cfg/concurrency.md §Lean4 invariant)
+proof/build/
+proof/.lake/
+proof/lake-packages/
 
 # mdBook site output (grex-doc/ — built artefact, deployed by doc-site.yml)
 grex-doc/book/

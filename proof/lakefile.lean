@@ -7,4 +7,4 @@ package «grex» where
 
 @[default_target]
 lean_lib «Grex» where
-  -- Root: lean/Grex.lean ; submodules under lean/Grex/.
+  -- Root: proof/Grex.lean ; submodules under proof/Grex/.

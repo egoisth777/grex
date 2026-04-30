@@ -10,7 +10,7 @@ Start MCP stdio server
 .SH OPTIONS
 .TP
 \fB\-\-manifest\fR \fI<PATH>\fR
-Path to the `grex.jsonl` event\-log manifest. Captured at server launch and immutable for the session (per spec §"Manifest binding"). Defaults to `<cwd>/grex.jsonl` when omitted
+Path to the `.grex/events.jsonl` event log. Captured at server launch and immutable for the session (per spec §"Manifest binding"). Defaults to `<workspace>/.grex/events.jsonl` when omitted, where `<workspace>` is resolved by walking up from cwd to the nearest `.grex/` marker. v1.x `<workspace>/grex.jsonl` event logs are auto\-migrated to the canonical location on first access
 .TP
 \fB\-\-workspace\fR \fI<PATH>\fR
 Workspace root the MCP server resolves relative paths against. Defaults to the current working directory when omitted

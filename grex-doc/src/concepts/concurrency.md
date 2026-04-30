@@ -121,7 +121,7 @@ Key property: locks acquired outer-to-inner, released inner-to-outer. Manifest l
 
 **Informal**: `PackLock::acquire` is exclusive per path; the later arrival awaits the earlier's drop.
 
-**File**: `lean/Grex/Scheduler.lean`.
+**File**: `proof/Grex/Scheduler.lean`.
 
 **Sketch**:
 
@@ -161,7 +161,7 @@ CI job (`.github/workflows/lean.yml`):
 
 ```yaml
 - uses: leanprover/lean-action@v1
-- run: cd lean && lake build
+- run: cd proof && lake build
 ```
 
 Zero `sorry`; zero unresolved `axiom` outside the stated model-bridging ones.
