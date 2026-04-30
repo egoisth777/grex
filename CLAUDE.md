@@ -30,4 +30,4 @@ On every new session, read in order:
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: `feat-grex` M8 (release v1.0.0) — M7 fully shipped to `main` (2026-04-23) via PRs #25 #26 #28 #29 #30 #31.
+Active feature: v1.2.1 follow-up — mdbook doc-debt + rayon parallel scheduler + CLI migrate-lockfile dispatcher. v1.2.0 SHIPPED 2026-04-30 (main @ commit 2c1791d, tag v1.2.0). Pick up from progress.md "## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)" and the "Deferred to v1.2.1+" list within.

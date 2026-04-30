@@ -1,6 +1,8 @@
 # progress — grex
 
 ## Where we are
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)` (further down). Active follow-up: v1.2.1 doc-debt + rayon + CLI migrate dispatcher (see `milestone.md` Phase v1.2.1). No active branch — main is shipped. Cut new branch off main when starting v1.2.1 impl.
+
 **v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`. Stack ship sequence: PR #57 (Stage 0 intention alignment, squash `49c3ec6`) → PR #58 (Stage 0.5 Lean4 proof gate, squash `4501c87`) → PR #59 (Stage 1 Rust impl, squash `2c1791d`). 874 tests pass / 0 fail; `lake build` green / zero `sorry` / zero `admit`. Real-world verify on `E:\repos\code` (14 plain-git children) clean: `grex sync .` exit 0 (idempotent skip on all 14), `grex ls .` nested with legacy `~` glyph, `grex doctor` recursive all OK, installed `grex 1.2.0` reports new flags (`--shallow`, `--force-prune`, `--force-prune-with-ignored`). Detailed v1.2.0 endpoint below; v1.1.1 endpoint preserved further down.
 
 ## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)
@@ -47,6 +49,7 @@
 5. Auto-migrate lockfile = default-OFF, isolated module per Rule 9 modular-removability
 
 **Deferred to v1.2.1+:**
+- **mdbook doc-debt (PRIORITY #1)**: `grex-doc/src/concepts/{architecture,concurrency}.md` + `man/concepts/*.md` + `man/guides/*.md` last touched only for `lean/`→`proof/` rename. v1.2.0 walker semantics (nested-children, distributed lockfile, 5-way classifier, recursive consent, TOCTOU BoundedDir, force-prune) NOT documented in mdbook. Auto-generated CLI man pages (`man/*.1`) ARE current via `cargo xtask gen-man`. CHANGELOG entry IS current. Action: write 4 new/updated mdbook chapters + mirror to `man/concepts/`. Estimated 2-4 hours.
 - Rayon parallel sibling sync
 - CLI `--migrate-lockfile` flag dispatcher + `grex migrate-lockfile` subcommand (library is in place)
 - Optional quarantine on force-prune
