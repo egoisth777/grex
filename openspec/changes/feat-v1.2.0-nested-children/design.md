@@ -265,7 +265,7 @@ These are the 12 deduped BLOCKERs from the R2 review round. Stage 0 has now LOCK
 11. **test-plan.md is v1.0-vintage; no v1.2.0 scenarios.** New v1.2.0 test fixtures live under `crates/grex/tests/fixtures/nested-children/` and `crates/grex-core/tests/fixtures/`. test-plan.md updated in-flight.
 12. **Sub-meta prune consent (overlaps walker-algo).** Resolved together with #5. The consent walk is the single mechanism for both BLOCKERs.
 
-Non-blocking R2 CONCERNs (~25) are routed to in-flight fix agents; their resolutions land in subsequent commits referenced from the impl PR.
+Non-blocking R2 nits (~25) are routed to in-flight fix agents; their resolutions land in subsequent commits referenced from the impl PR.
 
 ## Risks
 

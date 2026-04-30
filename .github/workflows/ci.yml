@@ -205,7 +205,11 @@ jobs:
           # W1-W8 + I1 + no_deadlock + V1 + C1 + C2 + F1 = 14 substantive
           # + 3 Types.lean helpers (descends_refl/trans/join) = 17 total.
           count=$(find Grex -name '*.lean' -print0 | xargs -0 grep -hE '^theorem\b' | wc -l)
-          count=$((count + $(grep -cE '^theorem\b' Grex.lean)))
+          # `grep -c` prints the count and exits 1 when 0 matches; under
+          # `set -e` that aborts. `|| true` drops the exit; `grep -c` still
+          # printed the number. Cannot use `|| echo 0` (would double-print).
+          root_count=$(grep -cE '^theorem\b' Grex.lean || true)
+          count=$((count + root_count))
           echo "Theorem count: $count"
           if [ "$count" -lt 17 ]; then
             echo "ERROR: expected >=17 theorems (14 substantive: W1-W8 + I1 + no_deadlock + V1 + C1 + C2 + F1; plus 3 Types.lean helpers: descends_refl/trans/join), found $count."
@@ -222,7 +226,7 @@ jobs:
           # Column-0 anchor: real `axiom` declarations are unindented. An
           # indented `axiom` token inside a /-- ... -/ docstring (e.g.
           # `    axiom is needed because ...`) must NOT count.
-          count=$(grep -cE '^axiom\b' Grex/Bridge.lean)
+          count=$(grep -cE '^axiom\b' Grex/Bridge.lean || true)
           echo "Bridge axiom count: $count"
           if [ "$count" -ne 9 ]; then
             echo "ERROR: expected exactly 9 propositional bridge axioms in Bridge.lean, found $count."
@@ -237,7 +241,7 @@ jobs:
           # (classify_dest, recursive_consent_walk, pruneAt). These are
           # model definitions, not Rust trust contracts — distinct from
           # Bridge.lean's propositional bridge axioms.
-          count=$(grep -cE '^axiom\b' Grex/Types.lean)
+          count=$(grep -cE '^axiom\b' Grex/Types.lean || true)
           echo "Model-placeholder axiom count: $count"
           if [ "$count" -ne 3 ]; then
             echo "ERROR: expected exactly 3 model-placeholder axioms in Types.lean, found $count."
@@ -251,7 +255,7 @@ jobs:
           # Meta-check: no other proof file may declare an axiom. Drift
           # detector — if a future commit drops an `axiom` into
           # Walker.lean (or any sibling), this fails the gate.
-          stragglers=$(find Grex -name '*.lean' -not -path 'Grex/Bridge.lean' -not -path 'Grex/Types.lean' -exec grep -lE '^axiom\b' {} +)
+          stragglers=$(find Grex -name '*.lean' -not -path 'Grex/Bridge.lean' -not -path 'Grex/Types.lean' -exec grep -lE '^axiom\b' {} + || true)
           stragglers="$stragglers $(grep -lE '^axiom\b' Grex.lean 2>/dev/null || true)"
           if [ -n "$(echo $stragglers | tr -d ' ')" ]; then
             echo "ERROR: axiom keywords found outside Bridge.lean and Types.lean:"
