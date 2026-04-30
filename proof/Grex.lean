@@ -16,8 +16,8 @@
 --            \---Grex (root)----
 --
 -- `Grex.Phase1` and `Grex.Consent` are Stage 0.5.C additions that import
--- Types + Bridge to state v1.2.0 walker theorems (currently `sorry` —
--- discharge in commits D2 / D3).
+-- Types + Bridge to state v1.2.0 walker theorems (D1–D4 all discharged
+-- — zero `sorry`, zero `admit` across `proof/Grex/`).
 --
 -- See `.omne/cfg/concurrency.md` §Lean4 invariant and `.omne/cfg/walker.md`.
 import Grex.Types

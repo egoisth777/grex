@@ -46,7 +46,7 @@ Each criterion is a test-driven goal: when the user runs the command, the system
 9. **Termination.** Cycles (a meta declaring itself as a transitive child) and unreachable-but-cyclic subgraphs are detected pre-walk; the walker is total. *Verified by* the existing cycle-detection tests + new nested-cycle case in `crates/grex-core/tests/cycle_detection.rs`.
 10. **Migration: v1.1.x lockfile readable.** A workspace produced by v1.1.1 (single `grex.lock.jsonl` at root, no `path` field on entries) reads cleanly under v1.2.0: missing `path` falls back to `entry.id` as the relative path; `synthetic: true` entries are accepted but trigger an upgrade-advisory log line. *Verified by* `crates/grex-core/tests/lockfile_v1_1_compat.rs`.
 11. **Doctor recursive default.** `grex doctor` from a meta walks the full subtree by default; `grex doctor --shallow` walks one level only. Both modes share the same validator and surface the same error variants as `sync`. *Verified by* `crates/grex/tests/doctor_recursion.rs`.
-12. **8 invariants Lean-proven.** `proof/Grex/Walker.lean` builds clean under `lake build` with the 8 invariants (boundary preservation, distributed isolation, termination, idempotency, sub-meta autonomy, no-untracked, cleanup safety, concurrency safety) carried as theorems. 4 bridge axioms link the Lean abstract walker to the Rust implementation; bridge axioms documented in `proof/Grex/Bridge.md`. *Verified by* the lake-build CI gate.
+12. **8 invariants Lean-proven.** `proof/Grex/Walker.lean` builds clean under `lake build` with the 8 invariants (boundary preservation, distributed isolation, termination, idempotency, sub-meta autonomy, no-untracked, cleanup safety, concurrency safety) carried as theorems. 9 bridge axioms documented in SSOT (`.omne/proof/impl-axiom-bridge.md`), with 4 anchoring W1–W8 invariants link the Lean abstract walker to the Rust implementation. *Verified by* the lake-build CI gate.
 
 ## SemVer rationale
 
@@ -63,7 +63,7 @@ A future MAJOR (2.0) is the right place to *remove* `workspace`, drop v1.1.x loc
 ## Cross-references
 
 - **Canonical algorithm**: `.omne/cfg/walker.md` — the parent-relative walker pseudocode (single source of truth; this proposal lifts the algorithm verbatim into [`design.md`](./design.md)).
-- **Lean proof**: `proof/Grex/Walker.lean` (368 lines; `lake build` clean; 8 theorems + 4 bridge axioms).
+- **Lean proof**: `proof/Grex/Walker.lean` (`lake build` clean; 14 theorems + 9 bridge axioms across `proof/Grex/`).
 - **Rust mechanism decisions**: `openspec/changes/feat-v1.2.0-nested-children/rust-design-decisions.md` — sibling SSOT being authored in parallel by the rust-expert subagent. Confirms hybrid TOCTOU implementation details (Linux: `openat2` crate vs raw `libc::syscall(SYS_openat2, ...)` choice, `cap-std` dep-tree audit), fd-lock layering, error-variant surface, and concurrency primitive choices. High-level decisions are LOCKED at Stage 0; sibling doc tracks implementation-detail confirmations. Referenced from [`design.md`](./design.md) "Open questions" section.
 - **History context**: `.omne/cfg/history.md` — M1 through v1.1.1 evolution; v1.2.0 closes the "nested meta-repo manager" promise that has been latent since M1.
 - **R2 review aggregation**: 9-reviewer round produced 12 deduped BLOCKERs and ~25 non-blocking CONCERNs. BLOCKERs are tracked in [`design.md`](./design.md) "Open questions"; CONCERNs are routed to in-flight fix agents.

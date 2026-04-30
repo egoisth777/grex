@@ -152,8 +152,11 @@ theorem concurrency_safety
     **Note for D1.** The `sorry` body is intentional. The actual proof
     will likely follow `descends_join` once the discharger unfolds
     `Manifest.validated` to extract `c.segments ≠ []`. -/
+-- TODO(stage 1c): strengthen conclusion to use the validator hypothesis
+-- (e.g. add c.segments ≠ []). Currently V1 is window-dressing reducible
+-- to W1.
 theorem validator_strengthens_W1
-    (parent : Path) (m : Manifest) (h : Manifest.validated m)
+    (parent : Path) (m : Manifest) (_h : Manifest.validated m)
     (c : ChildRef) (_ : c ∈ m.children) :
     descends (parent.join c.segments) parent :=
   descends_join parent c.segments

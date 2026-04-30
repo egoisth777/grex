@@ -1,15 +1,24 @@
 import Grex.Types
 
 /-!
-# `Grex.Bridge` — model-bridge axioms for grex's mechanised proofs
+# `Grex.Bridge` — propositional model-bridge axioms for grex's mechanised proofs
 
-This module is the canonical home for **all** model-bridge axioms used by
-grex's Lean proofs. A bridge axiom encodes a contract that Lean cannot
-prove directly because it depends on Rust-runtime, kernel, or hardware
-semantics (rayon scheduling, fd-lock FIFO, cap-std capability handles,
-filesystem rename atomicity, …). Every axiom here corresponds to a
-specific identifiable line in the Rust impl whose faithful preservation
-is the engineer's responsibility.
+This module is the canonical home for **propositional** bridge axioms —
+the trust contracts between Lean's abstract walker model and the Rust
+runtime. A bridge axiom here encodes a *propositional* contract that
+Lean cannot prove directly because it depends on Rust-runtime, kernel,
+or hardware semantics (rayon scheduling, fd-lock FIFO, cap-std capability
+handles, filesystem rename atomicity, …). Every axiom here corresponds
+to a specific identifiable line in the Rust impl whose faithful
+preservation is the engineer's responsibility.
+
+**Note.** `Grex.Types` separately declares a small number of
+`axiom`-keyword constants (`classify_dest`, `recursive_consent_walk`,
+`pruneAt`) for **data-typed model placeholders** that act as
+opaque-with-no-`Inhabited` stand-ins (Lean's `opaque` requires
+`Inhabited`, which these data-shapes do not have). Those declarations
+are *model definitions*, not Rust trust contracts, and live next to
+their type definitions in `Grex.Types` rather than here.
 
 This file currently consolidates the **nine** bridge axioms previously
 inline in `Grex.Walker` (4 + 2 new in Stage 0.5.C + 1 new in

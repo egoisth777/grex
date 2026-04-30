@@ -13,7 +13,7 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 - [ ] 0.1 Land openspec triplet under `openspec/changes/feat-v1.2.0-nested-children/` (proposal + design + tasks).
 - [ ] 0.2 Cross-link `.omne/cfg/walker.md` → this triplet, and confirm walker.md acceptance-criteria block points back to `proposal.md`.
 - [ ] 0.3 Update `progress.md` with the v1.2.0 openspec endpoint + refreshed "Where we are" block.
-- [ ] 0.4 Confirm `proof/Grex/Walker.lean` builds clean under `lake build` and the 8 theorems are present (snapshot: 368 lines, 4 bridge axioms).
+- [ ] 0.4 Confirm `proof/Grex/Walker.lean` builds clean under `lake build` and 14 theorems are present (W1–W8 + I1 + no_deadlock + V1/C1/C2/F1), 9 bridge axioms (Bridge.lean), zero sorry/admit.
 - [ ] 0.5 PR description references the locked decisions: parent-relative resolution; distributed lockfile; rayon cargo-parallel (M6 reuse); synthesis retired with keep-legacy `~` glyph; hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` TOCTOU; Lean4 hard-gate before any Rust impl; default-OFF lockfile auto-migrate; SemVer MINOR per maintainer override.
 - [ ] 0.6 Required CI gates green (typos, build × 3, lake-build, etc.) — markdown-only, should pass trivially.
 - [ ] 0.7 Stage 0.5 (Lean4 proof gate) is queued as a hard prerequisite for Stage 1; cannot start 1a until 0.5 is green.
@@ -204,7 +204,7 @@ The bridge-axiom proof at commit `cee83d7` covers walker invariants 1–8 (bound
 - [ ] 1o.5 `cargo run -p xtask -- doc-site-prep && mdbook build grex-doc/` zero warnings.
 - [ ] 1o.6 `cargo deny check` clean.
 - [ ] 1o.7 `typos` clean.
-- [ ] 1o.8 `lake build` (proof/) clean — 8 theorems present, 4 bridge axioms documented.
+- [ ] 1o.8 `lake build` (proof/) clean — 14 theorems present, 9 bridge axioms documented in `proof/Grex/Bridge.lean` + `.omne/proof/impl-axiom-bridge.md`, zero sorry/admit (CI-gated).
 - [ ] 1o.9 MCP conformance gate green.
 - [ ] 1o.10 Workspace bump 1.1.1 → 1.2.0 across `Cargo.toml`, `[workspace.dependencies]`, `crates/xtask/Cargo.toml`.
 - [ ] 1o.11 `crates/xtask/tests/version_test.rs` bump assertion.
