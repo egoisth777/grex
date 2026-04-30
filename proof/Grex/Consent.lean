@@ -44,7 +44,7 @@ namespace Grex.Walker
 theorem prune_only_on_clean_consent
     (d : Path) (w : World)
     (h : recursive_consent_walk d w ≠ ConsentResult.Clean) :
-    pruneAt d w = w := by
-  sorry
+    pruneAt d w = w :=
+  consent_walk_reflects_fs_state d w h
 
 end Grex.Walker
