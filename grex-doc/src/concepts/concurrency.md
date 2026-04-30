@@ -1,6 +1,8 @@
 # concurrency
 
-Tokio runtime, bounded semaphore, per-pack file lock, global manifest lock. One Lean4-verified invariant.
+Tokio runtime, bounded semaphore, per-pack file lock, per-meta manifest lock. One Lean4-verified invariant.
+
+> Canonical source: [.omne/cfg/concurrency.md](../../.omne/cfg/concurrency.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection.
 
 ## Runtime
 
@@ -9,35 +11,37 @@ Tokio runtime, bounded semaphore, per-pack file lock, global manifest lock. One 
 async fn main() -> anyhow::Result<()> { ... }
 ```
 
-Worker threads default = `num_cpus::get()`, overridable via `--parallel N` or `GREX_PARALLEL` env.
+Worker threads default = `num_cpus::get()`, overridable via `--parallel N` or `GREX_PARALLEL` env. The same `--parallel N` cap is honoured by the rayon scheduler that drives sibling sync within one meta — see [walker §Phase 1](./walker.md#phase-1--sync-direct-children-parallel) and [walker §Phase 3](./walker.md#phase-3--recurse-into-child-metas-parallel-autonomous).
 
 ## Five cooperating mechanisms
 
-1. **Workspace sync lock** — `<workspace>/.grex.sync.lock` (fd-lock, non-blocking, fail-fast). Held for the full `grex sync` lifetime. Two concurrent `grex sync` invocations against the same workspace are a hard error, not a queue.
+1. **Per-meta sync lock** — `<meta>/.grex.sync.lock` (fd-lock, non-blocking, fail-fast). Held for the full `grex sync` lifetime of THAT meta's frame. Two concurrent `grex sync` invocations against the same meta are a hard error, not a queue. **v1.x → v1.2.0:** through v1.x this was a single `<workspace>/.grex.sync.lock` at the workspace root (one global lock per workspace). Under v1.2.0+ each meta owns its own fd-lock under its own dir; cross-meta locks are independent (distinct metas never serialize against each other), the walker's recursion acquires + releases one lock per meta frame, and cargo-style parallel sub-meta sync is N concurrent fd-locks across the meta tree (one per meta currently being processed). Locking is per-meta, never global.
 2. **Per-repo backend lock** — `<dest>.grex-backend.lock` (fd-lock, sibling file NOT inside `<dest>` so it survives `<dest>` wipe). Held across `clone` + `fetch` + `materialise_tree` for one repo path.
 3. **Bounded semaphore** — caps in-flight pack ops across the process.
 4. **Per-pack `.grex-lock`** — prevents two ops on the same pack path across processes and tasks.
-5. **Global manifest RW lock** (`fd-lock`) — serializes manifest + lockfile mutations.
+5. **Per-meta manifest RW lock** (`fd-lock`) — serialises that meta's lockfile + event-log writes. **v1.x → v1.2.0:** under v1.2.0+ each meta has its own manifest fd-lock at `<meta>/.grex.lock`; the lock is per-meta, not global, so distinct metas may mutate their own lockfile + event log in parallel.
 
-Lock acquisition order (fixed, deadlock-free): **workspace-sync → semaphore → pack-lock → repo-backend → manifest-lock**. Never reversed.
+Lock acquisition order (fixed, deadlock-free): **per-meta-sync → semaphore → pack-lock → repo-backend → manifest-lock**. Never reversed.
 
 ### TOCTOU closure
 
-The sync pipeline revalidates the workspace dirty-check **twice**:
+The sync pipeline revalidates the per-meta dirty-check **twice**:
 
-1. Before attempting to acquire the workspace sync lock (fast reject).
-2. After acquiring the workspace sync lock AND immediately before calling `materialise_tree` (authoritative — any drift between steps 1 and 2 surfaces here).
+1. Before attempting to acquire the per-meta sync lock (fast reject).
+2. After acquiring the per-meta sync lock AND immediately before calling `materialise_tree` (authoritative — any drift between steps 1 and 2 surfaces here).
 
 Rationale: a concurrent non-sync writer (e.g. the user editing a file) could dirty the tree between our initial check and the moment we begin applying actions. The second check closes the window.
 
+The path-swap TOCTOU (attacker swapping a directory for a symlink between `canonicalize(dest)` and the actual filesystem write) is closed by the `BoundedDir` dirfd-binding primitive — see [toctou](./toctou.md).
+
 ### Recovery scan
 
-At sync startup, before acquiring the workspace lock, grex runs an **informational** recovery scan that:
+At sync startup, before acquiring the per-meta lock, grex runs an **informational** recovery scan that:
 
 - Lists stale `.grex.sync.lock` / `<dest>.grex-backend.lock` whose owning PID is gone.
-- Lists incomplete event brackets in the manifest (`ActionStarted` with no matching `ActionCompleted` / `ActionHalted`).
+- Lists incomplete event brackets in the manifest (`action_started` with no matching `action_completed` / `action_halted`).
 
-The scan only logs — it never mutates. Auto-cleanup is deferred to `grex doctor` (M4+).
+The scan only logs — it never mutates. Auto-cleanup is `grex doctor` territory.
 
 ## Bounded semaphore
 
@@ -66,9 +70,11 @@ impl Scheduler {
 }
 ```
 
+The semaphore caps process-wide in-flight pack ops; the per-pack lock prevents double-execution of the same pack path across recursion frames or invocations. Sibling parallelism inside one meta and sub-meta parallelism across metas both run under the same semaphore cap.
+
 ## Per-pack `PackLock`
 
-File: `<pack_workdir>/.grex-lock`. Held exclusively via `fd-lock::RwLock::write`. Non-blocking try-first; on contention the task yields + retries with backoff.
+File: `<pack_workdir>/.grex-lock`. Held exclusively via `fd-lock::RwLock::write`. Non-blocking try-first; on contention the task yields and retries with backoff.
 
 ```rust
 pub struct PackLock {
@@ -88,11 +94,13 @@ impl PackLock {
 }
 ```
 
-Released on `Drop`. File NOT deleted on release (avoids TOCTOU race). `grex doctor` prunes stale `.grex-lock` files whose owning PID is gone.
+Released on `Drop`. The file is NOT deleted on release (avoids a TOCTOU race). `grex doctor` prunes stale `.grex-lock` files whose owning PID is gone.
 
-## Global manifest RW lock
+## Per-meta manifest RW lock
 
-Any `grex.jsonl` or `grex.lock.jsonl` mutation takes exclusive `fd_lock::RwLock::write`. Readers take shared read. See [manifest.md](./manifest.md).
+Any `events.jsonl` or `grex.lock.jsonl` mutation takes exclusive `fd_lock::RwLock::write` on the meta-local `<meta>/.grex.lock`. Readers take shared read. See [manifest](./manifest.md). The three-way disambiguation between this fd-lock file (`.grex.lock`), the lockfile (`.grex/grex.lock.jsonl`), and the event log (`.grex/events.jsonl`) lives in [lockfile §Three "lock" artifacts](./lockfile.md#three-lock-artifacts--disambiguation).
+
+Because the lock is **per-meta** under v1.2.0+, distinct metas can mutate their own lockfile + event log in parallel. There is no global serialisation point at the manifest layer — the only cross-meta serialisation is the bounded process-wide semaphore on in-flight pack ops.
 
 ## Scheduler pseudocode
 
@@ -104,7 +112,7 @@ schedule(packs, op):
             _sem_permit     = semaphore.acquire()            # bound parallelism
             _pack_lock      = PackLock::acquire(pack.path)   # per-pack exclusive
             result          = op.run_on(pack)
-            _manifest_lock  = global_manifest.write_lock()   # innermost
+            _manifest_lock  = pack.meta.manifest.write_lock()  # innermost (per-meta)
             manifest.append(event_from(result))
             drop(_manifest_lock)                             # release innermost first
             result
@@ -115,9 +123,11 @@ schedule(packs, op):
 
 Key property: locks acquired outer-to-inner, released inner-to-outer. Manifest lock is the briefest; semaphore the longest.
 
-## Lean4 invariant (v1 proof scope)
+## Lean4 invariant `I1` (no_double_lock)
 
-**Invariant I1**: For any two concurrent tasks `t1`, `t2` scheduled by `Scheduler`, if `t1.pack_path == t2.pack_path`, then their lock-holding windows do NOT overlap in time.
+**Invariant `I1`**: for any two concurrent tasks `t1`, `t2` scheduled by `Scheduler`, if `t1.pack_path == t2.pack_path`, then their lock-holding windows do NOT overlap in time.
+
+> `I1` = "Invariant 1" — first concurrency-series invariant. Distinct from walker `I1` (boundary preservation) and architecture `I1` (the same scheduler theorem re-cited from the architecture doc). See the invariant series cross-reference table in the SSOT.
 
 **Informal**: `PackLock::acquire` is exclusive per path; the later arrival awaits the earlier's drop.
 
@@ -155,8 +165,6 @@ theorem no_double_lock
 end Grex.Scheduler
 ```
 
-During M6, `pack_lock_exclusive` is promoted from `axiom` to `theorem` by modeling `PackLock::acquire` as a FIFO queue on `path` and proving mutual-exclusion from that model. Exact construction in the commit that lands M6.
-
 CI job (`.github/workflows/lean.yml`):
 
 ```yaml
@@ -166,12 +174,9 @@ CI job (`.github/workflows/lean.yml`):
 
 Zero `sorry`; zero unresolved `axiom` outside the stated model-bridging ones.
 
-## Deferred Lean4 proofs (v2)
+### Walker `I8` reduction
 
-- I2: manifest append serialization under fd-lock.
-- I3: `.gitignore` managed-block idempotence.
-- I4: compaction fold-equivalence.
-- Commutativity of disjoint-path events.
+Walker invariant `I8` (parallel sync of disjoint sub-trees commutes — see [walker §Three changes vs v1.1.x](./walker.md#three-changes-vs-v11x)) reduces to concurrency `I1` for its mutual-exclusion lemma. The shipped axiom `sync_disjoint_commutes` in `proof/Grex/Walker.lean` covers the disjoint-pack work commutativity that the rayon scheduler relies on; no new theorem is required for the v1.2.1 rayon sibling-sync swap.
 
 ## Operational tuning
 
@@ -181,4 +186,12 @@ Zero `sorry`; zero unresolved `axiom` outside the stated model-bridging ones.
 
 ## Telemetry
 
-Each scheduled task emits a `tracing` span: `pack_path`, `op`, `duration_ms`, `result`. `grex doctor` can read the last-N spans from an on-disk journal (v1.x feature) for retrospective diagnosis.
+Each scheduled task emits a `tracing` span: `pack_path`, `op`, `duration_ms`, `result`. `grex doctor` can read the last-N spans from an on-disk journal for retrospective diagnosis.
+
+## Cross-references
+
+- Walker phases + parallel sibling/sub-meta scheduling: [walker](./walker.md)
+- Distributed lockfile + per-meta manifest fd-lock disambiguation: [lockfile](./lockfile.md)
+- Manifest event-log atomic append + crash recovery: [manifest](./manifest.md)
+- TOCTOU `BoundedDir` (cap-std + Linux openat2): [toctou](./toctou.md)
+- Force-prune audit log (writes through this manifest fd-lock): [force-prune](./force-prune.md)
