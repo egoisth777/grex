@@ -25,6 +25,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::git::GitBackend;
 use crate::pack::validate::child_path::{
     boundary_fs_reject_reason, boundary_reject_reason, check_one as check_child_path,
@@ -543,6 +545,15 @@ pub struct SyncMetaOptions {
     /// Phase 2 prune-safety override. Mirrors
     /// [`crate::sync::SyncOptions::force_prune_with_ignored`].
     pub force_prune_with_ignored: bool,
+    /// v1.2.1 item 3 — rayon thread-pool size for sibling-parallel
+    /// Phase 1 + Phase 3. `None` ⇒ rayon's default (`num_cpus::get()`);
+    /// `Some(1)` ⇒ effectively sequential (single-threaded pool, useful
+    /// for determinism testing); `Some(n >= 2)` ⇒ bounded parallel.
+    /// `Some(0)` is clamped to `1` (rayon rejects a zero-thread pool).
+    /// Mirrors [`crate::sync::SyncOptions::parallel`] semantics with the
+    /// one exception that `0` is clamped to `1` here — the unbounded
+    /// sentinel only makes sense for tokio's `Semaphore::MAX_PERMITS`.
+    pub parallel: Option<usize>,
 }
 
 impl Default for SyncMetaOptions {
@@ -553,6 +564,7 @@ impl Default for SyncMetaOptions {
             max_depth: None,
             force_prune: false,
             force_prune_with_ignored: false,
+            parallel: None,
         }
     }
 }
@@ -632,11 +644,68 @@ fn sync_meta_inner(
 
     let mut report = SyncMetaReport { metas_visited: 1, ..SyncMetaReport::default() };
 
-    phase1_sync_children(meta_dir, &manifest, backend, opts, &mut report);
+    // v1.2.1 item 3: build a per-call rayon pool sized from
+    // `opts.parallel`. Phase 1 + Phase 3 install on this pool; Phase 2
+    // stays sequential (single-meta orphan sweep — no sibling
+    // parallelism to extract). The pool is dropped at the end of
+    // `sync_meta_inner`, so each recursion frame builds + tears down
+    // its own pool. This is intentional: we want the worker count to
+    // refresh per call so a top-level `--parallel 1` cap is honoured
+    // without piggy-backing on a global pool that an unrelated caller
+    // might have configured differently.
+    let pool = build_pool(opts.parallel)?;
+
+    phase1_sync_children(&pool, meta_dir, &manifest, backend, opts, &mut report);
     phase2_prune_orphans(meta_dir, prune_candidates, opts, &mut report);
-    phase3_recurse(meta_dir, &manifest, backend, loader, opts, depth, &mut report);
+    phase3_recurse(&pool, meta_dir, &manifest, backend, loader, opts, depth, &mut report);
 
     Ok(report)
+}
+
+/// v1.2.1 item 3 — build a rayon `ThreadPool` sized from
+/// `opts.parallel`. Encapsulates the `None` ⇒ default,
+/// `Some(0)` ⇒ clamp-to-1, `Some(n)` ⇒ exact-N policy in one place
+/// so Phase 1 and Phase 3 install on identically-configured pools.
+///
+/// `Some(1)` produces a single-worker pool — the determinism
+/// test-mode fast-path (sibling iteration order matches sequential
+/// for-loop order on a 1-thread pool).
+///
+/// Build failures surface as [`TreeError::ManifestRead`]: a rayon
+/// pool failure is invariably a host-resource issue (out of file
+/// descriptors, thread-creation refused) — bucketing it into the
+/// generic IO-error variant keeps the error surface tight without
+/// inventing a one-off `RayonPoolBuild` discriminant. The Lean
+/// model treats pool construction as a well-formedness precondition
+/// of `sync`, not an in-band failure mode.
+fn build_pool(parallel: Option<usize>) -> Result<rayon::ThreadPool, TreeError> {
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if let Some(n) = parallel {
+        builder = builder.num_threads(n.max(1));
+    }
+    builder.build().map_err(|e| {
+        TreeError::ManifestRead(format!("failed to build rayon pool for sync_meta: {e}"))
+    })
+}
+
+/// Per-child output from Phase 1's parallel pass. Collected into a
+/// `Vec` after the rayon `par_iter` settles, then drained into the
+/// caller's `SyncMetaReport` in a single sequential pass. Carrying
+/// the data plain (no `&mut report` shared across threads) is what
+/// keeps the parallelisation sound under the Lean
+/// `sync_disjoint_commutes` axiom: each iteration's mutations are
+/// confined to its own owned struct.
+struct Phase1ChildOutcome {
+    /// `(meta_dir, dest, class)` — pushed onto
+    /// `report.phase1_classifications` regardless of dispatch outcome.
+    classification: (PathBuf, PathBuf, DestClass),
+    /// Per-child clone/fetch failure, if any. Folded into
+    /// `report.errors`.
+    error: Option<TreeError>,
+    /// `Some((dest, class))` when the child classified as
+    /// `PresentUndeclared`; the caller aggregates these into one
+    /// `UntrackedGitRepos` error after the parallel pass.
+    undeclared: Option<(PathBuf, DestClass)>,
 }
 
 /// Phase 1: classify each declared child, then dispatch. Per the v1.2.0
@@ -651,56 +720,111 @@ fn sync_meta_inner(
 /// * `PresentUndeclared` → impossible at Phase 1 dispatch time because
 ///   declared paths are in `manifest.children`; the variant is reserved
 ///   for the lockfile-orphan sweep (Phase 2 territory).
+///
+/// v1.2.1 item 3 — sibling-parallel via rayon `par_iter`. Disjointness
+/// across siblings (each child has its own `meta_dir.join(child.path)`
+/// dest, validated by `validate_children_paths` upstream) discharges
+/// the precondition of the `sync_disjoint_commutes` axiom in
+/// `proof/Grex/Bridge.lean`. The per-pack `.grex-lock` (M6, acquired
+/// inside the GitBackend implementation) continues to serialise any
+/// cross-task contention on the same pack path. Per-thread results
+/// are collected into a `Vec<Phase1ChildOutcome>` and folded into the
+/// caller's `SyncMetaReport` in a single sequential pass, preserving
+/// deterministic ordering of `report.phase1_classifications` (rayon
+/// `collect_into_vec` preserves source-order regardless of completion
+/// order).
 fn phase1_sync_children(
+    pool: &rayon::ThreadPool,
     meta_dir: &Path,
     manifest: &PackManifest,
     backend: &dyn GitBackend,
     opts: &SyncMetaOptions,
     report: &mut SyncMetaReport,
 ) {
+    // Install on the per-call pool so `--parallel N` is honoured even
+    // when this is invoked from inside another rayon context (Phase 3
+    // recursion). `install` is a synchronous fence: the closure
+    // returns once every parallel iteration has settled.
+    let outcomes: Vec<Phase1ChildOutcome> = pool.install(|| {
+        manifest
+            .children
+            .par_iter()
+            .map(|child| phase1_handle_child(meta_dir, child, backend, opts))
+            .collect()
+    });
+
+    // Sequential fold: the parallel pass cannot mutate `report` directly
+    // (it is `&mut`), so we drain the per-child outcomes here. Order is
+    // preserved by `par_iter().collect()` — see the `phase1_par_iter_preserves_order`
+    // test below.
     let mut undeclared_seen: Vec<(PathBuf, DestClass)> = Vec::new();
-    for child in &manifest.children {
-        let dest = meta_dir.join(child.effective_path());
-        // Every declared child IS in the manifest by construction —
-        // `declared_in_manifest = true` is the only correct call here.
-        let class = classify_dest(&dest, true, None);
-        report.phase1_classifications.push((meta_dir.to_path_buf(), dest.clone(), class));
-        match class {
-            DestClass::Missing => {
-                if let Err(e) = phase1_clone(backend, child, &dest, opts) {
-                    report.errors.push(e);
-                }
-            }
-            DestClass::PresentDeclared => {
-                if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
-                    report.errors.push(e);
-                }
-            }
-            DestClass::PresentDirty => {
-                // Conservative: leave the dirty tree untouched. The
-                // operator has uncommitted work; v1.2.0 walker policy
-                // is to never overwrite their bytes during Phase 1.
-                // Phase 2 will surface a refusal if the operator ALSO
-                // requested a prune of this path, but that's a
-                // separate decision made by the caller's lockfile-
-                // orphan computation.
-            }
-            DestClass::PresentInProgress => {
-                report.errors.push(TreeError::DirtyTreeRefusal {
-                    path: dest,
-                    kind: super::error::DirtyTreeRefusalKind::GitInProgress,
-                });
-            }
-            DestClass::PresentUndeclared => {
-                // Buffer for `aggregate_untracked` so we surface the
-                // FULL list in one error.
-                undeclared_seen.push((dest, class));
-            }
+    for outcome in outcomes {
+        report.phase1_classifications.push(outcome.classification);
+        if let Some(e) = outcome.error {
+            report.errors.push(e);
+        }
+        if let Some(pair) = outcome.undeclared {
+            undeclared_seen.push(pair);
         }
     }
     if let Err(e) = aggregate_untracked(undeclared_seen) {
         report.errors.push(e);
     }
+}
+
+/// Per-child Phase 1 dispatch — runs inside the rayon pool. The
+/// extracted fn keeps the parallel closure body small and gives the
+/// Lean axiom a single discoverable Rust contract anchor (this fn is
+/// the per-sibling unit of work the `sync_disjoint_commutes` axiom
+/// quantifies over).
+fn phase1_handle_child(
+    meta_dir: &Path,
+    child: &ChildRef,
+    backend: &dyn GitBackend,
+    opts: &SyncMetaOptions,
+) -> Phase1ChildOutcome {
+    let dest = meta_dir.join(child.effective_path());
+    // Every declared child IS in the manifest by construction —
+    // `declared_in_manifest = true` is the only correct call here.
+    let class = classify_dest(&dest, true, None);
+    let mut out = Phase1ChildOutcome {
+        classification: (meta_dir.to_path_buf(), dest.clone(), class),
+        error: None,
+        undeclared: None,
+    };
+    match class {
+        DestClass::Missing => {
+            if let Err(e) = phase1_clone(backend, child, &dest, opts) {
+                out.error = Some(e);
+            }
+        }
+        DestClass::PresentDeclared => {
+            if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
+                out.error = Some(e);
+            }
+        }
+        DestClass::PresentDirty => {
+            // Conservative: leave the dirty tree untouched. The
+            // operator has uncommitted work; v1.2.0 walker policy
+            // is to never overwrite their bytes during Phase 1.
+            // Phase 2 will surface a refusal if the operator ALSO
+            // requested a prune of this path, but that's a
+            // separate decision made by the caller's lockfile-
+            // orphan computation.
+        }
+        DestClass::PresentInProgress => {
+            out.error = Some(TreeError::DirtyTreeRefusal {
+                path: dest.clone(),
+                kind: super::error::DirtyTreeRefusalKind::GitInProgress,
+            });
+        }
+        DestClass::PresentUndeclared => {
+            // Buffer for `aggregate_untracked` so we surface the
+            // FULL list in one error.
+            out.undeclared = Some((dest, class));
+        }
+    }
+    out
 }
 
 /// Phase 1 clone helper. Acquires the M6 `PackLock` on the prospective
@@ -775,8 +899,19 @@ fn phase2_prune_orphans(
     }
 }
 
-/// Phase 3: parallel recursion (sequential cut for 1.g) into child
-/// metas. A child qualifies for recursion when:
+/// Per-child output from Phase 3's parallel recursion. Each variant
+/// carries either a successful sub-`SyncMetaReport` (folded into the
+/// caller via [`SyncMetaReport::merge`]) or a fatal error to push onto
+/// `report.errors`. Children whose dest does NOT carry a sub-meta
+/// produce `Skipped`.
+enum Phase3ChildOutcome {
+    Skipped,
+    Recursed(SyncMetaReport),
+    Failed(TreeError),
+}
+
+/// Phase 3: parallel recursion into child metas. A child qualifies for
+/// recursion when:
 ///
 ///   1. `opts.recurse` is `true`,
 ///   2. `opts.max_depth` is unbounded OR the next-frame depth is
@@ -786,7 +921,27 @@ fn phase2_prune_orphans(
 /// Sub-meta reports are merged into the parent's report via
 /// [`SyncMetaReport::merge`] so a top-level caller sees one rolled-up
 /// view of every frame's classifications + errors.
+///
+/// v1.2.1 item 3 — sibling-parallel via rayon `par_iter`. Each
+/// recursion frame builds its own thread pool inside `sync_meta_inner`
+/// (work-stealing across recursion levels happens naturally because
+/// the inner `pool.install` blocks for the lifetime of the inner
+/// sync_meta call; sibling sub-metas at level N execute in parallel
+/// via the level-N pool, and each level-N child carries its own
+/// level-(N+1) pool for its own grandchildren). Sub-reports are
+/// collected source-ordered via `collect_into_vec`, then folded into
+/// `report` sequentially to preserve deterministic ordering of the
+/// `phase1_classifications` / `phase2_pruned` / `errors` vectors.
+// Pre-rayon refactor this fn already carried 7 args (the clippy cap).
+// v1.2.1 item 3 added the `pool` reference, taking it to 8. Bundling
+// these into a context struct is technically possible but every other
+// arg already comes from `sync_meta_inner`'s param list, so the struct
+// would just shuffle the wiring without removing it. Localised allow
+// instead — the call-site is private to this module and threads
+// ownership of `pool` cleanly.
+#[allow(clippy::too_many_arguments)]
 fn phase3_recurse(
+    pool: &rayon::ThreadPool,
     meta_dir: &Path,
     manifest: &PackManifest,
     backend: &dyn GitBackend,
@@ -804,17 +959,30 @@ fn phase3_recurse(
             return;
         }
     }
-    for child in &manifest.children {
-        let dest = meta_dir.join(child.effective_path());
-        if !dest.join(".grex").join("pack.yaml").is_file() {
-            continue;
-        }
-        // Empty `prune_candidates` for the sub-meta — 1.h supplies the
-        // sub-meta's distributed lockfile read via the same caller
-        // pathway when it lands.
-        match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth) {
-            Ok(sub) => report.merge(sub),
-            Err(e) => report.errors.push(e),
+    let outcomes: Vec<Phase3ChildOutcome> = pool.install(|| {
+        manifest
+            .children
+            .par_iter()
+            .map(|child| {
+                let dest = meta_dir.join(child.effective_path());
+                if !dest.join(".grex").join("pack.yaml").is_file() {
+                    return Phase3ChildOutcome::Skipped;
+                }
+                // Empty `prune_candidates` for the sub-meta — 1.h
+                // supplies the sub-meta's distributed lockfile read
+                // via the same caller pathway when it lands.
+                match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth) {
+                    Ok(sub) => Phase3ChildOutcome::Recursed(sub),
+                    Err(e) => Phase3ChildOutcome::Failed(e),
+                }
+            })
+            .collect()
+    });
+    for outcome in outcomes {
+        match outcome {
+            Phase3ChildOutcome::Skipped => {}
+            Phase3ChildOutcome::Recursed(sub) => report.merge(sub),
+            Phase3ChildOutcome::Failed(e) => report.errors.push(e),
         }
     }
 }
