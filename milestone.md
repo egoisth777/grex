@@ -141,6 +141,23 @@ Ship it.
 **Effort**: 2-4 days.
 **Depends on**: M7.
 
+## Phase v1.2.1 — Doc-debt + parallel scheduler + migration UX
+
+**Scope:**
+- **mdbook doc update (priority #1)**: `grex-doc/src/concepts/{architecture,concurrency,walker,lockfile}.md` + mirror `man/concepts/*.md` and `man/guides/*.md`. Document v1.2.0 walker semantics: nested-children, distributed lockfile, Phase 1 5-way classifier, Phase 2 default-deny prune, TOCTOU BoundedDir, force-prune flags. Currently stale (last touched in lean→proof rename only).
+- **rayon parallel scheduler**: replace v1.2.0 sequential walker (Stage 1.g split) with rayon work-stealing per-sibling parallelism. Reuse M6 bounded semaphore + per-pack `.grex-lock`. Lean covered via existing `sync_disjoint_commutes` axiom (no new theorem required).
+- **CLI migrate-lockfile dispatcher**: wire `--migrate-lockfile` flag (already in SyncOptions per Stage 1.m) to call the isolated migrator module from Stage 1.h. Add `grex migrate-lockfile` subcommand. Library is in place; only CLI surface needed.
+- **Optional quarantine** on `--force-prune` (deferred from v1.2.0 walker.md §246): pre-rm-rf snapshot to `<meta>/.grex/quarantine/<timestamp>/<basename>/`.
+
+**Entry points (next session bootstrap):**
+1. `progress.md` "## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)"
+2. This phase entry
+3. `openspec/changes/feat-v1.2.0-nested-children/{proposal,design,tasks}.md` (still alive — no archive)
+4. `.omne/cfg/walker.md` for canonical algo
+5. `.omne/proof/impl-axiom-bridge.md` for axiom + theorem index
+
+**Status:** PLANNED (not started). Cut new openspec triplet `openspec/changes/feat-v1.2.1-docs-and-rayon/` before impl per project rule.
+
 ## v2 backlog
 
 Deferred from v1 scope. Order indicates rough priority, not schedule.
