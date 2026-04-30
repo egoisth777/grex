@@ -78,9 +78,9 @@
   - 7 (mixed-tree workspace) — `mixed_tree_meta_with_declarative_and_plain_git_children` ✓.
   - 8 (meta-pack with declared `children:` resolving to plain-git) — covered by `plain_git_children_sync_walks_to_completion` (parent meta declares `children:` URLs that resolve to plain-git seed clones) ✓.
 - **PR #56 review methodology:**
-  - 4 parallel reviewers (correctness / adversarial / maintainability / api-contract) round 1 against impl HEAD pre-commit. Findings: 1 BLOCKER + ~10 CONCERNs + ~15 NITs.
+  - 4 parallel reviewers (correctness / adversarial / maintainability / api-contract) round 1 against impl HEAD pre-commit. Findings: 1 BLOCKER + ~10 nits + ~15 NITs.
   - 3 parallel fix agents partitioned by scope (core / walker+ls / MCP+docs) closed all R1 findings.
-  - 4 parallel reviewers round 2 confirmed all R1 CLOSED + surfaced 1 NEW BLOCKER (tracing→stdout pollutes `--json`) + 2 CONCERNs (cli-json.md case mismatch, doctor swallows corrupt lockfile silently).
+  - 4 parallel reviewers round 2 confirmed all R1 CLOSED + surfaced 1 NEW BLOCKER (tracing→stdout pollutes `--json`) + 2 nits (cli-json.md case mismatch, doctor swallows corrupt lockfile silently).
   - R2 fix-sweep agent closed all 3 (`tracing_subscriber::fmt().with_writer(io::stderr)` in main.rs; cli-json.md kebab/lowercase; `read_synthetic_lock` returns `(map, Option<Finding>)` and surfaces corruption as `Severity::Warning`).
 - **Final gates pre-commit:** fmt ✓ clippy -D warnings ✓ test 752/0/0 ✓ gen-man drift expected (intentional v1.1.1 changes only) ✓ doc-site-prep ✓ mdbook HTML ✓ cargo-deny ok ✓ typos ✓ cargo metadata reports 1.1.1 across 5 packages ✓.
 - **CI status at merge:** 31 pass / 0 fail / 1 pending (CodeRabbit, advisory, non-required) / 8 skipping. All 8 required checks pass: `build / ubuntu-latest / stable`, `build / windows-latest / stable`, `build / macos-latest / stable`, `cargo-deny`, `MCP protocol conformance (2025-06-18)`, `man-drift (clap_mangen)`, `release-plan (cargo-dist)`, `typos`. Merged via `--admin` (solo maintainer pattern; CodeRabbit advisory only).
