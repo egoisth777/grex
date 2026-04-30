@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let workspace = std::env::current_dir()?;
-    let opts = DoctorOpts { fix: args.fix, lint_config: args.lint_config };
+    let opts = DoctorOpts { fix: args.fix, lint_config: args.lint_config, shallow: args.shallow };
     let report = run_doctor(&workspace, &opts)?;
 
     if global.json {

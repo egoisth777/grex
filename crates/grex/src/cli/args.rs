@@ -209,6 +209,15 @@ pub struct DoctorArgs {
     /// `.omne/cfg/*.md`). Skipped by default.
     #[arg(long = "lint-config")]
     pub lint_config: bool,
+
+    /// v1.2.0 Stage 1.j — bound the recursive ManifestTree walk.
+    /// Omitted: walk every nested meta exhaustively (default).
+    /// `--shallow 0`: root meta only.
+    /// `--shallow N`: recurse up to `N` levels of nesting (root is
+    /// depth 0; depth-`N` metas are visited but their children are
+    /// not). The walk is read-only at every frame.
+    #[arg(long = "shallow", value_name = "N")]
+    pub shallow: Option<usize>,
 }
 
 #[derive(Args, Debug)]
