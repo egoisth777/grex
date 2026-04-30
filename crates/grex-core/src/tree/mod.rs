@@ -30,4 +30,7 @@ pub use error::TreeError;
 pub use graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 pub use loader::{FsPackLoader, PackLoader};
 pub use ls::{build_ls_tree, LsNode, LsNodeError, LsTree};
-pub use walker::{dest_has_git_repo, synthesize_plain_git_manifest, Walker};
+pub use walker::{
+    dest_has_git_repo, sync_meta, synthesize_plain_git_manifest, SyncMetaOptions, SyncMetaReport,
+    Walker,
+};

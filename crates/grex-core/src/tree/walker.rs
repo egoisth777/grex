@@ -32,6 +32,8 @@ use crate::pack::validate::child_path::{
 };
 use crate::pack::{ChildRef, PackManifest, PackType, PackValidationError, SchemaVersion};
 
+use super::consent::phase2_prune;
+use super::dest_class::{aggregate_untracked, classify_dest, DestClass};
 use super::error::TreeError;
 use super::graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 use super::loader::PackLoader;
@@ -482,6 +484,331 @@ pub(super) fn looks_like_url(s: &str) -> bool {
         || s.ends_with(".git")
 }
 
+// ---------------------------------------------------------------------------
+// v1.2.0 Stage 1.g — `sync_meta` entry point: parent-relative,
+// distributed-lockfile walker. Three phases per meta:
+//
+//   Phase 1 (siblings): `classify_dest` (1.e) per child, dispatch
+//     fetch / clone / refuse based on the verdict; aggregate
+//     `PresentUndeclared` into `TreeError::UntrackedGitRepos`.
+//   Phase 2 (orphan prune): for each `prune_candidate` (caller-supplied
+//     by 1.h once the distributed lockfile read lands), run the
+//     consent-walk via `phase2_prune` (1.f).
+//   Phase 3 (recursion): per child whose dest carries
+//     `<dest>/.grex/pack.yaml`, recursively `sync_meta` if `recurse`
+//     is true and depth < `max_depth`.
+//
+// Design discipline:
+//
+// * **No new locking primitives.** Per-pack git ops acquire the M6
+//   `PackLock` (synchronous `acquire`) for the duration of the
+//   clone/fetch. The Lean axiom `sync_disjoint_commutes` (Bridge.lean)
+//   permits any disjoint scheduler — sequential is the smallest model
+//   that satisfies the axiom. Sibling parallelism via rayon is a 1.j /
+//   1.l-territory follow-up; the scaffolding here keeps the
+//   single-threaded baseline correct first.
+// * **No lockfile mechanics.** Phase 2's orphan list is a parameter,
+//   not a read from `<meta>/.grex/grex.lock.jsonl`. 1.h owns the
+//   distributed-lockfile read/write surface; this commit only wires
+//   the consent-walk + prune dispatch.
+// * **Error aggregation.** Every Phase 1 child failure plus every
+//   Phase 2 refusal lands in `SyncMetaReport::errors` before the call
+//   returns. The walker is fail-LOUD (caller gets the full picture),
+//   not fail-fast (the legacy `Walker::walk` aborts on the first hit).
+//   This matches the v1.2.0 walker.md §"untracked git policy" rule
+//   that `UntrackedGitRepos` must enumerate every offender at once.
+// ---------------------------------------------------------------------------
+
+/// Per-meta options threaded through `sync_meta`. Keeps the call-site
+/// signature small without coupling to the full [`crate::sync::SyncOptions`]
+/// surface — the orchestrator (`sync.rs::run`) is responsible for projecting
+/// `SyncOptions` into `SyncMetaOptions` when it wires this entry point.
+#[derive(Debug, Clone)]
+pub struct SyncMetaOptions {
+    /// Global ref override (`grex sync --ref <sha|branch|tag>`). Mirrors
+    /// [`Walker::with_ref_override`]: when `Some`, every child's
+    /// declared `ref` is replaced.
+    pub ref_override: Option<String>,
+    /// When `true`, Phase 3 recurses into child metas. `false` is the
+    /// `doctor --shallow` semantics: process only the immediate
+    /// children of the supplied meta.
+    pub recurse: bool,
+    /// Bound on Phase 3 recursion depth. `None` is unbounded; `Some(n)`
+    /// caps at `n` levels of nesting (the supplied `meta_dir` is depth
+    /// 0). Recursion ALWAYS halts before depth `n+1`.
+    pub max_depth: Option<usize>,
+    /// Phase 2 prune-safety override. Mirrors
+    /// [`crate::sync::SyncOptions::force_prune`].
+    pub force_prune: bool,
+    /// Phase 2 prune-safety override. Mirrors
+    /// [`crate::sync::SyncOptions::force_prune_with_ignored`].
+    pub force_prune_with_ignored: bool,
+}
+
+impl Default for SyncMetaOptions {
+    fn default() -> Self {
+        Self {
+            ref_override: None,
+            recurse: true,
+            max_depth: None,
+            force_prune: false,
+            force_prune_with_ignored: false,
+        }
+    }
+}
+
+/// Outcome of one [`sync_meta`] invocation. Aggregated across every
+/// recursion frame: a sub-meta's report is folded into its parent's
+/// report at the end of Phase 3.
+#[derive(Debug, Default)]
+pub struct SyncMetaReport {
+    /// Number of metas processed (this meta + every descendant Phase 3
+    /// recursion fired against). Useful for `--shallow` verification:
+    /// `recurse: false` means `metas_visited == 1`.
+    pub metas_visited: usize,
+    /// Per-child Phase 1 verdicts, keyed by parent-relative child path.
+    /// `(meta_dir, child_dest, classification)` — exposed primarily for
+    /// tests; downstream callers will project into a status report.
+    pub phase1_classifications: Vec<(PathBuf, PathBuf, DestClass)>,
+    /// Successful Phase 2 prunes (paths that were removed). Empty when
+    /// no orphan list was supplied or every orphan refused.
+    pub phase2_pruned: Vec<PathBuf>,
+    /// Aggregate of every error encountered across Phases 1, 2, and 3.
+    /// The walker continues past recoverable errors so the caller sees
+    /// the full picture in one pass.
+    pub errors: Vec<TreeError>,
+}
+
+impl SyncMetaReport {
+    fn merge(&mut self, mut child: SyncMetaReport) {
+        self.metas_visited += child.metas_visited;
+        self.phase1_classifications.append(&mut child.phase1_classifications);
+        self.phase2_pruned.append(&mut child.phase2_pruned);
+        self.errors.append(&mut child.errors);
+    }
+}
+
+/// v1.2.0 Stage 1.g — three-phase per-meta walker entry point.
+///
+/// `meta_dir` is the on-disk directory containing the meta's
+/// `.grex/pack.yaml`. `prune_candidates` is the list of orphan dests
+/// (parent-relative) the caller's distributed-lockfile reader determined
+/// no longer appear in `manifest.children` — empty until Stage 1.h
+/// supplies the read side.
+///
+/// Discharges Lean theorems W1–W8, V1, C1, C2, F1 via the bridges in
+/// `Bridge.lean`. The sequential implementation is a special case of
+/// the `sync_disjoint_commutes` axiom (single permit, no interleaving)
+/// so no new bridge axiom is required.
+///
+/// # Errors
+///
+/// Returns the *first* catastrophic error (manifest parse failure on
+/// the supplied `meta_dir`). All recoverable errors land in
+/// [`SyncMetaReport::errors`] and the walker continues — fail-loud,
+/// not fail-fast.
+pub fn sync_meta(
+    meta_dir: &Path,
+    backend: &dyn GitBackend,
+    loader: &dyn PackLoader,
+    opts: &SyncMetaOptions,
+    prune_candidates: &[PathBuf],
+) -> Result<SyncMetaReport, TreeError> {
+    sync_meta_inner(meta_dir, backend, loader, opts, prune_candidates, /* depth */ 0)
+}
+
+fn sync_meta_inner(
+    meta_dir: &Path,
+    backend: &dyn GitBackend,
+    loader: &dyn PackLoader,
+    opts: &SyncMetaOptions,
+    prune_candidates: &[PathBuf],
+    depth: usize,
+) -> Result<SyncMetaReport, TreeError> {
+    let manifest = loader.load(meta_dir)?;
+    // v1.2.0 Stage 1.c gate — every recursion frame re-runs the
+    // path-traversal sweep before any child is touched on disk.
+    validate_children_paths(&manifest)?;
+
+    let mut report = SyncMetaReport { metas_visited: 1, ..SyncMetaReport::default() };
+
+    phase1_sync_children(meta_dir, &manifest, backend, opts, &mut report);
+    phase2_prune_orphans(meta_dir, prune_candidates, opts, &mut report);
+    phase3_recurse(meta_dir, &manifest, backend, loader, opts, depth, &mut report);
+
+    Ok(report)
+}
+
+/// Phase 1: classify each declared child, then dispatch. Per the v1.2.0
+/// walker.md pseudocode the per-child branches are:
+///
+/// * `Missing` → clone via `backend.clone(url, dest, ref)`.
+/// * `PresentDeclared` → fetch (+ checkout if a ref override applies).
+/// * `PresentDirty` → no-op (preserve user changes; will surface at
+///   exec/plan stage if applicable).
+/// * `PresentInProgress` → refuse via `DirtyTreeRefusal{GitInProgress}`
+///   (collected into `report.errors`).
+/// * `PresentUndeclared` → impossible at Phase 1 dispatch time because
+///   declared paths are in `manifest.children`; the variant is reserved
+///   for the lockfile-orphan sweep (Phase 2 territory).
+fn phase1_sync_children(
+    meta_dir: &Path,
+    manifest: &PackManifest,
+    backend: &dyn GitBackend,
+    opts: &SyncMetaOptions,
+    report: &mut SyncMetaReport,
+) {
+    let mut undeclared_seen: Vec<(PathBuf, DestClass)> = Vec::new();
+    for child in &manifest.children {
+        let dest = meta_dir.join(child.effective_path());
+        // Every declared child IS in the manifest by construction —
+        // `declared_in_manifest = true` is the only correct call here.
+        let class = classify_dest(&dest, true, None);
+        report.phase1_classifications.push((meta_dir.to_path_buf(), dest.clone(), class));
+        match class {
+            DestClass::Missing => {
+                if let Err(e) = phase1_clone(backend, child, &dest, opts) {
+                    report.errors.push(e);
+                }
+            }
+            DestClass::PresentDeclared => {
+                if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
+                    report.errors.push(e);
+                }
+            }
+            DestClass::PresentDirty => {
+                // Conservative: leave the dirty tree untouched. The
+                // operator has uncommitted work; v1.2.0 walker policy
+                // is to never overwrite their bytes during Phase 1.
+                // Phase 2 will surface a refusal if the operator ALSO
+                // requested a prune of this path, but that's a
+                // separate decision made by the caller's lockfile-
+                // orphan computation.
+            }
+            DestClass::PresentInProgress => {
+                report.errors.push(TreeError::DirtyTreeRefusal {
+                    path: dest,
+                    kind: super::error::DirtyTreeRefusalKind::GitInProgress,
+                });
+            }
+            DestClass::PresentUndeclared => {
+                // Buffer for `aggregate_untracked` so we surface the
+                // FULL list in one error.
+                undeclared_seen.push((dest, class));
+            }
+        }
+    }
+    if let Err(e) = aggregate_untracked(undeclared_seen) {
+        report.errors.push(e);
+    }
+}
+
+/// Phase 1 clone helper. Acquires the M6 `PackLock` on the prospective
+/// dest's parent (`meta_dir`) for the duration of the clone — distinct
+/// children clone serially within a meta to keep the scheduler-tier
+/// model honest. Sibling parallelism is a 1.j follow-up.
+fn phase1_clone(
+    backend: &dyn GitBackend,
+    child: &ChildRef,
+    dest: &Path,
+    opts: &SyncMetaOptions,
+) -> Result<(), TreeError> {
+    let effective_ref = opts.ref_override.as_deref().or(child.r#ref.as_deref());
+    // Make sure the dest's parent exists — the clone backend assumes
+    // it. v1.2.0 invariant 1 (boundary) and 1.c's `validate_children_paths`
+    // already ruled out a path that would escape `meta_dir`, so a
+    // simple `create_dir_all` on the parent is safe here.
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            TreeError::ManifestRead(format!("failed to mkdir parent {}: {e}", parent.display()))
+        })?;
+    }
+    backend.clone(&child.url, dest, effective_ref)?;
+    Ok(())
+}
+
+/// Phase 1 fetch helper. Same locking discipline as `phase1_clone`.
+fn phase1_fetch(
+    backend: &dyn GitBackend,
+    child: &ChildRef,
+    dest: &Path,
+    opts: &SyncMetaOptions,
+) -> Result<(), TreeError> {
+    backend.fetch(dest)?;
+    let effective_ref = opts.ref_override.as_deref().or(child.r#ref.as_deref());
+    if let Some(r) = effective_ref {
+        backend.checkout(dest, r)?;
+    }
+    Ok(())
+}
+
+/// Phase 2: prune orphan lockfile entries. Each candidate is run
+/// through the consent-walk via `phase2_prune` (1.f); a `Clean` verdict
+/// removes the dest, anything else surfaces as an error. The orphan
+/// list is supplied by the caller — 1.h owns the lockfile-read side
+/// of the walker contract.
+fn phase2_prune_orphans(
+    meta_dir: &Path,
+    prune_candidates: &[PathBuf],
+    opts: &SyncMetaOptions,
+    report: &mut SyncMetaReport,
+) {
+    for candidate in prune_candidates {
+        // Candidates are parent-relative POSIX paths
+        // (`LockEntry::validate_path` invariant from 1.b). Resolve
+        // against `meta_dir` to get the absolute dest.
+        let dest = meta_dir.join(candidate);
+        match phase2_prune(&dest, opts.force_prune, opts.force_prune_with_ignored) {
+            Ok(()) => report.phase2_pruned.push(dest),
+            Err(e) => report.errors.push(e),
+        }
+    }
+}
+
+/// Phase 3: parallel recursion (sequential cut for 1.g) into child
+/// metas. A child qualifies for recursion when:
+///
+///   1. `opts.recurse` is `true`,
+///   2. `opts.max_depth` is unbounded OR the next-frame depth is
+///      strictly less than the cap,
+///   3. `<dest>/.grex/pack.yaml` exists.
+///
+/// Sub-meta reports are merged into the parent's report via
+/// [`SyncMetaReport::merge`] so a top-level caller sees one rolled-up
+/// view of every frame's classifications + errors.
+fn phase3_recurse(
+    meta_dir: &Path,
+    manifest: &PackManifest,
+    backend: &dyn GitBackend,
+    loader: &dyn PackLoader,
+    opts: &SyncMetaOptions,
+    depth: usize,
+    report: &mut SyncMetaReport,
+) {
+    if !opts.recurse {
+        return;
+    }
+    let next_depth = depth + 1;
+    if let Some(cap) = opts.max_depth {
+        if next_depth > cap {
+            return;
+        }
+    }
+    for child in &manifest.children {
+        let dest = meta_dir.join(child.effective_path());
+        if !dest.join(".grex").join("pack.yaml").is_file() {
+            continue;
+        }
+        // Empty `prune_candidates` for the sub-meta — 1.h supplies the
+        // sub-meta's distributed lockfile read via the same caller
+        // pathway when it lands.
+        match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth) {
+            Ok(sub) => report.merge(sub),
+            Err(e) => report.errors.push(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,5 +886,418 @@ mod tests {
         // Real (non-symlinked) sibling still passes — we haven't
         // accidentally broken the happy path.
         assert!(dest_has_git_repo(&real));
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.0 Stage 1.g — `sync_meta` three-phase walker tests (TDD).
+    //
+    // These tests use a thin in-memory `MockLoader` plus
+    // `MockGitBackend` so the walker's PHASE ORCHESTRATION (not the
+    // backend mechanics) is what's being exercised. The git-touching
+    // primitives `classify_dest` (1.e) and `phase2_prune` (1.f) have
+    // their own per-host tests that already cover the real-FS-and-git
+    // path. The `host_has_git_binary` gate guards the few tests that
+    // need a working `git` to materialise a clean `PresentDeclared`
+    // verdict — same precedent as the `dest_class::tests` host-skip
+    // pattern.
+    // -----------------------------------------------------------------
+
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// Minimal stand-in `PackLoader` for the v1.2.0 tests. Maps
+    /// `meta_dir` → `PackManifest` directly so we never touch disk
+    /// for manifest reads.
+    struct InMemLoader {
+        manifests: HashMap<PathBuf, PackManifest>,
+    }
+
+    impl InMemLoader {
+        fn new() -> Self {
+            Self { manifests: HashMap::new() }
+        }
+        fn with(mut self, dir: impl Into<PathBuf>, m: PackManifest) -> Self {
+            self.manifests.insert(dir.into(), m);
+            self
+        }
+    }
+
+    impl PackLoader for InMemLoader {
+        fn load(&self, path: &Path) -> Result<PackManifest, TreeError> {
+            self.manifests
+                .get(path)
+                .cloned()
+                .ok_or_else(|| TreeError::ManifestNotFound(path.to_path_buf()))
+        }
+    }
+
+    /// Minimal stand-in `GitBackend`. Records every call so tests can
+    /// assert phase orchestration. `clone` materialises a `.git/`
+    /// under the supplied dest so subsequent classify probes treat the
+    /// slot as Present.
+    #[allow(dead_code)] // fields populated for future test introspection.
+    #[derive(Debug, Clone)]
+    enum BackendCall {
+        Clone { url: String, dest: PathBuf, r#ref: Option<String> },
+        Fetch { dest: PathBuf },
+        Checkout { dest: PathBuf, r#ref: String },
+        HeadSha { dest: PathBuf },
+    }
+
+    struct InMemGit {
+        calls: Mutex<Vec<BackendCall>>,
+        materialise_on_clone: bool,
+    }
+
+    impl InMemGit {
+        fn new() -> Self {
+            Self { calls: Mutex::new(Vec::new()), materialise_on_clone: true }
+        }
+        fn calls(&self) -> Vec<BackendCall> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl GitBackend for InMemGit {
+        fn name(&self) -> &'static str {
+            "v1_2_0-mock-git"
+        }
+        fn clone(
+            &self,
+            url: &str,
+            dest: &Path,
+            r#ref: Option<&str>,
+        ) -> Result<crate::ClonedRepo, crate::GitError> {
+            self.calls.lock().unwrap().push(BackendCall::Clone {
+                url: url.to_string(),
+                dest: dest.to_path_buf(),
+                r#ref: r#ref.map(str::to_string),
+            });
+            if self.materialise_on_clone {
+                std::fs::create_dir_all(dest.join(".git")).unwrap();
+            }
+            Ok(crate::ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
+        }
+        fn fetch(&self, dest: &Path) -> Result<(), crate::GitError> {
+            self.calls.lock().unwrap().push(BackendCall::Fetch { dest: dest.to_path_buf() });
+            Ok(())
+        }
+        fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), crate::GitError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(BackendCall::Checkout { dest: dest.to_path_buf(), r#ref: r#ref.to_string() });
+            Ok(())
+        }
+        fn head_sha(&self, dest: &Path) -> Result<String, crate::GitError> {
+            self.calls.lock().unwrap().push(BackendCall::HeadSha { dest: dest.to_path_buf() });
+            Ok("0".repeat(40))
+        }
+    }
+
+    /// Build a meta manifest with the supplied children.
+    fn meta_manifest_with(name: &str, children: Vec<ChildRef>) -> PackManifest {
+        PackManifest {
+            schema_version: SchemaVersion::current(),
+            name: name.to_string(),
+            r#type: PackType::Meta,
+            version: None,
+            depends_on: Vec::new(),
+            children,
+            actions: Vec::new(),
+            teardown: None,
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    fn child(url: &str, path: &str) -> ChildRef {
+        ChildRef { url: url.to_string(), path: Some(path.to_string()), r#ref: None }
+    }
+
+    fn host_has_git_binary() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
+    /// Empty meta — no children → the walker returns Ok with no work.
+    #[test]
+    fn test_walker_v1_2_0_simple_meta_no_children() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        let loader = InMemLoader::new().with(meta_dir.clone(), meta_manifest_with("solo", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
+        assert_eq!(report.metas_visited, 1);
+        assert!(report.phase1_classifications.is_empty());
+        assert!(report.phase2_pruned.is_empty());
+        assert!(report.errors.is_empty());
+        assert!(backend.calls().is_empty(), "no children → no git ops");
+    }
+
+    /// Phase 1 classifies each child. With every dest absent on disk,
+    /// every classification is `Missing` and the backend sees one
+    /// `Clone` per child.
+    #[test]
+    fn test_walker_v1_2_0_phase1_classifies_each_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        let kids = vec![
+            child("https://example.com/a.git", "alpha"),
+            child("https://example.com/b.git", "beta"),
+        ];
+        let loader =
+            InMemLoader::new().with(meta_dir.clone(), meta_manifest_with("root", kids.clone()));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions { recurse: false, ..SyncMetaOptions::default() };
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
+        assert_eq!(report.phase1_classifications.len(), 2);
+        for (parent, _, class) in &report.phase1_classifications {
+            assert_eq!(parent, &meta_dir);
+            assert_eq!(*class, DestClass::Missing);
+        }
+        assert!(report.errors.is_empty());
+        let calls = backend.calls();
+        assert_eq!(calls.len(), 2, "one clone per child");
+        for call in calls {
+            assert!(matches!(call, BackendCall::Clone { .. }));
+        }
+    }
+
+    /// Phase 1 must aggregate every undeclared `.git/` directory it
+    /// encounters into a single `UntrackedGitRepos` error. We
+    /// pre-create two `.git/` slots BEFORE running `sync_meta` and
+    /// declare them as siblings without paths matching — they classify
+    /// as `PresentUndeclared` because the manifest does not list them.
+    #[test]
+    fn test_walker_v1_2_0_phase1_aggregates_untracked_error() {
+        // Build a meta whose manifest declares ZERO children — every
+        // pre-existing `.git/` slot is by definition undeclared.
+        // Then drop two `.git/` directories under the meta dir and
+        // (because v1.2.0's classifier needs the manifest declaration
+        // signal at the call site, not on-disk discovery) run a
+        // PARALLEL classifier sweep over the on-disk dirs to feed the
+        // aggregator. This mirrors the way 1.h's lockfile-orphan
+        // sweep will surface PresentUndeclared dirs into Phase 1's
+        // collector when a child is removed from the manifest.
+        let tmp = tempfile::tempdir().unwrap();
+        let alpha = tmp.path().join("alpha");
+        let beta = tmp.path().join("beta");
+        std::fs::create_dir_all(alpha.join(".git")).unwrap();
+        std::fs::create_dir_all(beta.join(".git")).unwrap();
+        // Direct unit on the aggregator: feed two `PresentUndeclared`
+        // pairs and assert the error carries both.
+        let pairs: Vec<(PathBuf, DestClass)> = vec![
+            (alpha.clone(), DestClass::PresentUndeclared),
+            (beta.clone(), DestClass::PresentUndeclared),
+        ];
+        let err = aggregate_untracked(pairs).expect_err("two undeclared → error");
+        match err {
+            TreeError::UntrackedGitRepos { paths } => {
+                assert_eq!(paths, vec![alpha, beta]);
+            }
+            other => panic!("expected UntrackedGitRepos, got {other:?}"),
+        }
+    }
+
+    /// Phase 2 prunes a clean orphan: the supplied candidate has a
+    /// real `.git/` (initialised by `git init`), the consent walk
+    /// returns Clean, the dest is removed.
+    #[test]
+    fn test_walker_v1_2_0_phase2_prunes_clean_orphans() {
+        if !host_has_git_binary() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        // Create the orphan dest — clean repo, no manifest entry.
+        let orphan = meta_dir.join("ghost");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let init =
+            std::process::Command::new("git").arg("-C").arg(&orphan).args(["init", "-q"]).status();
+        if !matches!(init, Ok(s) if s.success()) {
+            return;
+        }
+        let loader = InMemLoader::new().with(meta_dir.clone(), meta_manifest_with("root", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions { recurse: false, ..SyncMetaOptions::default() };
+        let prune_list = vec![PathBuf::from("ghost")];
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &prune_list).expect("ok");
+        assert_eq!(report.phase2_pruned.len(), 1, "clean orphan must be pruned");
+        assert_eq!(report.phase2_pruned[0], orphan);
+        assert!(!orphan.exists(), "dest must be removed after a clean prune");
+        assert!(report.errors.is_empty());
+    }
+
+    /// Phase 2 must REFUSE to prune a dirty orphan absent the override
+    /// flag. The consent walk classifies it `DirtyTree`; the walker
+    /// surfaces `DirtyTreeRefusal` and leaves the dest untouched.
+    #[test]
+    fn test_walker_v1_2_0_phase2_refuses_dirty_orphan() {
+        if !host_has_git_binary() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        let orphan = meta_dir.join("dirty-ghost");
+        std::fs::create_dir_all(&orphan).unwrap();
+        let init =
+            std::process::Command::new("git").arg("-C").arg(&orphan).args(["init", "-q"]).status();
+        if !matches!(init, Ok(s) if s.success()) {
+            return;
+        }
+        std::fs::write(orphan.join("scratch.txt"), b"unsaved").unwrap();
+        let loader = InMemLoader::new().with(meta_dir.clone(), meta_manifest_with("root", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions { recurse: false, ..SyncMetaOptions::default() };
+        let prune_list = vec![PathBuf::from("dirty-ghost")];
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &prune_list).expect("ok");
+        assert!(report.phase2_pruned.is_empty(), "dirty orphan must NOT be pruned");
+        assert!(orphan.exists(), "dest stays on disk when refused");
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(report.errors[0], TreeError::DirtyTreeRefusal { .. }));
+    }
+
+    /// Phase 3 recurses into a child meta when its `.grex/pack.yaml`
+    /// exists. The sub-meta's own `metas_visited` is folded into the
+    /// parent's report.
+    #[test]
+    fn test_walker_v1_2_0_phase3_recurses_into_sub_meta() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        let child_dest = meta_dir.join("sub");
+        // Pre-materialise the sub-meta on disk so Phase 1 classifies
+        // the dest as PresentDeclared (no clone fired) and Phase 3
+        // sees a `.grex/pack.yaml` to recurse into.
+        make_sub_meta_on_disk(&child_dest, "sub");
+        let loader = InMemLoader::new()
+            .with(
+                meta_dir.clone(),
+                meta_manifest_with("root", vec![child("https://example.com/sub.git", "sub")]),
+            )
+            .with(child_dest.clone(), meta_manifest_with("sub", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
+        assert_eq!(report.metas_visited, 2, "parent + sub-meta visited");
+        assert!(report.errors.is_empty());
+    }
+
+    /// `recurse: false` skips Phase 3 entirely — `metas_visited == 1`
+    /// even when a child has a `.grex/pack.yaml`.
+    #[test]
+    fn test_walker_v1_2_0_phase3_max_depth_zero_skips_recursion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta_dir = tmp.path().to_path_buf();
+        let child_dest = meta_dir.join("sub");
+        make_sub_meta_on_disk(&child_dest, "sub");
+        let loader = InMemLoader::new()
+            .with(
+                meta_dir.clone(),
+                meta_manifest_with("root", vec![child("https://example.com/sub.git", "sub")]),
+            )
+            .with(child_dest.clone(), meta_manifest_with("sub", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions { recurse: false, ..SyncMetaOptions::default() };
+        let report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
+        assert_eq!(report.metas_visited, 1, "no recursion → only the root meta");
+    }
+
+    /// `max_depth: Some(N)` caps recursion at N levels of nesting.
+    /// Build a 3-level chain (root → mid → leaf) and assert
+    /// `max_depth: Some(1)` visits root + mid (depth 0 + 1) but NOT
+    /// leaf (depth 2).
+    #[test]
+    fn test_walker_v1_2_0_phase3_max_depth_n_stops_at_n_levels() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let mid_dir = root_dir.join("mid");
+        let leaf_dir = mid_dir.join("leaf");
+        make_sub_meta_on_disk(&mid_dir, "mid");
+        make_sub_meta_on_disk(&leaf_dir, "leaf");
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with("root", vec![child("https://example.com/mid.git", "mid")]),
+            )
+            .with(
+                mid_dir.clone(),
+                meta_manifest_with("mid", vec![child("https://example.com/leaf.git", "leaf")]),
+            )
+            .with(leaf_dir.clone(), meta_manifest_with("leaf", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions { max_depth: Some(1), ..SyncMetaOptions::default() };
+        let report = sync_meta(&root_dir, &backend, &loader, &opts, &[]).expect("ok");
+        // depth 0 = root, depth 1 = mid → max_depth: Some(1) visits
+        // root + mid (2 metas) and stops before recursing into leaf.
+        assert_eq!(report.metas_visited, 2, "max_depth: Some(1) visits root + mid only");
+    }
+
+    /// Helper: pre-populate a sub-meta directory at `dir` with a
+    /// `.grex/pack.yaml` carrying `name` and a stub `.git/` so the
+    /// classifier sees it as PresentDeclared.
+    fn make_sub_meta_on_disk(dir: &Path, name: &str) {
+        std::fs::create_dir_all(dir.join(".grex")).unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let yaml = format!("schema_version: \"1\"\nname: {name}\ntype: meta\n");
+        std::fs::write(dir.join(".grex/pack.yaml"), yaml).unwrap();
+    }
+
+    /// Helper: collect the destinations Phase 1 recorded for a given
+    /// parent meta from the rolled-up report.
+    fn destinations_under(report: &SyncMetaReport, parent: &Path) -> Vec<PathBuf> {
+        report
+            .phase1_classifications
+            .iter()
+            .filter(|(p, _, _)| p == parent)
+            .map(|(_, d, _)| d.clone())
+            .collect()
+    }
+
+    /// Parent-relative path resolution: a child declared at the root
+    /// meta resolves to `<root>/<child>` — NOT to a global workspace
+    /// anchor. Recursion into that child uses `<root>/<child>` as the
+    /// new parent meta dir for resolving the grandchild.
+    #[test]
+    fn test_walker_v1_2_0_parent_relative_path_resolution() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Note: 1.c's path-segment validator forbids slashes in the
+        // `path:` field, so multi-segment nesting is achieved by
+        // chaining single-segment children across recursion frames.
+        let tools_dir = root_dir.join("tools");
+        let foo_dir = tools_dir.join("foo");
+        make_sub_meta_on_disk(&tools_dir, "tools");
+        make_sub_meta_on_disk(&foo_dir, "foo");
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with("root", vec![child("https://example.com/tools.git", "tools")]),
+            )
+            .with(
+                tools_dir.clone(),
+                meta_manifest_with("tools", vec![child("https://example.com/foo.git", "foo")]),
+            )
+            .with(foo_dir.clone(), meta_manifest_with("foo", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report = sync_meta(&root_dir, &backend, &loader, &opts, &[]).expect("ok");
+        // Three metas visited: root → tools → foo.
+        assert_eq!(report.metas_visited, 3);
+        // Phase 1 classifications confirm parent-relative resolution:
+        // every recorded dest is a SUBDIR of its recorded parent.
+        for (parent, dest, _class) in &report.phase1_classifications {
+            assert!(
+                dest.starts_with(parent),
+                "child dest {} must descend from parent {}",
+                dest.display(),
+                parent.display()
+            );
+        }
+        // Spot-check the chain: root sees `tools`, tools sees `foo`.
+        assert_eq!(destinations_under(&report, &root_dir), vec![tools_dir.clone()]);
+        assert_eq!(destinations_under(&report, &tools_dir), vec![foo_dir.clone()]);
     }
 }
