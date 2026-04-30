@@ -376,6 +376,13 @@ pub enum SyncError {
     /// (check filesystem permissions, free disk space, then retry).
     #[error("event-log migration failed: {0}")]
     EventLogMigration(#[source] crate::manifest::ManifestError),
+    /// Cooperative cancellation fired (Ctrl-C / SIGTERM) during a
+    /// parallel sync. v1.2.0 Stage 1.g wires the rayon walker to surface
+    /// this distinct-from-failure variant so the CLI can exit with a
+    /// dedicated cancellation code instead of a generic sync error.
+    /// Dormant until Stage 1.g — the existing CLI does not yet emit it.
+    #[error("sync cancelled by user")]
+    SchedulerCancelled,
 }
 
 impl Clone for SyncError {
@@ -429,6 +436,7 @@ impl Clone for SyncError {
                     required: source.to_string(),
                 }],
             },
+            Self::SchedulerCancelled => Self::SchedulerCancelled,
         }
     }
 }
@@ -2255,5 +2263,21 @@ mod synthetic_transition_tests {
 
         let entry = next.get("gamma").expect("entry must be upserted");
         assert!(entry.synthetic, "synthetic must remain true on no-op refresh");
+    }
+}
+
+#[cfg(test)]
+mod error_display_tests {
+    //! v1.2.0 Stage 1.k — `SyncError` Display assertions.
+    //!
+    //! Pure construction + `to_string()` checks. Variants land dormant —
+    //! Stage 1.g (rayon scheduler) wires `SchedulerCancelled` once
+    //! cooperative cancel polls reach the parallel walker.
+    use super::SyncError;
+
+    #[test]
+    fn test_sync_error_scheduler_cancelled_display() {
+        let err = SyncError::SchedulerCancelled;
+        assert_eq!(err.to_string(), "sync cancelled by user");
     }
 }
