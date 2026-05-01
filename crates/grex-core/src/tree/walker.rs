@@ -39,6 +39,7 @@ use super::dest_class::{aggregate_untracked, classify_dest, DestClass};
 use super::error::TreeError;
 use super::graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 use super::loader::PackLoader;
+use super::quarantine::QuarantineConfig;
 
 /// Recursive walker. Composes a [`PackLoader`] (for manifests) with a
 /// [`GitBackend`] (for child hydration).
@@ -563,6 +564,16 @@ pub struct SyncMetaOptions {
     /// one exception that `0` is clamped to `1` here — the unbounded
     /// sentinel only makes sense for tokio's `Semaphore::MAX_PERMITS`.
     pub parallel: Option<usize>,
+    /// v1.2.1 item 5b — when `Some`, Phase 2 prunes are diverted
+    /// through the snapshot-then-unlink quarantine pipeline before
+    /// `unlink(dest)` fires. Carries the per-meta trash bucket root
+    /// and audit-log path. `None` (default) preserves the legacy
+    /// v1.2.0 direct-unlink path. Set by
+    /// [`crate::sync::SyncOptions::quarantine`] at the orchestrator
+    /// boundary; the consent layer reads this to pick the deletion
+    /// strategy. Lean theorem `quarantine_snapshot_precedes_delete`
+    /// proves the safety contract.
+    pub quarantine: Option<QuarantineConfig>,
 }
 
 impl Default for SyncMetaOptions {
@@ -574,6 +585,7 @@ impl Default for SyncMetaOptions {
             force_prune: false,
             force_prune_with_ignored: false,
             parallel: None,
+            quarantine: None,
         }
     }
 }
@@ -901,6 +913,7 @@ fn phase2_prune_orphans(
             opts.force_prune,
             opts.force_prune_with_ignored,
             Some(audit_log.as_path()),
+            opts.quarantine.as_ref(),
         ) {
             Ok(()) => report.phase2_pruned.push(dest),
             Err(e) => report.errors.push(e),

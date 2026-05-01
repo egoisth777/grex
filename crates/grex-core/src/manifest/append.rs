@@ -269,6 +269,12 @@ fn emit_semantic_warnings(events: &[Event]) {
             // v1.2.0 Stage 1.l — workspace-scoped audit; not tied to a
             // pack id so it has no live-set check.
             Event::ForcePruneExecuted { .. } => {}
+            // v1.2.1 Item 5b — quarantine lifecycle events are
+            // workspace-scoped audits keyed on the dest path; not tied
+            // to a pack id so they have no live-set check.
+            Event::QuarantineStart { .. }
+            | Event::QuarantineComplete { .. }
+            | Event::QuarantineFailed { .. } => {}
         }
     }
 }

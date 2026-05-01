@@ -165,6 +165,22 @@ pub struct SyncArgs {
     #[arg(long = "force-prune-with-ignored")]
     pub force_prune_with_ignored: bool,
 
+    /// v1.2.1 Item 5b — Recursively snapshot Phase 2 prune targets to
+    /// `<meta>/.grex/trash/<ISO8601>/<basename>/` BEFORE deletion.
+    /// Audit log entry (`QuarantineStart`) is appended + fsync'd
+    /// before any byte is copied; on snapshot failure the prune
+    /// aborts and the original dest is left intact for forensics.
+    /// Requires `--force-prune` or `--force-prune-with-ignored` —
+    /// quarantine only applies to overridden prunes; clean-consent
+    /// prunes still go through the direct-unlink fast path. The
+    /// "requires one of" check is enforced in the verb handler
+    /// (see `crates/grex/src/cli/verbs/sync.rs`) since clap's
+    /// `requires`/`required_unless_present_any` semantics don't
+    /// model "X requires (A or B)" cleanly without an `ArgGroup`.
+    /// Matches Lean theorem `quarantine_snapshot_precedes_delete`.
+    #[arg(long = "quarantine")]
+    pub quarantine: bool,
+
     /// Max parallel pack ops during this sync run (feat-m6-1).
     ///
     /// Semantics:
