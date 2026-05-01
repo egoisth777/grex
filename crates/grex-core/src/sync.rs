@@ -50,7 +50,9 @@ use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, S
 use crate::pack::{Action, PackValidationError};
 use crate::plugin::{PackTypeRegistry, Registry};
 use crate::scheduler::Scheduler;
-use crate::tree::{sync_meta, FsPackLoader, PackGraph, PackNode, SyncMetaOptions, TreeError, Walker};
+use crate::tree::{
+    build_graph, sync_meta, FsPackLoader, PackGraph, PackNode, SyncMetaOptions, TreeError,
+};
 use crate::vars::VarEnv;
 
 /// Inputs to [`run`].
@@ -69,8 +71,16 @@ pub struct SyncOptions {
     /// When `false`, skip plan-phase validators (manifest + graph). Debug
     /// escape hatch; production callers should leave this `true`.
     pub validate: bool,
-    /// Override workspace directory. `None` → the parent pack root itself
-    /// (children resolve as flat siblings of the parent pack root).
+    /// Override workspace directory. `None` → derived from `pack_root`
+    /// (the directory holding `.grex/pack.yaml`).
+    ///
+    /// **v1.2.1 path (iii) semantics**: when `Some`, this path IS the
+    /// canonical meta directory. Children resolve parent-relatively as
+    /// `<workspace>/<child.path>` and `<workspace>/.grex/pack.yaml` is
+    /// where the root manifest is read from. The path MUST exist;
+    /// symlinks are resolved via `fs::canonicalize` to a single
+    /// inode-stable form. Pre-v1.2.1 the override only re-anchored
+    /// children — that legacy split is retired.
     pub workspace: Option<PathBuf>,
     /// Global ref override (`grex sync --ref <sha|branch|tag>`). When
     /// `Some`, every child pack clone/checkout uses this ref instead of
@@ -542,10 +552,15 @@ pub fn run(
     // sees no legacy directory and the function no-ops.
     let workspace_migrations = migrate_legacy_workspace(pack_root);
 
-    // v1.2.1 item 3.b — see `run_sync_meta_precursor` rustdoc.
-    run_sync_meta_precursor(pack_root, opts)?;
+    // v1.2.1 path (iii) — three-stage composition:
+    //   sync_meta(workspace, prune_candidates) — mutate (rayon parallel)
+    //   build_graph(workspace)                 — read-only graph
+    //   run_actions(graph)                     — consume graph
+    // `Walker::walk` is retired from the prod path; the symbol is kept
+    // for test-suite compat. See `crates/grex-core/src/tree/graph_build.rs`.
+    run_sync_meta(&workspace, opts)?;
     let graph =
-        walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
+        build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
     log_force_flag(opts.force);
 
@@ -678,22 +693,28 @@ fn log_force_flag(force: bool) {
     }
 }
 
-/// v1.2.1 item 3.b — drive the v1.2.0 [`sync_meta`] walker as a
-/// precursor pass before the legacy [`Walker::walk`] graph build.
+/// v1.2.1 path (iii) — drive the v1.2.0 [`sync_meta`] walker over the
+/// resolved canonical workspace.
 ///
-/// Surfaces v1.2.0 walker semantics (5-way `DestClass`, distributed
-/// lockfile, recursive consent, TOCTOU `BoundedDir`, force-prune) plus
-/// the v1.2.1 rayon parallel sibling sync to end users. Aggregates
-/// every recoverable error returned in [`SyncMetaReport::errors`] into
-/// a single [`SyncError::Tree`] so the caller observes a fail-loud
-/// summary rather than a silent partial success.
+/// This is the SOLE mutating pass in `sync::run`: clones, fetches,
+/// prune dispatches, distributed-lockfile reads, and TOCTOU `BoundedDir`
+/// opens all happen here. The subsequent [`build_and_validate_graph`]
+/// pass is read-only against the disk state this fn leaves behind.
 ///
-/// Gated on `opts.workspace.is_none()`: `sync_meta` is parent-relative
-/// (children land at `<meta_dir>/<child.path>`) and does not honour
-/// the `--workspace` override, so callers who set `--workspace`
-/// continue to drive only the legacy [`Walker::walk`] (which puts
-/// children under the override directory). Skipping the precursor on
-/// the override path preserves existing override semantics.
+/// `prune_candidates` is computed from the per-meta lockfile orphans:
+/// every entry in `<workspace>/.grex/grex.lock.jsonl` whose `path` no
+/// longer appears in the live root manifest's `children[]` is fed into
+/// Phase 2 for dispatch (with `--force-prune` / `--force-prune-with-ignored`
+/// overrides honoured by the consent walk). This closes the
+/// "prune-inert" gap from the previous wiring, where `sync::run` passed
+/// `&[]` and `--force-prune` was a CLI flag with no behavioural reach.
+///
+/// `--workspace` semantics: the canonical `workspace` argument is what
+/// `sync_meta` uses as its `meta_dir`. Children land at
+/// `<workspace>/<child.path>` — the v1.2.0 parent-relative model. Prior
+/// to v1.2.1, callers passing `--workspace` skipped the precursor
+/// entirely; that bypass is retired here so override callers see the
+/// same v1.2.0 semantics as the default-cwd path.
 ///
 /// `SyncOptions::parallel` mapping (mirrors [`SyncMetaOptions::parallel`]
 /// with the documented `Some(0)` carve-out):
@@ -704,19 +725,9 @@ fn log_force_flag(force: bool) {
 ///   clamped to `1` inside `build_pool`, which is not what callers
 ///   asking for unbounded want).
 /// * `Some(n)` for `n >= 1` → `SyncMetaOptions::parallel = Some(n)`.
-///
-/// `prune_candidates` is left as `&[]` here — the distributed-lockfile
-/// orphan-read side is owned by Stage 1.h's separate migrator surface,
-/// not by `sync::run`. Phase 2's prune dispatch therefore stays inert
-/// in this wiring; callers who need orphan-prune semantics drive it
-/// through the migrator entry point directly.
-fn run_sync_meta_precursor(pack_root: &Path, opts: &SyncOptions) -> Result<(), SyncError> {
-    if opts.workspace.is_some() {
-        return Ok(());
-    }
+fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> {
     let loader = FsPackLoader::new();
     let backend = GixBackend::new();
-    let meta_dir = pack_root_dir(pack_root);
     let parallel = match opts.parallel {
         None | Some(0) => None,
         Some(n) => Some(n),
@@ -729,27 +740,77 @@ fn run_sync_meta_precursor(pack_root: &Path, opts: &SyncOptions) -> Result<(), S
         force_prune_with_ignored: opts.force_prune_with_ignored,
         parallel,
     };
-    let report = sync_meta(&meta_dir, &backend, &loader, &meta_opts, &[])?;
+    let prune_candidates = compute_prune_candidates(workspace, &loader);
+    let report = sync_meta(workspace, &backend, &loader, &meta_opts, &prune_candidates)?;
     if let Some(first) = report.errors.into_iter().next() {
         return Err(SyncError::Tree(first));
     }
     Ok(())
 }
 
-/// Walk the pack tree rooted at `pack_root`, optionally running the
-/// plan-phase validators. Extracted so [`run`] stays under the
-/// workspace's 50-LOC per-function lint threshold.
-fn walk_and_validate(
-    pack_root: &Path,
+/// v1.2.1 path (iii) — orphan-prune candidate computation.
+///
+/// Reads `<workspace>/.grex/grex.lock.jsonl` and the root manifest;
+/// returns every lockfile entry path that no longer matches a declared
+/// child in `manifest.children`. Empty in three cases:
+///
+/// * No lockfile (fresh workspace, never synced).
+/// * No manifest at `<workspace>/.grex/pack.yaml` (single-node tree —
+///   `sync_meta` will surface its own diagnostic).
+/// * Lockfile entries are all still declared (steady-state sync).
+///
+/// Lockfile read errors are tolerated as `Vec::new()`: the prune pass
+/// is opportunistic, and a corrupt lockfile is the migrator's concern,
+/// not the prune dispatcher's. Manifest read errors are similarly
+/// tolerated — `sync_meta` will fail loudly on the same condition,
+/// giving the operator a single unambiguous error surface.
+fn compute_prune_candidates(workspace: &Path, loader: &dyn crate::tree::PackLoader) -> Vec<PathBuf> {
+    use crate::lockfile::read_meta_lockfile;
+    let entries = match read_meta_lockfile(workspace) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let manifest = match loader.load(workspace) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    let declared: std::collections::HashSet<String> =
+        manifest.children.iter().map(crate::pack::ChildRef::effective_path).collect();
+    entries
+        .into_iter()
+        .filter(|e| !declared.contains(&e.path))
+        .map(|e| PathBuf::from(e.path))
+        .collect()
+}
+
+/// v1.2.1 path (iii) — read-only graph build + plan-phase validation.
+///
+/// Builds the [`PackGraph`] from the on-disk meta tree rooted at
+/// `workspace`. Replaces the legacy `walk_and_validate` (which used
+/// [`crate::tree::Walker::walk`] and re-issued every clone/fetch as a
+/// no-op probe) with the v1.2.1 split:
+///
+/// * The mutating half ran in [`run_sync_meta`] — all clones, fetches,
+///   prune dispatches, and TOCTOU `BoundedDir` opens already happened.
+/// * THIS pass is strictly READ-ONLY. It walks the manifest tree
+///   parent-relatively (matching what `sync_meta` placed on disk),
+///   loads each child's `pack.yaml` (or synthesises a plain-git leaf),
+///   probes `head_sha`, and produces the [`PackGraph`] consumed by
+///   [`run_actions`].
+///
+/// Plan-phase validators run against the assembled graph when
+/// `validate` is true.
+fn build_and_validate_graph(
     workspace: &Path,
     validate: bool,
     ref_override: Option<&str>,
 ) -> Result<PackGraph, SyncError> {
     let loader = FsPackLoader::new();
     let backend = GixBackend::new();
-    let walker = Walker::new(&loader, &backend, workspace.to_path_buf())
-        .with_ref_override(ref_override.map(str::to_string));
-    let graph = walker.walk(pack_root)?;
+    let graph = build_graph(workspace, &backend, &loader, ref_override)?;
     if validate {
         validate_graph(&graph)?;
     }
@@ -1017,18 +1078,68 @@ fn cleanup_legacy_workspace_root(legacy_root: &Path) {
 /// `children[].path` is a bare name — lives in the pack-spec
 /// "Validation rules" section (`man/concepts/pack-spec.md` /
 /// `grex-doc/src/concepts/pack-spec.md`).
-fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> PathBuf {
-    if let Some(p) = override_ {
-        return p.to_path_buf();
+/// v1.2.1 path (iii) — resolve the workspace anchor with canonical
+/// symlink resolution.
+///
+/// Resolution rules:
+/// * `override_ = None` ⇒ derive workspace from `pack_root_dir(pack_root)`.
+///   No canonicalize on this branch — the pack-root path was supplied
+///   directly by the caller and may legitimately reference a not-yet-real
+///   directory (e.g. integration fixtures that lazily materialise the
+///   pack root).
+/// * `override_ = Some(path)`:
+///   1. **Must-exist** check. A `--workspace` override pointing at a
+///      non-existent directory is a fail-fast error (we won't silently
+///      `mkdir -p` someone else's typo).
+///   2. **Canonicalise.** Resolve symlinks to a real path. This is the
+///      anchor every downstream pass (`sync_meta`, `build_graph`, the
+///      lockfile reads, the TOCTOU `BoundedDir` opens) hangs off — they
+///      MUST agree on a single inode-stable string.
+///   3. **Log when input != canonical.** Surfaces symlink resolution to
+///      operators so they can correlate workspace-busy diagnostics with
+///      what the OS actually opened.
+fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> Result<PathBuf, SyncError> {
+    let Some(input) = override_ else {
+        return Ok(pack_root_dir(pack_root));
+    };
+    if !input.exists() {
+        return Err(SyncError::Validation {
+            errors: vec![PackValidationError::DependsOnUnsatisfied {
+                pack: "<workspace>".into(),
+                required: format!("--workspace {}: directory does not exist", input.display()),
+            }],
+        });
     }
-    pack_root_dir(pack_root)
+    let canonical = match input.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(SyncError::Validation {
+                errors: vec![PackValidationError::DependsOnUnsatisfied {
+                    pack: "<workspace>".into(),
+                    required: format!(
+                        "--workspace {}: canonicalize failed: {e}",
+                        input.display()
+                    ),
+                }],
+            });
+        }
+    };
+    if canonical != input {
+        tracing::info!(
+            target: "grex::sync",
+            "workspace: {} → {}",
+            input.display(),
+            canonical.display(),
+        );
+    }
+    Ok(canonical)
 }
 
 /// Resolve the workspace, ensure the directory exists, and run the v1→v2
 /// event-log migration. Extracted so [`run`] and [`teardown`] stay under
 /// the workspace's 50-LOC per-function lint threshold.
 fn prepare_workspace(pack_root: &Path, opts: &SyncOptions) -> Result<PathBuf, SyncError> {
-    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref());
+    let workspace = resolve_workspace(pack_root, opts.workspace.as_deref())?;
     ensure_workspace_dir(&workspace)?;
     crate::manifest::ensure_event_log_migrated(&workspace).map_err(SyncError::EventLogMigration)?;
     Ok(workspace)
@@ -1928,8 +2039,11 @@ pub fn teardown(
         Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
     };
 
+    // v1.2.1 path (iii) — teardown is read-only against the existing
+    // disk state (no clones / fetches / prunes). It only needs the
+    // graph build pass; `sync_meta` is intentionally skipped here.
     let graph =
-        walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
+        build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
 
     let mut report = SyncReport {
@@ -2407,7 +2521,7 @@ mod sync_options_v1_2_0_tests {
     //!
     //! The fields themselves are *dormant placeholders* at 1.m scope —
     //! no behavior wiring lives in this stage.
-    use super::SyncOptions;
+    use super::{pack_root_dir, resolve_workspace, SyncError, SyncOptions};
 
     /// `force_prune` defaults to `false` so existing call sites refuse
     /// to drop dirty trees (v1.1.1 behavior).
@@ -2497,5 +2611,55 @@ mod sync_options_v1_2_0_tests {
         assert_eq!(cloned.migrate_lockfile, opts.migrate_lockfile);
         assert_eq!(cloned.recurse, opts.recurse);
         assert_eq!(cloned.max_depth, opts.max_depth);
+    }
+
+    // ------------------------------------------------------------------
+    // v1.2.1 path (iii) — `resolve_workspace` canonicalisation tests
+    // ------------------------------------------------------------------
+
+    /// `--workspace` pointing at a non-existent directory must fail
+    /// fast with a Validation error citing the offending path. We
+    /// explicitly do NOT mkdir-p someone else's typo — `--workspace`
+    /// is an opt-in operator decision and a missing target is always
+    /// a configuration mistake.
+    #[test]
+    fn test_resolve_workspace_errors_on_missing_override_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        let pack_root = tmp.path();
+        let err = resolve_workspace(pack_root, Some(missing.as_path())).expect_err("must fail");
+        match err {
+            SyncError::Validation { errors } => {
+                assert!(errors.iter().any(|e| format!("{e}").contains("does not exist")));
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    /// `--workspace = None` is the default cwd-meta path — no
+    /// canonicalize, no fail-on-missing. The pack-root path is
+    /// returned verbatim (post `pack_root_dir` normalisation).
+    #[test]
+    fn test_resolve_workspace_none_returns_pack_root_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pack_root = tmp.path().join("nonexistent-yet");
+        let resolved = resolve_workspace(&pack_root, None).expect("None override is always Ok");
+        assert_eq!(resolved, pack_root_dir(&pack_root));
+    }
+
+    /// `--workspace = Some(<existing>)` returns the canonicalised path.
+    /// On Windows this typically inserts the `\\?\` long-path prefix;
+    /// on Unix it resolves any `..` / symlink components. Either way
+    /// the returned path is what every downstream pass anchors against.
+    #[test]
+    fn test_resolve_workspace_canonicalises_existing_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real-ws");
+        std::fs::create_dir_all(&real).unwrap();
+        let pack_root = tmp.path();
+        let resolved =
+            resolve_workspace(pack_root, Some(real.as_path())).expect("existing dir must resolve");
+        let canonical = real.canonicalize().unwrap();
+        assert_eq!(resolved, canonical);
     }
 }
