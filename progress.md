@@ -42,7 +42,7 @@ v1.2.1 PATCH complete. All 6 items shipped + (iii) wiring path. 911 cargo tests 
 - Stale grex-doc/src/concepts/manifest.md (still says grex.jsonl, not events.jsonl) — v1.2.2 doc-debt sweep
 - 2 #[ignore]'d tests to investigate or delete: gitignore_multi_pack_coexistence_and_selective_teardown, e2e_cycle_aborts
 
-**Branch state:** feat/v1.2.1 at <release-commit-sha>, 14 commits ahead of main. Local tag v1.2.1 created. NOT pushed. NOT cargo-published.
+**Branch state:** feat/v1.2.1 at ee628d7, 14 commits ahead of main. Local tag v1.2.1 created. NOT pushed. NOT cargo-published.
 
 **Next session:** PR feat/v1.2.1 → main, merge, push tag v1.2.1, optional cargo publish (4 crates). Then start v1.2.2 with sync_meta cycle detection as first item.
 
