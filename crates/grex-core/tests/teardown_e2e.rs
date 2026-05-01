@@ -100,8 +100,8 @@ fn install_then_teardown_declarative_pack_removes_materialised_dir() {
     );
     let root = tmp_path.join("root");
     write_pack(&root, &yaml);
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
 
     let rep = run(&root, &options(workspace.clone())).expect("install ok");
     assert!(rep.halted.is_none(), "halted: {:?}", rep.halted);
@@ -182,8 +182,8 @@ fn scripted_pack_install_then_teardown_runs_both_hooks() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let root = tmp_path.join("root");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     let hooks = root.join(".grex").join("hooks");
     fs::create_dir_all(&hooks).unwrap();
     let sentinel = workspace.join("scripted.sentinel");
@@ -213,13 +213,14 @@ fn scripted_pack_install_then_teardown_runs_both_hooks() {
 fn gitignore_upsert_on_install_writes_managed_block() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     let root = tmp_path.join("root");
     write_pack(
         &root,
         "schema_version: \"1\"\nname: gipack\ntype: declarative\nx-gitignore:\n  - target/\n  - \"*.log\"\n",
     );
+    // v1.2.1 path (iii): workspace IS the meta_dir; gitignore lands at
+    // `<meta_dir>/.gitignore`.
+    let workspace = root.clone();
 
     run(&root, &options(workspace.clone())).expect("install ok");
     let gi = fs::read_to_string(workspace.join(".gitignore")).expect(".gitignore must exist");
@@ -240,13 +241,13 @@ fn gitignore_upsert_on_install_writes_managed_block() {
 fn gitignore_applied_once_per_install() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     let root = tmp_path.join("root");
     write_pack(
         &root,
         "schema_version: \"1\"\nname: once\ntype: declarative\nx-gitignore:\n  - once/\n",
     );
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
 
     run(&root, &options(workspace.clone())).expect("install ok");
     let gi = fs::read_to_string(workspace.join(".gitignore")).unwrap();
@@ -264,17 +265,16 @@ fn gitignore_applied_once_per_install() {
 fn gitignore_teardown_removes_block_preserves_user_content() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
-    // Seed user-authored content.
-    let user_line = "user-authored-pattern/\n";
-    fs::write(workspace.join(".gitignore"), user_line).unwrap();
-
     let root = tmp_path.join("root");
     write_pack(
         &root,
         "schema_version: \"1\"\nname: gip2\ntype: declarative\nx-gitignore:\n  - managed/\n",
     );
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
+    // Seed user-authored content into the meta dir.
+    let user_line = "user-authored-pattern/\n";
+    fs::write(workspace.join(".gitignore"), user_line).unwrap();
 
     run(&root, &options(workspace.clone())).expect("install ok");
     let after_install = fs::read_to_string(workspace.join(".gitignore")).unwrap();
@@ -291,8 +291,23 @@ fn gitignore_teardown_removes_block_preserves_user_content() {
 
 /// Two packs with separate `x-gitignore` extensions yield two managed
 /// blocks. Tearing down one preserves the other's block verbatim.
+///
+/// v1.2.1 path (iii) NOTE: this test asserted that two distinct packs
+/// (`root-a` and `root-b`) could share the SAME `--workspace` and produce
+/// per-pack managed `.gitignore` blocks under one workspace `.gitignore`.
+/// Under the new resolution model the workspace IS the meta_dir, so two
+/// distinct packs cannot share one workspace by construction (each has
+/// its own `.grex/pack.yaml`). The legacy multi-pack-per-workspace
+/// coexistence semantic was retired with the prod `Walker::walk` removal.
+/// Per-pack gitignore upsert is still covered by the single-pack tests
+/// above; the cross-pack interaction in one shared workspace is no longer
+/// expressible.
+#[ignore = "v1.2.1 path (iii): workspace IS the meta_dir; multi-pack-per-workspace coexistence is retired"]
 #[test]
 fn gitignore_multi_pack_coexistence_and_selective_teardown() {
+    // Body kept as historical reference. The assertions below would now
+    // fail because run(root_b, --workspace=ws) reads `ws/.grex/pack.yaml`
+    // (which is `packa`, not `packb`).
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let workspace = tmp_path.join("ws");
@@ -336,9 +351,9 @@ fn teardown_is_idempotent() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let target = tmp_path.join("idem-target");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     let root = tmp_path.join("root");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     write_pack(
         &root,
         &format!(
@@ -369,9 +384,9 @@ fn auto_reverse_deletes_in_reverse_order() {
     let tmp_path = tmp.path();
     let outer = tmp_path.join("outer");
     let inner = outer.join("inner");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     let root = tmp_path.join("root");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     write_pack(
         &root,
         &format!(
@@ -404,10 +419,10 @@ fn declarative_autoreverse_inverts_symlink() {
     let tmp_path = tmp.path();
     let src_dir = tmp_path.join("real");
     let link = tmp_path.join("link");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
 
     let root = tmp_path.join("root");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     write_pack(
         &root,
         &format!(
@@ -436,8 +451,6 @@ fn declarative_autoreverse_recurses_into_when() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let inner = tmp_path.join("gated-dir");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     let os_tok = if cfg!(target_os = "windows") {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -447,6 +460,8 @@ fn declarative_autoreverse_recurses_into_when() {
     };
 
     let root = tmp_path.join("root");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     write_pack(
         &root,
         &format!(
@@ -477,12 +492,12 @@ fn explicit_teardown_overrides_auto_reverse() {
     let tmp_path = tmp.path();
     let keep = tmp_path.join("keep");
     let sentinel = tmp_path.join("sentinel");
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
     // Pre-create `sentinel` so `rmdir` on it has something to remove.
     fs::create_dir_all(&sentinel).unwrap();
 
     let root = tmp_path.join("root");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
     write_pack(
         &root,
         &format!(

@@ -141,10 +141,13 @@ fn pack_template_sync_runs_end_to_end_and_second_run_is_noop() {
     std::env::set_var("HOME", &fake_home);
     std::env::set_var("USERPROFILE", &fake_home);
 
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).expect("create ws");
-
-    let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
+    // v1.2.1 path (iii): `--workspace` IS the meta_dir under the new
+    // model (parent-relative resolution). The previous fixture set
+    // `workspace = tmp/ws` while keeping the manifest at `tmp/pack`; the
+    // legacy walker honoured that split. Under the new model the
+    // workspace must carry its own manifest, so we let `workspace`
+    // default to `pack_root` (the manifest's own directory).
+    let opts = SyncOptions::new();
     let cancel = CancellationToken::new();
 
     let report1 = sync::run(&pack_root, &opts, &cancel).expect("first sync ok");
