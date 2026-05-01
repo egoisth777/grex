@@ -50,7 +50,7 @@ use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, S
 use crate::pack::{Action, PackValidationError};
 use crate::plugin::{PackTypeRegistry, Registry};
 use crate::scheduler::Scheduler;
-use crate::tree::{FsPackLoader, PackGraph, PackNode, TreeError, Walker};
+use crate::tree::{sync_meta, FsPackLoader, PackGraph, PackNode, SyncMetaOptions, TreeError, Walker};
 use crate::vars::VarEnv;
 
 /// Inputs to [`run`].
@@ -542,6 +542,8 @@ pub fn run(
     // sees no legacy directory and the function no-ops.
     let workspace_migrations = migrate_legacy_workspace(pack_root);
 
+    // v1.2.1 item 3.b — see `run_sync_meta_precursor` rustdoc.
+    run_sync_meta_precursor(pack_root, opts)?;
     let graph =
         walk_and_validate(pack_root, &workspace, opts.validate, opts.ref_override.as_deref())?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
@@ -674,6 +676,64 @@ fn log_force_flag(force: bool) {
             "--force active: bypassing lockfile skip-on-hash short-circuit"
         );
     }
+}
+
+/// v1.2.1 item 3.b — drive the v1.2.0 [`sync_meta`] walker as a
+/// precursor pass before the legacy [`Walker::walk`] graph build.
+///
+/// Surfaces v1.2.0 walker semantics (5-way `DestClass`, distributed
+/// lockfile, recursive consent, TOCTOU `BoundedDir`, force-prune) plus
+/// the v1.2.1 rayon parallel sibling sync to end users. Aggregates
+/// every recoverable error returned in [`SyncMetaReport::errors`] into
+/// a single [`SyncError::Tree`] so the caller observes a fail-loud
+/// summary rather than a silent partial success.
+///
+/// Gated on `opts.workspace.is_none()`: `sync_meta` is parent-relative
+/// (children land at `<meta_dir>/<child.path>`) and does not honour
+/// the `--workspace` override, so callers who set `--workspace`
+/// continue to drive only the legacy [`Walker::walk`] (which puts
+/// children under the override directory). Skipping the precursor on
+/// the override path preserves existing override semantics.
+///
+/// `SyncOptions::parallel` mapping (mirrors [`SyncMetaOptions::parallel`]
+/// with the documented `Some(0)` carve-out):
+/// * `None` → `SyncMetaOptions::parallel = None` (rayon default =
+///   `num_cpus::get()`).
+/// * `Some(0)` → `SyncMetaOptions::parallel = None` (the CLI sentinel
+///   for "unbounded" maps to rayon's default; `Some(0)` would be
+///   clamped to `1` inside `build_pool`, which is not what callers
+///   asking for unbounded want).
+/// * `Some(n)` for `n >= 1` → `SyncMetaOptions::parallel = Some(n)`.
+///
+/// `prune_candidates` is left as `&[]` here — the distributed-lockfile
+/// orphan-read side is owned by Stage 1.h's separate migrator surface,
+/// not by `sync::run`. Phase 2's prune dispatch therefore stays inert
+/// in this wiring; callers who need orphan-prune semantics drive it
+/// through the migrator entry point directly.
+fn run_sync_meta_precursor(pack_root: &Path, opts: &SyncOptions) -> Result<(), SyncError> {
+    if opts.workspace.is_some() {
+        return Ok(());
+    }
+    let loader = FsPackLoader::new();
+    let backend = GixBackend::new();
+    let meta_dir = pack_root_dir(pack_root);
+    let parallel = match opts.parallel {
+        None | Some(0) => None,
+        Some(n) => Some(n),
+    };
+    let meta_opts = SyncMetaOptions {
+        ref_override: opts.ref_override.clone(),
+        recurse: opts.recurse,
+        max_depth: opts.max_depth,
+        force_prune: opts.force_prune,
+        force_prune_with_ignored: opts.force_prune_with_ignored,
+        parallel,
+    };
+    let report = sync_meta(&meta_dir, &backend, &loader, &meta_opts, &[])?;
+    if let Some(first) = report.errors.into_iter().next() {
+        return Err(SyncError::Tree(first));
+    }
+    Ok(())
 }
 
 /// Walk the pack tree rooted at `pack_root`, optionally running the
