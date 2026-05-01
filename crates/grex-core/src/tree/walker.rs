@@ -45,6 +45,15 @@ use super::loader::PackLoader;
 ///
 /// The walker owns no state across calls: each invocation of [`Walker::walk`]
 /// produces a fresh [`PackGraph`] and leaves no footprint.
+///
+/// **Status (v1.2.1, path iii)**: retired from the production sync
+/// orchestrator. `sync::run` now composes [`sync_meta`] (mutate) →
+/// [`super::graph_build::build_graph`] (read-only) → `run_actions` instead
+/// of issuing clones+fetches inside the graph build. The `Walker` symbol
+/// is kept for downstream test-suite compatibility (22 fixture call sites
+/// in `crates/grex-core/tests/tree_walk.rs`); new code SHOULD NOT add
+/// production call sites.
+#[doc(hidden)]
 pub struct Walker<'a> {
     loader: &'a dyn PackLoader,
     backend: &'a dyn GitBackend,

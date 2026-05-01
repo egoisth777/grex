@@ -217,13 +217,23 @@ fn sync_clones_children_into_flat_sibling_slots_on_first_run() {
 }
 
 #[test]
-fn sync_with_workspace_override_routes_children_to_override_dir() {
-    // `--workspace <override>` puts children under <override> instead
-    // of the parent pack root. The flag still accepts an explicit
-    // path post-v1.1.0; only the *default* changed.
+fn sync_with_workspace_override_targets_meta_at_override_dir() {
+    // v1.2.1 path (iii): `--workspace <path>` makes `<path>` the meta
+    // directory itself (sync_meta(meta_dir=<path>)). Children land at
+    // `<path>/<child.path>` parent-relative, and the meta's manifest is
+    // expected to live at `<path>/.grex/pack.yaml`. The legacy v1.1.0
+    // semantics (override routes children only, manifest stays at
+    // pack_root) was retired in v1.2.1 — the orchestrator no longer
+    // calls Walker::walk and there is no longer a global workspace
+    // anchor independent of the root meta.
     let layout = build_layout_no_preclones();
     let override_ws = layout.root.parent().unwrap().join("override-ws");
-    fs::create_dir_all(&override_ws).unwrap();
+    // Mirror the parent meta into the override location so it qualifies
+    // as a meta dir under the new model.
+    fs::create_dir_all(override_ws.join(".grex")).unwrap();
+    let parent_yaml =
+        fs::read_to_string(layout.root.join(".grex").join("pack.yaml")).unwrap();
+    fs::write(override_ws.join(".grex").join("pack.yaml"), parent_yaml).unwrap();
 
     grex()
         .current_dir(&layout.root)
@@ -231,23 +241,23 @@ fn sync_with_workspace_override_routes_children_to_override_dir() {
         .assert()
         .success();
 
-    // Children must land under the override workspace, NOT under the
-    // pack root.
+    // Children land under the override (which IS now the meta dir),
+    // NOT under the original pack root.
     for name in layout.child_names {
         assert!(
             override_ws.join(name).join(".git").is_dir(),
-            "child `{name}` must be cloned into --workspace override `{}`",
+            "child `{name}` must be cloned into --workspace meta `{}`",
             override_ws.display(),
         );
         assert!(
             !layout.root.join(name).exists(),
-            "child `{name}` must NOT appear under pack root when --workspace overrides",
+            "child `{name}` must NOT appear under pack root when --workspace overrides the meta",
         );
     }
-    // Workspace lock lives under the override, not the pack root.
+    // Workspace lock lives under the override (which IS the meta dir).
     assert!(
         override_ws.join(".grex.sync.lock").exists(),
-        "workspace lock must live under the --workspace override",
+        "workspace lock must live under the --workspace meta dir",
     );
 }
 
