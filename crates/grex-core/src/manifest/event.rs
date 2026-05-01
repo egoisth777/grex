@@ -157,6 +157,60 @@ pub enum Event {
         /// the base `--force-prune` was set.
         force_prune_with_ignored: bool,
     },
+    /// v1.2.1 Item 5b — `--quarantine` lifecycle: append-and-fsync'd
+    /// BEFORE any byte of the recursive snapshot is written. The audit
+    /// event must precede the snapshot per Lean theorem
+    /// `quarantine_snapshot_precedes_delete` (proof/Grex/Quarantine.lean):
+    /// `delete_licensed` only holds when this entry is durable in the
+    /// log. If the audit append fails the prune aborts with no FS
+    /// mutation; if the subsequent snapshot fails the prune still
+    /// aborts (no `unlink(dest)`) and a [`Event::QuarantineFailed`]
+    /// follow-up is logged.
+    QuarantineStart {
+        /// Event timestamp (matches the `ts` segment in `trash_path`).
+        ts: DateTime<Utc>,
+        /// Absolute path of the dest about to be snapshot-then-pruned
+        /// (display form).
+        src: String,
+        /// Absolute path of the trash bucket the snapshot will be
+        /// copied to: `<meta>/.grex/trash/<ISO8601>/<basename>/`.
+        trash: String,
+    },
+    /// v1.2.1 Item 5b — `--quarantine` lifecycle: appended after the
+    /// snapshot succeeded AND `unlink(dest)` succeeded. Pairs 1:1 with
+    /// a preceding [`Event::QuarantineStart`]. Absence of this event
+    /// after a Start is a forensic signal: either the snapshot or the
+    /// unlink failed (look for [`Event::QuarantineFailed`] or a
+    /// partial trash dir at `trash`).
+    QuarantineComplete {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Absolute path of the dest that was successfully pruned
+        /// after snapshot.
+        src: String,
+        /// Absolute path of the snapshot bucket holding the recursive
+        /// copy of the pre-prune subtree.
+        trash: String,
+    },
+    /// v1.2.1 Item 5b — `--quarantine` lifecycle: appended when the
+    /// recursive snapshot or the audited unlink failed AFTER the
+    /// preceding [`Event::QuarantineStart`] entry was already on disk.
+    /// The original `src` MUST remain intact — the unlink either never
+    /// fired (snapshot failure) or is the failure being reported here.
+    /// A partial trash dir may remain at `trash` for forensics.
+    QuarantineFailed {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Absolute path of the dest the prune attempted (and aborted
+        /// on).
+        src: String,
+        /// Absolute path of the trash bucket. May exist as a partial
+        /// snapshot for operator inspection; never auto-cleaned.
+        trash: String,
+        /// Truncated failure message (display form of the underlying
+        /// I/O error). Bounded to keep one event on one line.
+        error: String,
+    },
 }
 
 /// Max bytes retained in [`Event::ActionHalted::error_summary`].
@@ -184,6 +238,12 @@ impl Event {
             | Event::ActionCompleted { pack, .. }
             | Event::ActionHalted { pack, .. } => pack,
             Event::ForcePruneExecuted { path, .. } => path,
+            // v1.2.1 Item 5b — quarantine variants carry the dest as
+            // their identifier (`src`); same audit-only pattern as
+            // `ForcePruneExecuted` (no owning pack id).
+            Event::QuarantineStart { src, .. }
+            | Event::QuarantineComplete { src, .. }
+            | Event::QuarantineFailed { src, .. } => src,
         }
     }
 
@@ -197,7 +257,10 @@ impl Event {
             | Event::ActionStarted { ts, .. }
             | Event::ActionCompleted { ts, .. }
             | Event::ActionHalted { ts, .. }
-            | Event::ForcePruneExecuted { ts, .. } => *ts,
+            | Event::ForcePruneExecuted { ts, .. }
+            | Event::QuarantineStart { ts, .. }
+            | Event::QuarantineComplete { ts, .. }
+            | Event::QuarantineFailed { ts, .. } => *ts,
         }
     }
 }

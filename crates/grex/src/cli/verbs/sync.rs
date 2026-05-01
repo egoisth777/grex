@@ -48,6 +48,22 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
     };
     let dry_run = args.dry_run || global.dry_run;
     let only_patterns = if args.only.is_empty() { None } else { Some(args.only.clone()) };
+
+    // v1.2.1 Item 5b — `--quarantine` only applies when an override
+    // flag is also set. Reject the combination at the CLI boundary so
+    // the operator sees a clear error instead of `--quarantine` being
+    // a silent no-op (Phase 2 wouldn't enter the override path at all
+    // without a `force_prune*` flag, so the snapshot would never fire).
+    if args.quarantine && !(args.force_prune || args.force_prune_with_ignored) {
+        let msg = "--quarantine requires --force-prune or --force-prune-with-ignored";
+        if global.json {
+            emit_json_error("usage", msg, "sync");
+        } else {
+            eprintln!("grex sync: {msg}");
+        }
+        std::process::exit(2);
+    }
+
     let opts = SyncOptions::new()
         .with_dry_run(dry_run)
         .with_validate(!args.no_validate)
@@ -56,7 +72,8 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
         .with_only_patterns(only_patterns)
         .with_force(args.force)
         .with_force_prune(args.force_prune)
-        .with_force_prune_with_ignored(args.force_prune_with_ignored);
+        .with_force_prune_with_ignored(args.force_prune_with_ignored)
+        .with_quarantine(args.quarantine);
     match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::UsageError => std::process::exit(2),

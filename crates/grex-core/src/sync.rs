@@ -120,6 +120,21 @@ pub struct SyncOptions {
     /// ignored content. Hard override — the strongest level. Default
     /// `false` preserves v1.1.1 behavior.
     pub force_prune_with_ignored: bool,
+    /// v1.2.1 Item 5b — when `true` AND `force_prune` (or
+    /// `force_prune_with_ignored`) is set, divert Phase 2 prunes
+    /// through the snapshot-then-unlink quarantine pipeline. The
+    /// dest's full subtree is recursively copied to
+    /// `<workspace>/.grex/trash/<ISO8601>/<basename>/` BEFORE
+    /// `unlink(dest)` fires. Snapshot or audit-fsync failure aborts
+    /// the prune (no unlink). Lean theorem
+    /// `quarantine_snapshot_precedes_delete` proves the safety
+    /// contract. Default `false` preserves v1.2.0 direct-unlink
+    /// behavior. Has no effect unless one of the `force_prune*`
+    /// flags is also set (the CLI enforces this via
+    /// `requires = "force_prune"`; library callers who set this
+    /// with neither flag get a no-op since Phase 2 will not enter
+    /// the override path at all).
+    pub quarantine: bool,
     /// v1.2.0 Stage 1.h opt-in — when `true`, the walker rewrites a
     /// legacy v1.1.1 lockfile in place to the v1.2.0 shape. When
     /// `false` (default), the walker errors on the legacy shape so
@@ -151,6 +166,7 @@ impl Default for SyncOptions {
             // its corresponding walker stage wires it.
             force_prune: false,
             force_prune_with_ignored: false,
+            quarantine: false,
             migrate_lockfile: false,
             recurse: true,
             max_depth: None,
@@ -250,6 +266,16 @@ impl SyncOptions {
     #[must_use]
     pub fn with_force_prune_with_ignored(mut self, force_prune_with_ignored: bool) -> Self {
         self.force_prune_with_ignored = force_prune_with_ignored;
+        self
+    }
+
+    /// Set `quarantine` (`--quarantine`). See
+    /// [`SyncOptions::quarantine`] for the snapshot-before-delete
+    /// contract. Has no effect unless [`SyncOptions::force_prune`]
+    /// or [`SyncOptions::force_prune_with_ignored`] is also set.
+    #[must_use]
+    pub fn with_quarantine(mut self, quarantine: bool) -> Self {
+        self.quarantine = quarantine;
         self
     }
 }
@@ -732,6 +758,15 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
         None | Some(0) => None,
         Some(n) => Some(n),
     };
+    // v1.2.1 Item 5b — resolve the quarantine config relative to the
+    // canonical workspace (the same `meta_dir` `sync_meta` runs on).
+    // Trash bucket lives at `<workspace>/.grex/trash/`; audit log at
+    // `<workspace>/.grex/events.jsonl` — same path the existing
+    // `ForcePruneExecuted` event uses.
+    let quarantine = opts.quarantine.then(|| crate::tree::QuarantineConfig {
+        trash_root: workspace.join(".grex").join("trash"),
+        audit_log: crate::manifest::event_log_path(workspace),
+    });
     let meta_opts = SyncMetaOptions {
         ref_override: opts.ref_override.clone(),
         recurse: opts.recurse,
@@ -739,6 +774,7 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
         force_prune: opts.force_prune,
         force_prune_with_ignored: opts.force_prune_with_ignored,
         parallel,
+        quarantine,
     };
     let prune_candidates = compute_prune_candidates(workspace, &loader);
     let report = sync_meta(workspace, &backend, &loader, &meta_opts, &prune_candidates)?;
