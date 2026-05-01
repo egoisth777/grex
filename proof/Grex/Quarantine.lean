@@ -33,19 +33,25 @@ Source-of-truth links:
 
 ## Axioms introduced (v1.2.1 Item 5a)
 
-ONE new data-typed model axiom is added by this module:
+ONE new data-typed model axiom is added by v1.2.1 Item 5a, declared
+in `Grex.Types` (per the CI axiom-location policy which restricts
+`axiom`-keyword declarations to `Grex.Bridge` and `Grex.Types`):
 
-* `snapshot_recursive` *(data axiom — model placeholder)* — pure-model
-  reference to the cap-std recursive copy + audit-fsync primitive.
-  Returns `.ok` iff the entire subtree at `src` was copied to `trash`
-  AND the audit-log entry was fsynced first.
+* `snapshot_recursive` *(data axiom — model placeholder, in `Grex.Types`)*
+  — pure-model reference to the cap-std recursive copy + audit-fsync
+  primitive. Returns `.ok` iff the entire subtree at `src` was copied
+  to `trash` AND the audit-log entry was fsynced first.
 
 Declared `axiom` (rather than `opaque`) because `SnapResult` lacks an
 `Inhabited` default we want to commit to (defaulting to `.ok` would
 mislead readers about the pipeline's outcome). The audit-log commit
 semantics are encoded in the *definition* of `AuditLog.commit` (a
-list-snoc) so no separate axiom is needed — Lean's `simp` + `List`
-lemmas discharge entry-membership facts directly.
+list-snoc, also in `Grex.Types`) so no separate axiom is needed —
+Lean's `simp` + `List` lemmas discharge entry-membership facts
+directly. The data types `AuditKind`, `AuditEntry`, `AuditLog`, and
+`SnapResult` likewise live in `Grex.Types` alongside the axiom; this
+module hosts only the pipeline definition and proofs that consume
+them.
 
 The Rust trust contract for `--quarantine` (Item 5b's
 `crates/grex-core/src/tree/quarantine.rs::snapshot_then_rm`) is
@@ -60,91 +66,17 @@ Rule 7).
 
 namespace Grex.Walker
 
-/-! ## Quarantine model -/
+/-! ## Quarantine model
 
-/-! ### Audit log -/
+The data types (`AuditKind`, `AuditEntry`, `AuditLog`, `SnapResult`),
+the `AuditLog.commit` / `AuditLog.contains` definitions, and the
+`snapshot_recursive` data-axiom all live in `Grex.Types` (per the CI
+policy on `axiom`-keyword location, which restricts such declarations
+to `Grex.Bridge` and `Grex.Types`). This module imports them via
+`import Grex.Types` and hosts only the pipeline definition,
+licensing predicate, and safety theorem. -/
 
-/-- A single audit-log entry for one quarantine event. The `ts` field is
-    the ISO8601 timestamp recorded in `<meta>/.grex/events.jsonl`; the
-    `src` and `trash` fields capture the original dest and the snapshot
-    target. The `kind` field distinguishes the lifecycle stages
-    (`QuarantineStart` → `QuarantineComplete` on success;
-    `QuarantineStart` → `QuarantineFailed` on snapshot failure). -/
-inductive AuditKind : Type where
-  | QuarantineStart
-  | QuarantineComplete
-  | QuarantineFailed
-  deriving DecidableEq, Repr
-
-/-- `AuditEntry` = one row in `<meta>/.grex/events.jsonl`. -/
-structure AuditEntry where
-  kind  : AuditKind
-  ts    : String
-  src   : Path
-  trash : Path
-  deriving Repr
-
-/-- `AuditLog` = the append-only sequence of entries persisted to
-    `<meta>/.grex/events.jsonl`. Order matters (the `Start` → `Complete`
-    pairing is positional). -/
-structure AuditLog where
-  entries : List AuditEntry
-
-/-- Append + fsync model of `AuditLog.commit`. Declared as a definition
-    here (not an axiom) so the pure-model reasoning can compute on it.
-    The real Rust impl performs an `O_APPEND` write followed by an
-    explicit `fsync`; the model collapses both to a list snoc. The
-    derived lemma `audit_commit_contains` below witnesses that the
-    committed entry survives the fsync — discharged by `simp` over
-    list-snoc, no axiom needed. -/
-def AuditLog.commit (a : AuditLog) (e : AuditEntry) : AuditLog :=
-  ⟨a.entries ++ [e]⟩
-
-/-- Membership predicate: `e ∈ a` iff `e` appears in `a.entries`. -/
-def AuditLog.contains (a : AuditLog) (e : AuditEntry) : Prop :=
-  e ∈ a.entries
-
-/-! ### Snapshot result -/
-
-/-- `SnapResult` = the return value of the `snapshot_recursive` model
-    primitive. Two constructors only: `ok` (snapshot copy *and* audit
-    fsync both succeeded) and `err` (any failure — I/O, audit fsync
-    failure, partial copy). The Rust impl emits a richer error variant
-    enum, but the only thing the safety proof cares about is the binary
-    "did we succeed enough to license a delete?". -/
-inductive SnapResult : Type where
-  /-- Snapshot copy completed verbatim AND the `QuarantineStart` audit
-      entry was fsynced BEFORE any byte was copied. -/
-  | ok
-  /-- Snapshot or audit fsync failed; original `dest` MUST remain
-      untouched. -/
-  | err
-  deriving DecidableEq, Repr
-
-/-! ### Bridge axioms (data-typed model placeholders) -/
-
-/-- **Bridge 10 (v1.2.1 Item 5a, data axiom).** The pure-model snapshot
-    primitive. Given `(src, trash, audit_log_pre)`, returns whether the
-    Rust runtime's recursive copy + audit-log fsync both succeeded.
-
-    Declared `axiom` (not `opaque`) because `SnapResult` lacks an
-    `Inhabited` default we want to commit to — making the impl
-    arbitrarily pick `.ok` or `.err` would mislead readers about the
-    pipeline's outcome.
-
-    **Rust contract (forward reference, Item 5b):**
-    `crates/grex-core/src/tree/quarantine.rs::snapshot_then_rm` — the
-    function this axiom binds to. The Rust impl performs:
-
-    1. Append `QuarantineStart` event to `<meta>/.grex/events.jsonl`,
-       then `fsync` the file descriptor.
-    2. `cap-std`-bounded recursive copy from `src` to `trash`.
-    3. Returns `.ok` iff steps 1 + 2 both succeeded; `.err` otherwise.
-
-    **Soundness assumption.** The Rust impl never returns `.ok` without
-    completing both the audit fsync and the recursive copy. A partial
-    copy or unfsynced audit entry is `.err`. -/
-axiom snapshot_recursive : Path → Path → AuditLog → SnapResult
+/-! ### Derived lemmas + pipeline -/
 
 /-- Pure-model lemma: the just-committed entry is in the post-commit
     log. Discharged by list-append semantics — no axiom needed because

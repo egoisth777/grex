@@ -54,8 +54,7 @@ fn try_git_identity(dir: &Path) -> bool {
 
 fn try_git_commit_initial(dir: &Path) -> bool {
     fs::write(dir.join("README"), b"seed\n").unwrap();
-    let add =
-        std::process::Command::new("git").arg("-C").arg(dir).args(["add", "README"]).status();
+    let add = std::process::Command::new("git").arg("-C").arg(dir).args(["add", "README"]).status();
     if !matches!(add, Ok(s) if s.success()) {
         return false;
     }
@@ -192,13 +191,7 @@ fn quarantine_snapshot_is_recursive() {
     fs::write(dest.join("a/b/level-2.txt"), b"middle").unwrap();
     fs::write(dest.join("a/b/c/leaf.bin"), [255u8, 254, 253]).unwrap();
 
-    let res = phase2_prune(
-        &dest,
-        true,
-        false,
-        Some(cfg.audit_log.as_path()),
-        Some(&cfg),
-    );
+    let res = phase2_prune(&dest, true, false, Some(cfg.audit_log.as_path()), Some(&cfg));
     assert!(res.is_ok(), "recursive prune must succeed: {res:?}");
 
     let events = read_all(&cfg.audit_log).expect("audit log readable");
@@ -211,15 +204,9 @@ fn quarantine_snapshot_is_recursive() {
         .expect("QuarantineStart present");
 
     assert_eq!(fs::read(trash_path.join("scratch.txt")).unwrap(), b"dirty bytes");
-    assert_eq!(
-        fs::read(trash_path.join("a/level-1.bin")).unwrap(),
-        vec![9u8, 8, 7, 6, 5]
-    );
+    assert_eq!(fs::read(trash_path.join("a/level-1.bin")).unwrap(), vec![9u8, 8, 7, 6, 5]);
     assert_eq!(fs::read(trash_path.join("a/b/level-2.txt")).unwrap(), b"middle");
-    assert_eq!(
-        fs::read(trash_path.join("a/b/c/leaf.bin")).unwrap(),
-        vec![255u8, 254, 253]
-    );
+    assert_eq!(fs::read(trash_path.join("a/b/c/leaf.bin")).unwrap(), vec![255u8, 254, 253]);
 }
 
 /// Test #4 — snapshot failure aborts the prune. We make the trash
@@ -237,13 +224,7 @@ fn quarantine_snapshot_failure_aborts_prune() {
     // Pre-create the trash root AS A FILE so create_dir_all fails.
     fs::write(&cfg.trash_root, b"i am a file, not a dir").unwrap();
 
-    let res = phase2_prune(
-        &dest,
-        true,
-        false,
-        Some(cfg.audit_log.as_path()),
-        Some(&cfg),
-    );
+    let res = phase2_prune(&dest, true, false, Some(cfg.audit_log.as_path()), Some(&cfg));
     assert!(
         matches!(res, Err(TreeError::DirtyTreeRefusal { .. })),
         "snapshot failure must surface as a refusal: {res:?}",
@@ -275,13 +256,7 @@ fn quarantine_audit_log_modtime_precedes_or_equals_snapshot() {
 
     let Some(dest) = build_meta_with_dirty_child(&meta, "ordered-victim") else { return };
 
-    let res = phase2_prune(
-        &dest,
-        true,
-        false,
-        Some(cfg.audit_log.as_path()),
-        Some(&cfg),
-    );
+    let res = phase2_prune(&dest, true, false, Some(cfg.audit_log.as_path()), Some(&cfg));
     assert!(res.is_ok(), "ordered prune must succeed: {res:?}");
 
     let events = read_all(&cfg.audit_log).expect("audit log readable");

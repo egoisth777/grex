@@ -296,12 +296,7 @@ fn summarise_err(e: &io::Error) -> String {
 /// the audit log. Logged via `tracing::warn!` if the append itself
 /// fails; the underlying `QuarantineError` is still returned to the
 /// caller so the prune surfaces the right outcome.
-fn append_failure_event(
-    cfg: &QuarantineConfig,
-    src: &Path,
-    trash: &Path,
-    err_summary: String,
-) {
+fn append_failure_event(cfg: &QuarantineConfig, src: &Path, trash: &Path, err_summary: String) {
     let event = Event::QuarantineFailed {
         ts: Utc::now(),
         src: src.display().to_string(),
@@ -366,10 +361,8 @@ pub fn snapshot_then_rm(
     // them upstream), but we defend against the impossible case here
     // by treating it as an Unlink failure — most semantically honest
     // bucket since the pipeline never enters Step 1.
-    let basename: PathBuf = dest
-        .file_name()
-        .map(PathBuf::from)
-        .ok_or_else(|| QuarantineError::Unlink {
+    let basename: PathBuf =
+        dest.file_name().map(PathBuf::from).ok_or_else(|| QuarantineError::Unlink {
             dest: dest.to_path_buf(),
             source: io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -388,7 +381,8 @@ pub fn snapshot_then_rm(
     if let Err(e) = fs::create_dir_all(&cfg.trash_root) {
         return Err(QuarantineError::Snapshot { trash: cfg.trash_root.clone(), source: e });
     }
-    let (snapshot_path, timestamp) = match resolve_unique_slot(&cfg.trash_root, &ts_base, &basename) {
+    let (snapshot_path, timestamp) = match resolve_unique_slot(&cfg.trash_root, &ts_base, &basename)
+    {
         Ok(pair) => pair,
         Err(e) => {
             return Err(QuarantineError::Snapshot { trash: cfg.trash_root.clone(), source: e });
@@ -498,21 +492,12 @@ mod tests {
         let result = snapshot_then_rm(&dest, &cfg).expect("quarantine pipeline succeeds");
         assert!(!dest.exists(), "dest must be unlinked after successful pipeline");
         assert!(result.snapshot_path.exists(), "snapshot path must exist");
-        assert_eq!(
-            fs::read(result.snapshot_path.join("a.txt")).unwrap(),
-            b"alpha",
-        );
+        assert_eq!(fs::read(result.snapshot_path.join("a.txt")).unwrap(), b"alpha",);
         assert_eq!(fs::read(result.snapshot_path.join("b.txt")).unwrap(), b"beta");
-        assert_eq!(
-            fs::read(result.snapshot_path.join("c.bin")).unwrap(),
-            vec![0u8, 1, 2, 3, 255],
-        );
+        assert_eq!(fs::read(result.snapshot_path.join("c.bin")).unwrap(), vec![0u8, 1, 2, 3, 255],);
         // Snapshot lives under <meta>/.grex/trash/<ts>/<basename>/
         assert!(result.snapshot_path.starts_with(&cfg.trash_root));
-        assert_eq!(
-            result.snapshot_path.file_name().unwrap(),
-            std::ffi::OsStr::new("victim"),
-        );
+        assert_eq!(result.snapshot_path.file_name().unwrap(), std::ffi::OsStr::new("victim"),);
     }
 
     /// Test #2 — audit log entries: QuarantineStart precedes

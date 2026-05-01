@@ -231,8 +231,7 @@ fn sync_with_workspace_override_targets_meta_at_override_dir() {
     // Mirror the parent meta into the override location so it qualifies
     // as a meta dir under the new model.
     fs::create_dir_all(override_ws.join(".grex")).unwrap();
-    let parent_yaml =
-        fs::read_to_string(layout.root.join(".grex").join("pack.yaml")).unwrap();
+    let parent_yaml = fs::read_to_string(layout.root.join(".grex").join("pack.yaml")).unwrap();
     fs::write(override_ws.join(".grex").join("pack.yaml"), parent_yaml).unwrap();
 
     grex()

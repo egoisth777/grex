@@ -93,18 +93,12 @@ fn doctor_scan_undeclared_finds_untracked_repo() {
         stdout.contains("Found 1 undeclared git repo:"),
         "expected single-repo header in stdout: {stdout}",
     );
-    assert!(
-        stdout.contains("vendor/legacy"),
-        "expected the untracked path in stdout: {stdout}",
-    );
+    assert!(stdout.contains("vendor/legacy"), "expected the untracked path in stdout: {stdout}",);
     assert!(
         stdout.contains("[unknown]"),
         "no remote.origin.url in fixture → expected [unknown] marker: {stdout}",
     );
-    assert!(
-        stdout.contains("To register: grex add"),
-        "expected fix-suggestion footer: {stdout}",
-    );
+    assert!(stdout.contains("To register: grex add"), "expected fix-suggestion footer: {stdout}",);
 }
 
 /// AC #3 — Nested tree with a mix of registered + untracked. `--depth 1`
@@ -137,10 +131,7 @@ fn doctor_scan_undeclared_depth_bounds_scan() {
         .output()
         .expect("spawn grex doctor unbounded");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        stdout.contains("vendor/legacy"),
-        "unbounded scan must find vendor/legacy: {stdout}",
-    );
+    assert!(stdout.contains("vendor/legacy"), "unbounded scan must find vendor/legacy: {stdout}",);
 }
 
 /// AC #4 — `--depth` requires `--scan-undeclared`. Passing `--depth`
@@ -149,11 +140,7 @@ fn doctor_scan_undeclared_depth_bounds_scan() {
 #[test]
 fn doctor_depth_without_scan_flag_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
-    bin()
-        .current_dir(dir.path())
-        .args(["doctor", "--depth", "1"])
-        .assert()
-        .failure();
+    bin().current_dir(dir.path()).args(["doctor", "--depth", "1"]).assert().failure();
 }
 
 /// AC #5 — Without `--scan-undeclared`, the doctor verb runs identically
@@ -170,10 +157,7 @@ fn doctor_default_run_does_not_scan() {
 
     let out = bin().current_dir(dir.path()).arg("doctor").output().expect("spawn doctor");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        !stdout.contains("Scanning"),
-        "default doctor run must not invoke the scan: {stdout}",
-    );
+    assert!(!stdout.contains("Scanning"), "default doctor run must not invoke the scan: {stdout}",);
     assert!(
         !stdout.contains("vendor/legacy"),
         "default doctor run must not list untracked repos in stdout: {stdout}",

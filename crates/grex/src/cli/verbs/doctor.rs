@@ -100,11 +100,7 @@ fn severity_label(s: Severity) -> &'static str {
 fn print_undeclared(workspace: &std::path::Path, depth: Option<usize>, found: &[UndeclaredRepo]) {
     let depth_str = depth.map_or_else(|| "unlimited".to_string(), |d| d.to_string());
     println!();
-    println!(
-        "Scanning {} for undeclared git repos (depth: {})...",
-        workspace.display(),
-        depth_str,
-    );
+    println!("Scanning {} for undeclared git repos (depth: {})...", workspace.display(), depth_str,);
     if found.is_empty() {
         println!("No undeclared git repos found below {}.", workspace.display());
         return;

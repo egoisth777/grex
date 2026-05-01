@@ -76,11 +76,19 @@ impl PackLoader for InMemLoader {
 
 #[derive(Debug, Clone)]
 enum BackendCall {
-    Clone { url: String, dest: PathBuf },
+    Clone {
+        url: String,
+        dest: PathBuf,
+    },
     #[allow(dead_code)]
-    Fetch { dest: PathBuf },
+    Fetch {
+        dest: PathBuf,
+    },
     #[allow(dead_code)]
-    Checkout { dest: PathBuf, r#ref: String },
+    Checkout {
+        dest: PathBuf,
+        r#ref: String,
+    },
 }
 
 struct InMemGit {
@@ -100,12 +108,7 @@ impl GitBackend for InMemGit {
     fn name(&self) -> &'static str {
         "v1_2_1-stress-mock-git"
     }
-    fn clone(
-        &self,
-        url: &str,
-        dest: &Path,
-        _ref: Option<&str>,
-    ) -> Result<ClonedRepo, GitError> {
+    fn clone(&self, url: &str, dest: &Path, _ref: Option<&str>) -> Result<ClonedRepo, GitError> {
         // Materialise a `.git/` so re-runs would classify as PresentDeclared,
         // matching the production GixBackend's post-condition.
         std::fs::create_dir_all(dest.join(".git")).unwrap();
@@ -346,7 +349,9 @@ fn rayon_nested_3_level_correctness_matches_sequential() {
             .calls()
             .iter()
             .filter_map(|c| match c {
-                BackendCall::Fetch { dest } => Some(dest.strip_prefix(&root).ok()?.to_string_lossy().into_owned()),
+                BackendCall::Fetch { dest } => {
+                    Some(dest.strip_prefix(&root).ok()?.to_string_lossy().into_owned())
+                }
                 _ => None,
             })
             .collect();
@@ -381,11 +386,7 @@ fn rayon_parallel_one_is_sequential_equivalent() {
     let meta_dir = tmp.path().to_path_buf();
     let loader = build_fan_out_loader(&meta_dir); // 16-child fan-out
     let backend = InMemGit::new();
-    let opts = SyncMetaOptions {
-        parallel: Some(1),
-        recurse: false,
-        ..SyncMetaOptions::default()
-    };
+    let opts = SyncMetaOptions { parallel: Some(1), recurse: false, ..SyncMetaOptions::default() };
     let _report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
 
     let urls: Vec<String> = backend

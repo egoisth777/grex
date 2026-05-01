@@ -96,10 +96,8 @@ fn walk(
     registered: &BTreeSet<PathBuf>,
     out: &mut Vec<UndeclaredRepo>,
 ) -> Result<(), ScanError> {
-    let entries = std::fs::read_dir(dir).map_err(|source| ScanError::WorkspaceUnreadable {
-        path: dir.to_path_buf(),
-        source,
-    })?;
+    let entries = std::fs::read_dir(dir)
+        .map_err(|source| ScanError::WorkspaceUnreadable { path: dir.to_path_buf(), source })?;
 
     // First pass: detect a `.git/` (dir) or `.git` (file — gitlink) at
     // this level. If present, the containing directory is a git repo.
@@ -145,10 +143,7 @@ fn walk(
         let is_registered = registered.contains(&rel);
         let inside_registered = is_inside_registered(&rel, registered);
         if !is_registered && !inside_registered {
-            out.push(UndeclaredRepo {
-                path: rel,
-                inferred_url: probe_origin_url(dir),
-            });
+            out.push(UndeclaredRepo { path: rel, inferred_url: probe_origin_url(dir) });
         }
         // In all `is_repo` cases (registered, inside-registered, or
         // newly reported) we stop descending. A repo's interior is not
@@ -313,10 +308,7 @@ mod tests {
         fake_repo(&d.path().join("vendor").join("legacy"));
 
         let depth1 = scan_undeclared(d.path(), Some(1)).unwrap();
-        assert!(
-            depth1.is_empty(),
-            "depth=1 must not find vendor/legacy/.git; got: {depth1:?}"
-        );
+        assert!(depth1.is_empty(), "depth=1 must not find vendor/legacy/.git; got: {depth1:?}");
 
         let unbounded = scan_undeclared(d.path(), None).unwrap();
         assert_eq!(unbounded.len(), 1);
@@ -390,9 +382,6 @@ mod tests {
 
         let found = scan_undeclared(d.path(), None).unwrap();
         let paths: Vec<&Path> = found.iter().map(|r| r.path.as_path()).collect();
-        assert_eq!(
-            paths,
-            vec![Path::new("alpha"), Path::new("mango"), Path::new("zebra")],
-        );
+        assert_eq!(paths, vec![Path::new("alpha"), Path::new("mango"), Path::new("zebra")],);
     }
 }

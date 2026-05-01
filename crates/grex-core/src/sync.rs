@@ -3,7 +3,8 @@
 //! Glues the building blocks shipped in slices 1–5b into a single runnable
 //! pipeline:
 //!
-//! 1. Walk a pack tree via [`Walker`] + [`FsPackLoader`] + a `GitBackend`.
+//! 1. Walk a pack tree via [`crate::tree::sync_meta`] +
+//!    [`crate::tree::build_graph`] + [`FsPackLoader`] + a `GitBackend`.
 //! 2. Run plan-phase validators (manifest-level + graph-level).
 //! 3. Execute every action via a pluggable [`ActionExecutor`]
 //!    ([`PlanExecutor`] for dry-run, [`FsExecutor`] for wet-run).
@@ -585,8 +586,7 @@ pub fn run(
     // `Walker::walk` is retired from the prod path; the symbol is kept
     // for test-suite compat. See `crates/grex-core/src/tree/graph_build.rs`.
     run_sync_meta(&workspace, opts)?;
-    let graph =
-        build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
+    let graph = build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
     log_force_flag(opts.force);
 
@@ -800,7 +800,10 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
 /// not the prune dispatcher's. Manifest read errors are similarly
 /// tolerated — `sync_meta` will fail loudly on the same condition,
 /// giving the operator a single unambiguous error surface.
-fn compute_prune_candidates(workspace: &Path, loader: &dyn crate::tree::PackLoader) -> Vec<PathBuf> {
+fn compute_prune_candidates(
+    workspace: &Path,
+    loader: &dyn crate::tree::PackLoader,
+) -> Vec<PathBuf> {
     use crate::lockfile::read_meta_lockfile;
     let entries = match read_meta_lockfile(workspace) {
         Ok(e) => e,
@@ -1152,10 +1155,7 @@ fn resolve_workspace(pack_root: &Path, override_: Option<&Path>) -> Result<PathB
             return Err(SyncError::Validation {
                 errors: vec![PackValidationError::DependsOnUnsatisfied {
                     pack: "<workspace>".into(),
-                    required: format!(
-                        "--workspace {}: canonicalize failed: {e}",
-                        input.display()
-                    ),
+                    required: format!("--workspace {}: canonicalize failed: {e}", input.display()),
                 }],
             });
         }
@@ -2078,8 +2078,7 @@ pub fn teardown(
     // v1.2.1 path (iii) — teardown is read-only against the existing
     // disk state (no clones / fetches / prunes). It only needs the
     // graph build pass; `sync_meta` is intentionally skipped here.
-    let graph =
-        build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
+    let graph = build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
 
     let mut report = SyncReport {
