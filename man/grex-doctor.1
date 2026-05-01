@@ -4,7 +4,7 @@
 .SH NAME
 grex\-doctor \- Run integrity checks
 .SH SYNOPSIS
-\fBgrex\-doctor\fR [\fB\-\-fix\fR] [\fB\-\-lint\-config\fR] [\fB\-\-shallow\fR] [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-doctor\fR [\fB\-\-fix\fR] [\fB\-\-lint\-config\fR] [\fB\-\-shallow\fR] [\fB\-\-scan\-undeclared\fR] [\fB\-\-depth\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
 Run integrity checks
 .SH OPTIONS
@@ -17,6 +17,12 @@ Run the opt\-in config\-lint check (`openspec/config.yaml` + `.omne/cfg/*.md`). 
 .TP
 \fB\-\-shallow\fR \fI<N>\fR
 v1.2.0 Stage 1.j — bound the recursive ManifestTree walk. Omitted: walk every nested meta exhaustively (default). `\-\-shallow 0`: root meta only. `\-\-shallow N`: recurse up to `N` levels of nesting (root is depth 0; depth\-`N` metas are visited but their children are not). The walk is read\-only at every frame
+.TP
+\fB\-\-scan\-undeclared\fR
+v1.2.1 item 4 — opt\-in full\-filesystem scan for `.git/` directories that are not registered in the manifest tree. Read\-only audit; complements the manifest\-driven default walk. Composes with `\-\-shallow` (which bounds the manifest walk). Use `\-\-depth N` to bound the filesystem scan independently
+.TP
+\fB\-\-depth\fR \fI<N>\fR
+v1.2.1 item 4 — bound the `\-\-scan\-undeclared` filesystem walk. Omitted: scan every level under the workspace (default). `\-\-depth 0`: workspace root only. `\-\-depth N`: descend up to `N` directory levels below the workspace root. Has no effect unless `\-\-scan\-undeclared` is also set
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

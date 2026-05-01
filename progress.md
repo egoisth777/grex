@@ -1,11 +1,50 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, feat/v1.2.1 — items 1-5a complete + (iii) wiring)` (immediately below). Active branch: `feat/v1.2.1` (cut from `main @ 98d3910`). v1.2.1 is in-flight as a PATCH release; **items 1-5a done**, **item 5b (`--quarantine` Rust impl) unblocked** by Lean proof commit `7a8cd6b` and is the only remaining sub-feature.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, feat/v1.2.1 — SHIPPED, tag v1.2.1 local)` (immediately below). Active branch: `feat/v1.2.1` (cut from `main @ 98d3910`). v1.2.1 is **release-ready** (local tag `v1.2.1` cut, NOT pushed, NOT cargo-published). Next session merges `feat/v1.2.1 → main`, pushes tag, optional `cargo publish` of 4 crates, then opens v1.2.2.
 
-**v1.2.1 IN-FLIGHT 2026-04-30 (items 1-5a complete).** Branch `feat/v1.2.1` cut from `main @ 98d3910`. SemVer = PATCH (additive only). 5 of 6 sub-features shipped: (1) mdbook doc-debt `47e405e`, (2) CLI `grex migrate-lockfile` dispatcher `c318695`, (3) rayon parallel sibling sync `ef469c2` + (3.b) prod wiring `b5e6da8` + (3.c) `build_graph` extraction / `Walker::walk` prod retirement / `--workspace` canonical resolve `bb008f9`, (4) `grex doctor --scan-undeclared` `0feb01d`, (5a) Lean4 `quarantine_snapshot_precedes_delete` proof `7a8cd6b`. Architecture decision: `sync::run = sync_meta (mutate) + build_graph (read) + run_actions (consume)`. Full gate green after triple-merge: 897 cargo tests pass / 2 ignored (legacy semantics) / `lake build` green / clippy `-D warnings` clean. Remaining: **item 5b** = `--quarantine` Rust impl (now unblocked), then v1.2.1 release. See "## Endpoint (2026-04-30, feat/v1.2.1 — items 1-5a complete + (iii) wiring)" immediately below.
+**v1.2.1 SHIPPED 2026-04-30 on `feat/v1.2.1` (tag local; merge to main pending).** SemVer = PATCH (additive only). All 6 sub-features shipped: (1) mdbook doc-debt `47e405e`, (2) CLI `grex migrate-lockfile` dispatcher `c318695`, (3) rayon parallel sibling sync `ef469c2` + (3.b) prod wiring `b5e6da8` + (3.c) `build_graph` extraction / `Walker::walk` prod retirement / `--workspace` canonical resolve `bb008f9`, (4) `grex doctor --scan-undeclared` `0feb01d`, (5a) Lean4 `quarantine_snapshot_precedes_delete` proof `7a8cd6b`, (5b) `--quarantine` Rust impl (recursive snapshot before force-prune) `0a64d8b`. Architecture decision locked: `sync::run = sync_meta (mutate) + build_graph (read) + run_actions (consume)`. Full release-prep gate: 911 cargo tests pass (+14 vs v1.2.0) / 0 fail / 2 #[ignore]'d (legacy semantics) / `lake build` green / clippy `-D warnings` clean / man pages regenerated for `--quarantine`/`--scan-undeclared`/`--depth`/`grex-migrate-lockfile`. Local tag `v1.2.1` created. NOT pushed. NOT cargo-published. See "## Endpoint (2026-04-30, feat/v1.2.1 — SHIPPED, tag v1.2.1 local)" immediately below.
 
 **v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`. Stack ship sequence: PR #57 (Stage 0 intention alignment, squash `49c3ec6`) → PR #58 (Stage 0.5 Lean4 proof gate, squash `4501c87`) → PR #59 (Stage 1 Rust impl, squash `2c1791d`). 874 tests pass / 0 fail; `lake build` green / zero `sorry` / zero `admit`. Real-world verify on `E:\repos\code` (14 plain-git children) clean: `grex sync .` exit 0 (idempotent skip on all 14), `grex ls .` nested with legacy `~` glyph, `grex doctor` recursive all OK, installed `grex 1.2.0` reports new flags (`--shallow`, `--force-prune`, `--force-prune-with-ignored`). Detailed v1.2.0 endpoint below; v1.1.1 endpoint preserved further down.
+
+## Endpoint (2026-04-30, feat/v1.2.1 — SHIPPED, tag v1.2.1 local)
+
+v1.2.1 PATCH complete. All 6 items shipped + (iii) wiring path. 911 cargo tests pass (+14 from baseline 897), 2 #[ignore]'d as legacy semantics, lake build green zero sorry.
+
+**Items shipped:**
+1. mdbook doc-debt (5 concept docs) — 47e405e
+2. CLI grex migrate-lockfile dispatcher — c318695
+3. rayon parallel sibling sync (Phase 1 + Phase 3) — ef469c2
+3.b wire sync_meta into prod sync::run — b5e6da8
+3.c (iii) extract build_graph + retire prod Walker::walk + --workspace canonical — bb008f9 (merge c553c84)
+4. grex doctor --scan-undeclared full subtree scan — 0feb01d (merge eb197ec)
+5.a Lean4 quarantine_snapshot_precedes_delete proof (Rule 8 gate) — 7a8cd6b (merge c077592)
+5.b --quarantine Rust impl (recursive snapshot before force-prune) — 0a64d8b
+
+**Architecture decisions locked in v1.2.1:**
+- sync::run = sync_meta (mutate) + build_graph (read) + run_actions (consume) — single-purpose units
+- Walker::walk retired from prod path; symbol kept for 22 test sites (#[doc(hidden)])
+- --workspace flag: pure cwd-substitution, canonical symlink resolve (logs input → canonical), validation = must-exist + meta-optional (single-node tree OK)
+- Quarantine layout: <meta>/.grex/trash/<ISO8601 with millisecond precision>/<basename>/ recursive snapshot
+- Quarantine-on-Clean-consent: --quarantine snapshots ALL prunes regardless of dirtiness (operator-intent reading)
+- Audit log: 3 new variants (QuarantineStart / QuarantineComplete / QuarantineFailed) — workspace-scoped
+- 1 new bridge axiom: snapshot_recursive (in proof/Grex/Quarantine.lean, not Bridge.lean — to migrate at SSOT side commit)
+
+**Known v1.2.2+ follow-up gaps (filed):**
+- sync_meta lacks cycle detection (legacy Walker::walk had it; build_graph has it but runs after sync_meta which would infinite-clone first on cyclic URL) — v1.2.2 BLOCKER
+- SSOT side files not yet committed in .omne/ separate repo: force-prune.md, toctou.md, AuditKind/quarantine doc, snapshot_recursive axiom migration to Bridge.lean
+- grex doctor --prune-quarantine GC verb (retention policy) — v1.3 candidate
+- grex doctor --restore-quarantine recovery verb — v1.3 candidate
+- Quarantine retention policy (--retain-days N) — v1.3 candidate
+- Dedicated TreeError::QuarantineFailed variant (currently bucketed into DirtyTreeRefusal) — MINOR bump candidate
+- cap-std bounded recursive copy for snapshot read TOCTOU hardening — v1.3 candidate
+- --workspace → --pack flag rename: --pack lands v1.3.0 (deprecation alias for --workspace + warning), --workspace removed v1.3.1 (maintainer-accepted SemVer-relaxed)
+- Stale grex-doc/src/concepts/manifest.md (still says grex.jsonl, not events.jsonl) — v1.2.2 doc-debt sweep
+- 2 #[ignore]'d tests to investigate or delete: gitignore_multi_pack_coexistence_and_selective_teardown, e2e_cycle_aborts
+
+**Branch state:** feat/v1.2.1 at <release-commit-sha>, 14 commits ahead of main. Local tag v1.2.1 created. NOT pushed. NOT cargo-published.
+
+**Next session:** PR feat/v1.2.1 → main, merge, push tag v1.2.1, optional cargo publish (4 crates). Then start v1.2.2 with sync_meta cycle detection as first item.
 
 ## Endpoint (2026-04-30, feat/v1.2.1 — items 1-5a complete + (iii) wiring)
 
@@ -45,7 +84,7 @@ Known follow-up gaps (v1.2.2 candidates):
 
 Next: Item 5b (--quarantine Rust impl) BLOCKED on this proof commit landing on feat/v1.2.1; now unblocked. Then release v1.2.1 PATCH.
 
-Branch state: feat/v1.2.1 at <commit-after-progress-update>, 8 commits ahead of main (b5e6da8 → 5 feat/proof + 3 merges + 1 docs(progress)). Not pushed.
+Branch state: feat/v1.2.1 at c7bddf6, 8 commits ahead of main (b5e6da8 → 5 feat/proof + 3 merges + 1 docs(progress)). Not pushed.
 
 ## Endpoint (2026-04-30, feat/v1.2.1 — kickoff)
 **Branch cut from `main @ 98d3910` (commit subject: `docs(handoff): v1.2.1 follow-up entry points + mdbook doc-debt`).** SemVer = PATCH (1.2.0 → 1.2.1; additive only). Openspec spec authored at `openspec/feat-v1.2.1/spec.md` (~250 lines). 5 sub-features queued in this delivery order:
