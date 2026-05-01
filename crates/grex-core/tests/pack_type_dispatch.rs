@@ -68,8 +68,8 @@ fn declarative_pack_runs_its_actions_through_new_dispatch() {
     );
     let root = tmp_path.join("root");
     write_pack(&root, &yaml);
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
 
     let report = run(&root, &options(workspace)).expect("declarative sync ok");
     assert!(report.halted.is_none(), "halted: {:?}", report.halted);
@@ -97,8 +97,8 @@ fn meta_pack_with_no_children_emits_synthesis_step() {
     let yaml = "schema_version: \"1\"\nname: m\ntype: meta\n";
     let root = tmp_path.join("root");
     write_pack(&root, yaml);
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
 
     let report = run(&root, &options(workspace)).expect("meta sync ok");
     assert!(report.halted.is_none(), "halted: {:?}", report.halted);
@@ -122,8 +122,8 @@ fn scripted_pack_missing_hook_is_a_noop() {
     let yaml = "schema_version: \"1\"\nname: s\ntype: scripted\n";
     let root = tmp_path.join("root");
     write_pack(&root, yaml);
-    let workspace = tmp_path.join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = root.clone();
 
     let report = run(&root, &options(workspace)).expect("scripted sync ok");
     assert!(report.halted.is_none(), "halted: {:?}", report.halted);

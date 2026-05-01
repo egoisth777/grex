@@ -428,6 +428,100 @@ axiom pruneAt : Path → World → World
     (terminates with a definite Yes/No) at every world point. -/
 opaque in_progress_at : Path → World → Prop
 
+/-! ### v1.2.1 quarantine model (Item 5a)
+
+Data types and the `snapshot_recursive` data-axiom for the `--quarantine`
+snapshot-before-delete pipeline live here (rather than in
+`Grex.Quarantine`) so the `axiom` declaration sits in `Grex.Types` per
+the CI axiom-location policy that restricts `axiom`-keyword
+declarations to `Grex.Bridge` and `Grex.Types` only. The pipeline
+definition, theorems, and proofs that consume these types remain in
+`Grex.Quarantine`. -/
+
+/-- A single audit-log entry for one quarantine event. The `ts` field is
+    the ISO8601 timestamp recorded in `<meta>/.grex/events.jsonl`; the
+    `src` and `trash` fields capture the original dest and the snapshot
+    target. The `kind` field distinguishes the lifecycle stages
+    (`QuarantineStart` → `QuarantineComplete` on success;
+    `QuarantineStart` → `QuarantineFailed` on snapshot failure). -/
+inductive AuditKind : Type where
+  | QuarantineStart
+  | QuarantineComplete
+  | QuarantineFailed
+  deriving DecidableEq, Repr
+
+/-- `AuditEntry` = one row in `<meta>/.grex/events.jsonl`. -/
+structure AuditEntry where
+  kind  : AuditKind
+  ts    : String
+  src   : Path
+  trash : Path
+  deriving Repr
+
+/-- `AuditLog` = the append-only sequence of entries persisted to
+    `<meta>/.grex/events.jsonl`. Order matters (the `Start` → `Complete`
+    pairing is positional). -/
+structure AuditLog where
+  entries : List AuditEntry
+
+/-- Append + fsync model of `AuditLog.commit`. Declared as a definition
+    here (not an axiom) so the pure-model reasoning can compute on it.
+    The real Rust impl performs an `O_APPEND` write followed by an
+    explicit `fsync`; the model collapses both to a list snoc. The
+    derived lemma `audit_commit_contains` (in `Grex.Quarantine`)
+    witnesses that the committed entry survives the fsync —
+    discharged by `simp` over list-snoc, no axiom needed. -/
+def AuditLog.commit (a : AuditLog) (e : AuditEntry) : AuditLog :=
+  ⟨a.entries ++ [e]⟩
+
+/-- Membership predicate: `e ∈ a` iff `e` appears in `a.entries`. -/
+def AuditLog.contains (a : AuditLog) (e : AuditEntry) : Prop :=
+  e ∈ a.entries
+
+/-- `SnapResult` = the return value of the `snapshot_recursive` model
+    primitive. Two constructors only: `ok` (snapshot copy *and* audit
+    fsync both succeeded) and `err` (any failure — I/O, audit fsync
+    failure, partial copy). The Rust impl emits a richer error variant
+    enum, but the only thing the safety proof cares about is the binary
+    "did we succeed enough to license a delete?". -/
+inductive SnapResult : Type where
+  /-- Snapshot copy completed verbatim AND the `QuarantineStart` audit
+      entry was fsynced BEFORE any byte was copied. -/
+  | ok
+  /-- Snapshot or audit fsync failed; original `dest` MUST remain
+      untouched. -/
+  | err
+  deriving DecidableEq, Repr
+
+/-- **Bridge 10 (v1.2.1 Item 5a, data axiom).** The pure-model snapshot
+    primitive. Given `(src, trash, audit_log_pre)`, returns whether the
+    Rust runtime's recursive copy + audit-log fsync both succeeded.
+
+    Declared `axiom` (not `opaque`) because `SnapResult` lacks an
+    `Inhabited` default we want to commit to — making the impl
+    arbitrarily pick `.ok` or `.err` would mislead readers about the
+    pipeline's outcome.
+
+    Lives in `Grex.Types` (alongside the other `axiom`-keyword data
+    placeholders `classify_dest`, `recursive_consent_walk`, `pruneAt`)
+    per the CI axiom-location policy. The pipeline definition,
+    `delete_licensed` predicate, and `quarantine_snapshot_precedes_delete`
+    theorem that consume this axiom live in `Grex.Quarantine`.
+
+    **Rust contract (forward reference, Item 5b):**
+    `crates/grex-core/src/tree/quarantine.rs::snapshot_then_rm` — the
+    function this axiom binds to. The Rust impl performs:
+
+    1. Append `QuarantineStart` event to `<meta>/.grex/events.jsonl`,
+       then `fsync` the file descriptor.
+    2. `cap-std`-bounded recursive copy from `src` to `trash`.
+    3. Returns `.ok` iff steps 1 + 2 both succeeded; `.err` otherwise.
+
+    **Soundness assumption.** The Rust impl never returns `.ok` without
+    completing both the audit fsync and the recursive copy. A partial
+    copy or unfsynced audit entry is `.err`. -/
+axiom snapshot_recursive : Path → Path → AuditLog → SnapResult
+
 end Walker
 
 end Grex

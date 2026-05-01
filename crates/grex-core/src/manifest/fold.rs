@@ -59,6 +59,11 @@ fn apply(state: &mut HashMap<PackId, PackState>, event: Event) {
         // v1.2.0 Stage 1.l — workspace-scoped audit; no pack state to
         // mutate.
         Event::ForcePruneExecuted { .. } => {}
+        // v1.2.1 Item 5b — quarantine lifecycle audits; workspace-
+        // scoped, no pack state to mutate.
+        Event::QuarantineStart { .. }
+        | Event::QuarantineComplete { .. }
+        | Event::QuarantineFailed { .. } => {}
     }
 }
 
