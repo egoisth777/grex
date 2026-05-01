@@ -233,18 +233,19 @@ jobs:
             echo "Audit Bridge.lean and update CI count if intentional."
             exit 1
           fi
-      - name: Verify model-placeholder axiom count (=3 in Types.lean)
+      - name: Verify model-placeholder axiom count (=4 in Types.lean)
         working-directory: proof
         shell: bash
         run: |
           # Types.lean houses opaque-with-no-Inhabited stand-ins
-          # (classify_dest, recursive_consent_walk, pruneAt). These are
-          # model definitions, not Rust trust contracts — distinct from
+          # (classify_dest, recursive_consent_walk, pruneAt, and the
+          # v1.2.1-Item-5a snapshot_recursive). These are model
+          # definitions, not Rust trust contracts — distinct from
           # Bridge.lean's propositional bridge axioms.
           count=$(grep -cE '^axiom\b' Grex/Types.lean || true)
           echo "Model-placeholder axiom count: $count"
-          if [ "$count" -ne 3 ]; then
-            echo "ERROR: expected exactly 3 model-placeholder axioms in Types.lean, found $count."
+          if [ "$count" -ne 4 ]; then
+            echo "ERROR: expected exactly 4 model-placeholder axioms in Types.lean, found $count."
             echo "If you intentionally added/removed a model placeholder, update this CI check."
             exit 1
           fi
