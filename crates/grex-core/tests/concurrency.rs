@@ -93,9 +93,20 @@ fn create_bare_repo(tmp: &Path) -> PathBuf {
 /// control of the contention window without needing a mock executor.
 #[test]
 fn two_syncs_same_workspace_second_errors_busy() {
+    // v1.2.1 path (iii): `--workspace` IS the meta_dir under the new
+    // resolution model. The manifest must therefore live at
+    // `<workspace>/.grex/pack.yaml`, not at a separate `pack_root`.
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
-    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(workspace.join(".grex")).unwrap();
+    fs::write(
+        workspace.join(".grex").join("pack.yaml"),
+        "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\nactions: []\n",
+    )
+    .unwrap();
+    // The pre-canonical lock path the holder thread acquires is what
+    // `resolve_workspace` will canonicalize to via `fs::canonicalize`.
+    let canonical_workspace = workspace.canonicalize().unwrap();
 
     // Thread 1 acquires the workspace lock and holds it until we release it.
     // We use a channel-free sync via Barrier: t1 grabs lock → signals →
@@ -103,7 +114,7 @@ fn two_syncs_same_workspace_second_errors_busy() {
     let gate = Arc::new(Barrier::new(2));
     let release = Arc::new(Barrier::new(2));
 
-    let ws_for_t1 = workspace.clone();
+    let ws_for_t1 = canonical_workspace.clone();
     let gate_t1 = Arc::clone(&gate);
     let release_t1 = Arc::clone(&release);
     let holder = thread::spawn(move || {
@@ -115,23 +126,14 @@ fn two_syncs_same_workspace_second_errors_busy() {
                            // guard drops here
     });
 
-    // Build a minimal pack tree so `run` reaches the workspace-lock
-    // acquisition. An empty actions list keeps it deterministic.
-    let pack_root = tmp.path().join("pack");
-    fs::create_dir_all(pack_root.join(".grex")).unwrap();
-    fs::write(
-        pack_root.join(".grex").join("pack.yaml"),
-        "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\nactions: []\n",
-    )
-    .unwrap();
-
     gate.wait(); // t1 is holding the lock
     let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
-    let err = sync_run(&pack_root, &opts).expect_err("must be busy");
+    let err = sync_run(&workspace, &opts).expect_err("must be busy");
     match err {
         SyncError::WorkspaceBusy { workspace: ws, lock_path } => {
-            assert_eq!(ws, workspace);
-            assert_eq!(lock_path, workspace.join(".grex.sync.lock"));
+            // resolve_workspace canonicalises; compare against canonical.
+            assert_eq!(ws, canonical_workspace);
+            assert_eq!(lock_path, canonical_workspace.join(".grex.sync.lock"));
         }
         other => panic!("expected WorkspaceBusy, got {other:?}"),
     }
@@ -144,20 +146,20 @@ fn two_syncs_same_workspace_second_errors_busy() {
 /// sticky error state.
 #[test]
 fn sync_lock_releases_on_completion() {
+    // v1.2.1 path (iii): workspace IS the meta_dir; manifest must live
+    // at `<workspace>/.grex/pack.yaml`.
     let tmp = TempDir::new().unwrap();
     let workspace = tmp.path().join("ws");
-    fs::create_dir_all(&workspace).unwrap();
-    let pack_root = tmp.path().join("pack");
-    fs::create_dir_all(pack_root.join(".grex")).unwrap();
+    fs::create_dir_all(workspace.join(".grex")).unwrap();
     fs::write(
-        pack_root.join(".grex").join("pack.yaml"),
+        workspace.join(".grex").join("pack.yaml"),
         "schema_version: \"1\"\nname: root\ntype: declarative\nversion: \"0.0.1\"\nactions: []\n",
     )
     .unwrap();
 
     let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
-    sync_run(&pack_root, &opts).expect("first sync");
-    sync_run(&pack_root, &opts).expect("second sync after first drops lock");
+    sync_run(&workspace, &opts).expect("first sync");
+    sync_run(&workspace, &opts).expect("second sync after first drops lock");
 }
 
 // ---------------------------------------------------------------------------
@@ -316,9 +318,11 @@ fn write_pack_yaml(pack_root: &Path, body: &str) {
 /// pack so the next sync re-executes it from scratch.
 #[test]
 fn halted_pack_prior_entry_is_dropped_so_next_run_executes() {
+    // v1.2.1 path (iii): workspace IS the meta_dir.
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
-    let workspace = tmp.path().join("ws");
+    fs::create_dir_all(&pack_root).unwrap();
+    let workspace = pack_root.clone();
     let opts = SyncOptions::new().with_workspace(Some(workspace.clone()));
 
     // Run 1: pack P succeeds → lockfile gains an entry for P.
@@ -355,9 +359,10 @@ fn halted_pack_prior_entry_is_dropped_so_next_run_executes() {
 /// `SyncError::Lockfile`, not as `SyncError::Validation { ... }`.
 #[test]
 fn corrupt_lockfile_routes_to_lockfile_variant() {
+    // v1.2.1 path (iii): workspace IS the meta_dir.
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
-    let workspace = tmp.path().join("ws");
+    let workspace = pack_root.clone();
     let target = tmp.path().join("td");
     write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
 
@@ -381,9 +386,10 @@ fn corrupt_lockfile_routes_to_lockfile_variant() {
 /// proxy.
 #[test]
 fn second_run_emits_packskipped_stepkind() {
+    // v1.2.1 path (iii): workspace IS the meta_dir.
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
-    let workspace = tmp.path().join("ws");
+    let workspace = pack_root.clone();
     let target = tmp.path().join("td");
     write_pack_yaml(&pack_root, &passing_mkdir_pack(&target));
 

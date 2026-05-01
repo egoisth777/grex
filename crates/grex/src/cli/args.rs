@@ -111,8 +111,12 @@ pub struct SyncArgs {
     /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the parent pack's root
-    /// directory; children resolve as flat siblings.
+    /// Override the workspace root. Defaults to the pack root directory
+    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
+    /// canonical meta directory: children resolve parent-relatively as
+    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
+    /// resolved to their canonical inode (logged as `workspace: <input>
+    /// → <canonical>` when it differs).
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 
@@ -302,8 +306,12 @@ pub struct TeardownArgs {
     /// itself. When omitted, `teardown` prints a usage stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the parent pack's root
-    /// directory; children resolve as flat siblings.
+    /// Override the workspace root. Defaults to the pack root directory
+    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
+    /// canonical meta directory: children resolve parent-relatively as
+    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
+    /// resolved to their canonical inode (logged as `workspace: <input>
+    /// → <canonical>` when it differs).
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 
