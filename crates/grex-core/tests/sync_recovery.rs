@@ -95,7 +95,8 @@ fn sync_pre_action_event_written_before_execute() {
     let pack_root = tmp.path().join("pack");
     let target = tmp.path().join("target-dir");
     write_pack_yaml(&pack_root, &mkdir_pack(target.to_str().unwrap()));
-    let workspace = tmp.path().join("ws");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = pack_root.clone();
 
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("sync ok");
@@ -125,7 +126,8 @@ fn sync_halted_event_written_on_error() {
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
     write_pack_yaml(&pack_root, &failing_exec_pack());
-    let workspace = tmp.path().join("ws");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = pack_root.clone();
 
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("sync returns report even on halt");
@@ -154,7 +156,8 @@ fn sync_halted_context_carries_pack_action_error() {
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
     write_pack_yaml(&pack_root, &failing_exec_pack());
-    let workspace = tmp.path().join("ws");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = pack_root.clone();
 
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("report");
@@ -257,7 +260,8 @@ fn exec_nonzero_captures_stderr() {
         "      on_fail: error\n",
     );
     write_pack_yaml(&pack_root, body);
-    let workspace = tmp.path().join("ws");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = pack_root.clone();
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     let report = sync_run(&pack_root, &opts).expect("report");
     let Some(SyncError::Halted(ctx)) = report.halted else {
@@ -283,7 +287,8 @@ fn noop_pack_writes_no_action_events() {
     let tmp = TempDir::new().unwrap();
     let pack_root = tmp.path().join("pack");
     write_pack_yaml(&pack_root, NOOP_PACK);
-    let workspace = tmp.path().join("ws");
+    // v1.2.1 path (iii): workspace IS the meta_dir.
+    let workspace = pack_root.clone();
 
     let opts = SyncOptions::new().with_workspace(Some(workspace));
     sync_run(&pack_root, &opts).expect("sync ok");

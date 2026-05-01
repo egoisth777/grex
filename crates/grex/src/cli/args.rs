@@ -67,6 +67,11 @@ pub enum Verb {
     Exec(ExecArgs),
     /// Tear down a pack tree (reverse of `sync`/`install`).
     Teardown(TeardownArgs),
+    /// Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt-in,
+    /// idempotent). Thin shim over the v1.2.0 Stage 1.h library
+    /// migrator (`grex_core::lockfile::migrate_v1_1_1`).
+    #[command(name = "migrate-lockfile")]
+    MigrateLockfile(MigrateLockfileArgs),
 }
 
 #[derive(Args, Debug)]
@@ -106,8 +111,12 @@ pub struct SyncArgs {
     /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the parent pack's root
-    /// directory; children resolve as flat siblings.
+    /// Override the workspace root. Defaults to the pack root directory
+    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
+    /// canonical meta directory: children resolve parent-relatively as
+    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
+    /// resolved to their canonical inode (logged as `workspace: <input>
+    /// → <canonical>` when it differs).
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 
@@ -155,6 +164,22 @@ pub struct SyncArgs {
     /// Never overrides `GitInProgress`.
     #[arg(long = "force-prune-with-ignored")]
     pub force_prune_with_ignored: bool,
+
+    /// v1.2.1 Item 5b — Recursively snapshot Phase 2 prune targets to
+    /// `<meta>/.grex/trash/<ISO8601>/<basename>/` BEFORE deletion.
+    /// Audit log entry (`QuarantineStart`) is appended + fsync'd
+    /// before any byte is copied; on snapshot failure the prune
+    /// aborts and the original dest is left intact for forensics.
+    /// Requires `--force-prune` or `--force-prune-with-ignored` —
+    /// quarantine only applies to overridden prunes; clean-consent
+    /// prunes still go through the direct-unlink fast path. The
+    /// "requires one of" check is enforced in the verb handler
+    /// (see `crates/grex/src/cli/verbs/sync.rs`) since clap's
+    /// `requires`/`required_unless_present_any` semantics don't
+    /// model "X requires (A or B)" cleanly without an `ArgGroup`.
+    /// Matches Lean theorem `quarantine_snapshot_precedes_delete`.
+    #[arg(long = "quarantine")]
+    pub quarantine: bool,
 
     /// Max parallel pack ops during this sync run (feat-m6-1).
     ///
@@ -218,6 +243,23 @@ pub struct DoctorArgs {
     /// not). The walk is read-only at every frame.
     #[arg(long = "shallow", value_name = "N")]
     pub shallow: Option<usize>,
+
+    /// v1.2.1 item 4 — opt-in full-filesystem scan for `.git/`
+    /// directories that are not registered in the manifest tree.
+    /// Read-only audit; complements the manifest-driven default walk.
+    /// Composes with `--shallow` (which bounds the manifest walk).
+    /// Use `--depth N` to bound the filesystem scan independently.
+    #[arg(long = "scan-undeclared")]
+    pub scan_undeclared: bool,
+
+    /// v1.2.1 item 4 — bound the `--scan-undeclared` filesystem walk.
+    /// Omitted: scan every level under the workspace (default).
+    /// `--depth 0`: workspace root only.
+    /// `--depth N`: descend up to `N` directory levels below the
+    /// workspace root. Has no effect unless `--scan-undeclared` is
+    /// also set.
+    #[arg(long = "depth", value_name = "N", requires = "scan_undeclared")]
+    pub depth: Option<usize>,
 }
 
 #[derive(Args, Debug)]
@@ -279,13 +321,30 @@ pub struct ExecArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct MigrateLockfileArgs {
+    /// Workspace root (the meta whose `.grex/grex.lock.jsonl` to
+    /// migrate). Defaults to the current working directory.
+    #[arg(long, value_name = "PATH")]
+    pub workspace: Option<std::path::PathBuf>,
+
+    /// Inspect-only: detect schema version and report what would happen
+    /// without writing. Lockfile bytes are unchanged.
+    #[arg(long = "dry-run", short = 'n')]
+    pub dry_run: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct TeardownArgs {
     /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
     /// itself. When omitted, `teardown` prints a usage stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the parent pack's root
-    /// directory; children resolve as flat siblings.
+    /// Override the workspace root. Defaults to the pack root directory
+    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
+    /// canonical meta directory: children resolve parent-relatively as
+    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
+    /// resolved to their canonical inode (logged as `workspace: <input>
+    /// → <canonical>` when it differs).
     #[arg(long)]
     pub workspace: Option<std::path::PathBuf>,
 

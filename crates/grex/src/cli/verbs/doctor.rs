@@ -5,7 +5,9 @@
 
 use crate::cli::args::{DoctorArgs, GlobalFlags};
 use anyhow::Result;
-use grex_core::doctor::{run_doctor, DoctorOpts, DoctorReport, Severity};
+use grex_core::doctor::{
+    run_doctor, scan_undeclared, DoctorOpts, DoctorReport, Severity, UndeclaredRepo,
+};
 use tokio_util::sync::CancellationToken;
 
 pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
@@ -17,6 +19,19 @@ pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
         println!("{}", render_json(&report));
     } else {
         print_table(&report);
+    }
+
+    // v1.2.1 item 4 — opt-in full-filesystem scan for `.git/` dirs that
+    // are NOT registered in the manifest tree. Report-only — does not
+    // alter the doctor exit code semantics; `report.exit_code()` already
+    // captures every check the scan complements.
+    if args.scan_undeclared {
+        let undeclared = scan_undeclared(&workspace, args.depth)?;
+        if global.json {
+            println!("{}", render_undeclared_json(&workspace, args.depth, &undeclared));
+        } else {
+            print_undeclared(&workspace, args.depth, &undeclared);
+        }
     }
 
     std::process::exit(report.exit_code());
@@ -77,4 +92,63 @@ fn severity_label(s: Severity) -> &'static str {
         Severity::Warning => "warning",
         Severity::Error => "error",
     }
+}
+
+/// Render the `--scan-undeclared` report block to stdout. Always
+/// printed AFTER the standard doctor table so the existing output
+/// remains the first thing operators see.
+fn print_undeclared(workspace: &std::path::Path, depth: Option<usize>, found: &[UndeclaredRepo]) {
+    let depth_str = depth.map_or_else(|| "unlimited".to_string(), |d| d.to_string());
+    println!();
+    println!("Scanning {} for undeclared git repos (depth: {})...", workspace.display(), depth_str,);
+    if found.is_empty() {
+        println!("No undeclared git repos found below {}.", workspace.display());
+        return;
+    }
+    println!();
+    println!(
+        "Found {} undeclared git repo{}:",
+        found.len(),
+        if found.len() == 1 { "" } else { "s" },
+    );
+    for repo in found {
+        let url = match &repo.inferred_url {
+            Some(u) => format!("<{u}>"),
+            None => "[unknown]  (no remote.origin.url)".to_string(),
+        };
+        // Use forward slashes for cross-platform consistency in output.
+        let path = repo.path.to_string_lossy().replace('\\', "/");
+        println!("  ./{path:<40} {url}");
+    }
+    println!();
+    println!("To register: grex add <url> <path>");
+}
+
+/// JSON twin of [`print_undeclared`]. Emits a single-line object
+/// matching the human format's structure so machine consumers can
+/// parse it directly.
+fn render_undeclared_json(
+    workspace: &std::path::Path,
+    depth: Option<usize>,
+    found: &[UndeclaredRepo],
+) -> String {
+    let entries: Vec<serde_json::Value> = found
+        .iter()
+        .map(|r| {
+            let path = r.path.to_string_lossy().replace('\\', "/");
+            serde_json::json!({
+                "path": path,
+                "inferred_url": r.inferred_url,
+            })
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "scan_undeclared": {
+            "workspace": workspace.display().to_string(),
+            "depth": depth,
+            "count": found.len(),
+            "repos": entries,
+        },
+    });
+    serde_json::to_string(&doc).unwrap_or_else(|_| "{}".to_string())
 }

@@ -43,6 +43,7 @@ use crate::manifest::event::Event;
 
 use super::dest_class::git_in_progress_at;
 use super::error::{DirtyTreeRefusalKind, TreeError};
+use super::quarantine::{snapshot_then_rm, QuarantineConfig};
 
 /// Output of the Phase 2 recursive consent probe. Mirrors the Lean
 /// `ConsentResult` enum (`proof/Grex/Types.lean` lines 380–399). Five
@@ -302,6 +303,7 @@ pub fn phase2_prune(
     force_prune: bool,
     force_prune_with_ignored: bool,
     audit_log: Option<&Path>,
+    quarantine: Option<&QuarantineConfig>,
 ) -> Result<(), TreeError> {
     let verdict = recursive_consent_walk(dest);
     if should_execute(verdict, force_prune, force_prune_with_ignored) {
@@ -317,12 +319,47 @@ pub fn phase2_prune(
                 emit_force_prune_event(log_path, dest, kind, force_prune_with_ignored);
             }
         }
+        // v1.2.1 Item 5b — when `--quarantine` is set, divert the
+        // prune through the snapshot-then-unlink pipeline. Lean
+        // theorem `quarantine_snapshot_precedes_delete` proves the
+        // unlink only fires after a successful snapshot + audit
+        // fsync. `None` ⇒ legacy v1.2.0 direct unlink path.
+        if let Some(cfg) = quarantine {
+            return execute_quarantine_prune(dest, cfg);
+        }
         return execute_prune(dest);
     }
     let kind = verdict
         .refusal_kind()
         .expect("Clean verdicts always pass should_execute and never reach the refusal arm");
     Err(TreeError::DirtyTreeRefusal { path: dest.to_path_buf(), kind })
+}
+
+/// v1.2.1 Item 5b — invoke the quarantine pipeline and map any
+/// [`super::quarantine::QuarantineError`] back into a
+/// [`TreeError::DirtyTreeRefusal`] so the walker's existing error
+/// surface stays narrow. The refusal-kind tag tells the operator the
+/// quarantine aborted (vs. a consent-driven refusal): we reuse
+/// `DirtyTreeRefusalKind::DirtyTree` because the dest is, by
+/// definition, intact (the snapshot or unlink failed; the tree was
+/// never wiped). A future v1.3+ may earn a dedicated
+/// `QuarantineFailed` variant; for v1.2.1 PATCH we keep the error
+/// surface additive-only.
+fn execute_quarantine_prune(dest: &Path, cfg: &QuarantineConfig) -> Result<(), TreeError> {
+    match snapshot_then_rm(dest, cfg) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            tracing::warn!(
+                dest = %dest.display(),
+                error = %e,
+                "quarantine pipeline aborted; dest left intact"
+            );
+            Err(TreeError::DirtyTreeRefusal {
+                path: dest.to_path_buf(),
+                kind: DirtyTreeRefusalKind::DirtyTree,
+            })
+        }
+    }
 }
 
 /// Map a [`DirtyTreeRefusalKind`] to its stable lowercase audit tag.
@@ -619,7 +656,7 @@ mod tests {
         if !try_git_init(&dest) {
             return;
         }
-        let res = phase2_prune(&dest, false, false, None);
+        let res = phase2_prune(&dest, false, false, None, None);
         assert!(res.is_ok(), "clean prune must succeed: {res:?}");
         assert!(!dest.exists(), "dest must be removed after a clean prune");
     }
@@ -633,7 +670,7 @@ mod tests {
             return;
         }
         fs::write(dest.join("scratch.txt"), b"changes").unwrap();
-        let res = phase2_prune(&dest, false, false, None);
+        let res = phase2_prune(&dest, false, false, None, None);
         match res {
             Err(TreeError::DirtyTreeRefusal { kind: DirtyTreeRefusalKind::DirtyTree, .. }) => {}
             other => panic!("expected DirtyTreeRefusal{{DirtyTree}}, got {other:?}"),
@@ -650,7 +687,7 @@ mod tests {
             return;
         }
         fs::write(dest.join("scratch.txt"), b"changes").unwrap();
-        let res = phase2_prune(&dest, true, false, None);
+        let res = phase2_prune(&dest, true, false, None, None);
         assert!(res.is_ok(), "force_prune must consume DirtyTree: {res:?}");
         assert!(!dest.exists(), "dest must be removed under force_prune");
     }
@@ -681,7 +718,7 @@ mod tests {
         fs::write(dest.join("target/build.out"), b"artefact").unwrap();
         // force_prune alone is INSUFFICIENT: ignored content needs
         // the stronger flag.
-        let res = phase2_prune(&dest, true, false, None);
+        let res = phase2_prune(&dest, true, false, None, None);
         match res {
             Err(TreeError::DirtyTreeRefusal {
                 kind: DirtyTreeRefusalKind::DirtyTreeWithIgnored,
@@ -716,7 +753,7 @@ mod tests {
             .status();
         fs::create_dir_all(dest.join("target")).unwrap();
         fs::write(dest.join("target/build.out"), b"artefact").unwrap();
-        let res = phase2_prune(&dest, true, true, None);
+        let res = phase2_prune(&dest, true, true, None, None);
         assert!(res.is_ok(), "force_prune_with_ignored must consume ignored-only dirt: {res:?}");
         assert!(!dest.exists(), "dest must be removed under force_prune_with_ignored");
     }
@@ -729,7 +766,7 @@ mod tests {
         fs::write(dest.join(".git/MERGE_HEAD"), b"deadbeef\n").unwrap();
         // Even the strongest override flag must NOT consume an
         // in-progress git operation.
-        let res = phase2_prune(&dest, true, true, None);
+        let res = phase2_prune(&dest, true, true, None, None);
         match res {
             Err(TreeError::DirtyTreeRefusal {
                 kind: DirtyTreeRefusalKind::GitInProgress, ..
@@ -785,7 +822,7 @@ mod tests {
         // Untracked-non-ignored content → DirtyTree.
         fs::write(dest.join("scratch.txt"), b"changes").unwrap();
         let log = tmp.path().join(".grex/events.jsonl");
-        let res = phase2_prune(&dest, true, false, Some(log.as_path()));
+        let res = phase2_prune(&dest, true, false, Some(log.as_path()), None);
         assert!(res.is_ok(), "force_prune must consume DirtyTree: {res:?}");
         assert!(!dest.exists(), "dest must be removed after override");
         let events = read_all(&log).expect("audit log readable");
@@ -815,7 +852,7 @@ mod tests {
             return;
         }
         let log = tmp.path().join(".grex/events.jsonl");
-        let res = phase2_prune(&dest, true, true, Some(log.as_path()));
+        let res = phase2_prune(&dest, true, true, Some(log.as_path()), None);
         assert!(res.is_ok(), "clean prune must succeed: {res:?}");
         assert!(!dest.exists(), "dest must be removed after a clean prune");
         // No audit event was emitted, so the file MUST NOT exist.
