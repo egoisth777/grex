@@ -25,6 +25,9 @@ use crate::lockfile::{read_lockfile, LockEntry, LockfileError};
 use crate::manifest::{self, Event, ManifestError, PackState};
 use crate::plugin::pack_type::default_managed_gitignore_patterns;
 
+pub mod scan_undeclared;
+pub use scan_undeclared::{scan_undeclared, ScanError, UndeclaredRepo};
+
 const GITIGNORE_EXT_KEY: &str = "x-gitignore";
 
 /// Which check produced this finding.

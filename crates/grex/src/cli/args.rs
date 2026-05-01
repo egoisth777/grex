@@ -218,6 +218,23 @@ pub struct DoctorArgs {
     /// not). The walk is read-only at every frame.
     #[arg(long = "shallow", value_name = "N")]
     pub shallow: Option<usize>,
+
+    /// v1.2.1 item 4 — opt-in full-filesystem scan for `.git/`
+    /// directories that are not registered in the manifest tree.
+    /// Read-only audit; complements the manifest-driven default walk.
+    /// Composes with `--shallow` (which bounds the manifest walk).
+    /// Use `--depth N` to bound the filesystem scan independently.
+    #[arg(long = "scan-undeclared")]
+    pub scan_undeclared: bool,
+
+    /// v1.2.1 item 4 — bound the `--scan-undeclared` filesystem walk.
+    /// Omitted: scan every level under the workspace (default).
+    /// `--depth 0`: workspace root only.
+    /// `--depth N`: descend up to `N` directory levels below the
+    /// workspace root. Has no effect unless `--scan-undeclared` is
+    /// also set.
+    #[arg(long = "depth", value_name = "N", requires = "scan_undeclared")]
+    pub depth: Option<usize>,
 }
 
 #[derive(Args, Debug)]
