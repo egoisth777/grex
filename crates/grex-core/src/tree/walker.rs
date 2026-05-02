@@ -320,9 +320,18 @@ fn pack_identity_for_root(path: &Path) -> String {
 /// refs is considered distinct. This matches git semantics and avoids
 /// false-positive cycle detections for diamond dependencies on different
 /// tags.
+///
+/// v1.2.3 (B2): when the ref is missing or empty the trailing `@` is
+/// omitted so the on-the-wire identity is just `url:<url>` — matches
+/// `Grex.Walker.ChildRef.identity` in the Lean model. Without this
+/// elision two children that differ only in `ref: None` vs
+/// `ref: Some("")` would otherwise serialise the same way as
+/// `url:<url>@`, masking the distinction the Lean specification draws.
 fn pack_identity_for_child(child: &ChildRef) -> String {
-    let rref = child.r#ref.as_deref().unwrap_or("");
-    format!("url:{}@{}", child.url, rref)
+    match child.r#ref.as_deref() {
+        Some(r) if !r.is_empty() => format!("url:{}@{}", child.url, r),
+        _ => format!("url:{}", child.url),
+    }
 }
 
 /// Shallow on-disk check: a `.git` entry (file or dir) signals an existing
@@ -647,11 +656,29 @@ pub fn sync_meta(
     opts: &SyncMetaOptions,
     prune_candidates: &[PathBuf],
 ) -> Result<SyncMetaReport, TreeError> {
-    // v1.2.2 cycle detection — the root frame starts with an empty
-    // ancestor chain. `sync_meta_inner` extends it per recursion edge
-    // (Phase 3) using clone-per-child so disjoint sibling branches do
-    // not pollute each other's ancestor view.
-    sync_meta_inner(meta_dir, backend, loader, opts, prune_candidates, /* depth */ 0, &[])
+    // v1.2.3 (B4) — seed the ancestor chain with the root pack's
+    // path-namespaced identity (`path:<meta_dir>`) so the Lean
+    // `acyclic_path` precondition that drives
+    // `sync_meta_no_cycle_infinite_clone` is established right at
+    // the call site rather than implicitly relying on an empty
+    // initial visited. Children identify with `url:<url>@<ref>` —
+    // disjoint namespace from the root's `path:` identity, so seeding
+    // does not introduce false-positive cycle hits against any
+    // legitimate child.
+    //
+    // `sync_meta_inner` extends this chain per recursion edge (Phase
+    // 3) using clone-per-child so disjoint sibling branches do not
+    // pollute each other's ancestor view.
+    let initial_visited = vec![pack_identity_for_root(meta_dir)];
+    sync_meta_inner(
+        meta_dir,
+        backend,
+        loader,
+        opts,
+        prune_candidates,
+        /* depth */ 0,
+        &initial_visited,
+    )
 }
 
 fn sync_meta_inner(
@@ -982,6 +1009,12 @@ enum Phase3ChildOutcome {
 /// extended by the recurring identity. Otherwise the child's
 /// identity is appended (clone-per-child, A.1) so disjoint sibling
 /// branches do not pollute each other's view.
+///
+/// v1.2.3 (B1) — the depth-cap check (`next_depth > opts.max_depth`)
+/// MUST run AFTER the cycle check. Otherwise a cyclic manifest whose
+/// cycle length exceeds `max_depth` would silently truncate without
+/// surfacing `CycleDetected`: the depth cap is a "stop walking
+/// further" knob, not a "ignore correctness invariants" knob.
 fn phase3_handle_child(
     meta_dir: &Path,
     child: &ChildRef,
@@ -1004,11 +1037,23 @@ fn phase3_handle_child(
     // doubles as O(depth) contains-check AND deterministic chain for
     // error display — depth is bounded ~5-10 in practice so linear
     // scan beats hashing here.
+    //
+    // v1.2.3 (B1): runs BEFORE the depth-cap early-return below so a
+    // cycle longer than `max_depth` cannot hide behind truncation.
     let id = pack_identity_for_child(child);
     if visited.iter().any(|v| v == &id) {
         let mut chain = visited.to_vec();
         chain.push(id);
         return Phase3ChildOutcome::Failed(TreeError::CycleDetected { chain });
+    }
+    // v1.2.3 (B1): depth-cap check moved from `phase3_recurse` to
+    // here, AFTER the cycle check. `Skipped` rather than a hard error
+    // because depth-cap truncation is a benign best-effort knob —
+    // siblings further down the manifest tree should still classify.
+    if let Some(cap) = opts.max_depth {
+        if next_depth > cap {
+            return Phase3ChildOutcome::Skipped;
+        }
     }
     // Clone-per-child (A.1): each rayon iteration owns its own
     // ancestor view, so disjoint sibling branches do not see each
@@ -1041,11 +1086,11 @@ fn phase3_recurse(
         return Ok(());
     }
     let next_depth = depth + 1;
-    if let Some(cap) = opts.max_depth {
-        if next_depth > cap {
-            return Ok(());
-        }
-    }
+    // v1.2.3 (B1): depth-cap early-return removed from this site —
+    // moved into `phase3_handle_child` AFTER the cycle check so a
+    // cycle longer than `max_depth` cannot mask itself by tripping
+    // the depth cap before the cycle test fires. The per-child
+    // handler now treats `next_depth > cap` as `Skipped`.
     let outcomes: Vec<Phase3ChildOutcome> = pool.install(|| {
         manifest
             .children
@@ -1625,21 +1670,31 @@ mod tests {
             sync_meta(&root_dir, &backend, &loader, &opts, &[]).expect_err("self-loop must abort");
         match err {
             TreeError::CycleDetected { chain } => {
-                // Chain must end in the recurring identity. The
-                // outermost frame is the root (no entry — root carries
-                // no `url` identity in this scheme), so chain length
-                // is 2: `[a@, a@]` — first push when entering `a` from
-                // root, second push when `a` tries to enter itself.
+                // v1.2.3 (B4): chain begins with the root's
+                // path-namespaced identity (`path:<root_dir>`) — the
+                // initial visited seed — followed by the cyclic
+                // child identities. v1.2.3 (B2): empty/None ref drops
+                // the trailing `@`, so the cyclic id is just
+                // `url:<url_a>` (no `@`).
+                let id_a = format!("url:{url_a}");
                 assert!(
-                    chain.iter().any(|s| s == &format!("url:{url_a}@")),
+                    chain.iter().any(|s| s == &id_a),
                     "chain must mention the cyclic url, got {chain:?}"
                 );
                 assert!(chain.len() >= 2, "self-loop chain has at least 2 entries: {chain:?}");
                 let last = chain.last().unwrap();
+                assert_eq!(last, &id_a, "chain must end with the recurring child identity");
                 let first_match = chain.iter().position(|s| s == last).unwrap();
                 assert!(
                     first_match < chain.len() - 1,
                     "the recurring identity must appear earlier in the chain: {chain:?}"
+                );
+                // The root frame is path-namespaced and disjoint from
+                // any child's url-namespaced identity, so it must
+                // appear at the head of the chain without colliding.
+                assert!(
+                    chain[0].starts_with("path:"),
+                    "chain head is the root path identity: {chain:?}"
                 );
             }
             other => panic!("expected CycleDetected, got {other:?}"),
@@ -1680,12 +1735,16 @@ mod tests {
             .expect_err("three-node cycle must abort");
         match err {
             TreeError::CycleDetected { chain } => {
-                // Chain order: a, b, c, a (in entry order, with the
+                // v1.2.3 (B4): chain leads with the root's
+                // path-namespaced identity. v1.2.3 (B2): empty/None
+                // ref drops the trailing `@`. Chain order:
+                // [path:root, a, b, c, a] (entry order, with the
                 // recurring `a` appended at the cycle-detection point).
-                let id_a = format!("url:{url_a}@");
-                let id_b = format!("url:{url_b}@");
-                let id_c = format!("url:{url_c}@");
-                assert_eq!(chain, vec![id_a.clone(), id_b, id_c, id_a]);
+                let id_root = pack_identity_for_root(&root_dir);
+                let id_a = format!("url:{url_a}");
+                let id_b = format!("url:{url_b}");
+                let id_c = format!("url:{url_c}");
+                assert_eq!(chain, vec![id_root, id_a.clone(), id_b, id_c, id_a]);
             }
             other => panic!("expected CycleDetected, got {other:?}"),
         }
@@ -1765,5 +1824,325 @@ mod tests {
             "no errors expected when ancestor and descendant differ only by ref: {:?}",
             report.errors
         );
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.3 — additional cycle/diamond coverage (T1, T2, T3).
+    //
+    // T1 covers the diamond-shared-descendant case the
+    // clone-per-child scheme is meant to permit; T2 stretches the
+    // cycle to length 4 to exercise chain accumulation; T3 verifies
+    // the cycle detector sees a cycle introduced inside an inner
+    // subtree even though the outer arm is acyclic.
+    // -----------------------------------------------------------------
+
+    /// T1 — Diamond, NO cycle. Topology:
+    ///
+    /// ```text
+    ///   root → A
+    ///   root → B
+    ///   A    → C
+    ///   B    → C   (C is a shared descendant)
+    /// ```
+    ///
+    /// Walker must traverse all four packs and produce no
+    /// `CycleDetected`. Because the cycle detector clones the
+    /// `visited` chain per child, A's descendants do not poison B's
+    /// descendant view, so seeing `C` from both arms is a diamond,
+    /// not a cycle.
+    #[test]
+    fn cycle_diamond_shared_descendant_no_cycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Disk layout: root/a, root/b, root/a/c, root/b/c.
+        // Each `c` lives at a distinct on-disk slot so classify
+        // succeeds; identity equality is what would (incorrectly)
+        // trip the cycle detector if clone-per-child were broken.
+        let a_dir = root_dir.join("a");
+        let b_dir = root_dir.join("b");
+        let c_under_a_dir = a_dir.join("c");
+        let c_under_b_dir = b_dir.join("c");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        make_sub_meta_on_disk(&c_under_a_dir, "c");
+        make_sub_meta_on_disk(&c_under_b_dir, "c");
+        let url_a = "https://example.com/a.git";
+        let url_b = "https://example.com/b.git";
+        let url_c = "https://example.com/c.git";
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with("root", vec![child(url_a, "a"), child(url_b, "b")]),
+            )
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_c, "c")]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![child(url_c, "c")]))
+            .with(c_under_a_dir.clone(), meta_manifest_with("c", vec![]))
+            .with(c_under_b_dir.clone(), meta_manifest_with("c", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report =
+            sync_meta(&root_dir, &backend, &loader, &opts, &[]).expect("diamond is NOT a cycle");
+        // Four distinct manifest visits: root, a, b, c-via-a, c-via-b.
+        // A and B both expand into their own `c`, so the walker
+        // visits `c` twice (once per arm) — five `metas_visited`.
+        assert_eq!(
+            report.metas_visited, 5,
+            "diamond: root + a + b + c-under-a + c-under-b = 5 visits"
+        );
+        // Crucially, no errors of any kind — and certainly not a
+        // CycleDetected — because the two `C` visits live on
+        // disjoint cloned visited chains.
+        assert!(
+            !report.errors.iter().any(|e| matches!(e, TreeError::CycleDetected { .. })),
+            "diamond must not surface CycleDetected; errors={:?}",
+            report.errors
+        );
+        assert!(report.errors.is_empty(), "diamond should produce no errors: {:?}", report.errors);
+    }
+
+    /// T2 — 4-node cycle: `root → A → B → C → D → A`. Cycle length 4
+    /// in pack-identity terms; the reported chain has length 5 once
+    /// the recurring `A` is appended at detection. The root frame's
+    /// `path:` identity also leads the chain (B4), so the final
+    /// length is 6.
+    #[test]
+    fn cycle_four_node_aborts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Disk chain: root → a → b → c → d → a (the second `a` lives
+        // at a fresh slot so classify succeeds; identity collision is
+        // what trips the cycle detector).
+        let a_dir = root_dir.join("a");
+        let b_dir = a_dir.join("b");
+        let c_dir = b_dir.join("c");
+        let d_dir = c_dir.join("d");
+        let a2_dir = d_dir.join("a");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        make_sub_meta_on_disk(&c_dir, "c");
+        make_sub_meta_on_disk(&d_dir, "d");
+        make_sub_meta_on_disk(&a2_dir, "a");
+        let url_a = "https://example.com/a.git";
+        let url_b = "https://example.com/b.git";
+        let url_c = "https://example.com/c.git";
+        let url_d = "https://example.com/d.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_b, "b")]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![child(url_c, "c")]))
+            .with(c_dir.clone(), meta_manifest_with("c", vec![child(url_d, "d")]))
+            // d re-declares a → cycle of length 4 in url-namespace.
+            .with(d_dir.clone(), meta_manifest_with("d", vec![child(url_a, "a")]))
+            .with(a2_dir.clone(), meta_manifest_with("a", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("four-node cycle must abort");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                let id_root = pack_identity_for_root(&root_dir);
+                let id_a = format!("url:{url_a}");
+                let id_b = format!("url:{url_b}");
+                let id_c = format!("url:{url_c}");
+                let id_d = format!("url:{url_d}");
+                // [path:root, a, b, c, d, a] — six entries.
+                assert_eq!(
+                    chain,
+                    vec![id_root, id_a.clone(), id_b, id_c, id_d, id_a.clone()],
+                    "expected full ancestor chain ending in the recurring A"
+                );
+                assert!(
+                    chain.len() >= 5,
+                    "four-node cycle chain has at least 5 entries: {chain:?}"
+                );
+                // Last element repeats earlier in the chain (the
+                // recurring identity).
+                let last = chain.last().unwrap();
+                let first_match = chain.iter().position(|s| s == last).unwrap();
+                assert!(
+                    first_match < chain.len() - 1,
+                    "the recurring identity must appear earlier in the chain: {chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    /// T3 — Nested-prefix cycle. Outer arm `root → A → B → C` is
+    /// acyclic; the cycle lives inside B's other child `D`, which
+    /// loops back to B (`B → D → B`). The walker must surface
+    /// `CycleDetected` and the cycle should appear inside the
+    /// subtree (not at the root level), with B as the recurring
+    /// identity.
+    ///
+    /// Specifically: A's children = [B], B's children = [C, D], C
+    /// has no children, D's children = [B] (cycle).
+    #[test]
+    fn cycle_nested_prefix_aborts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Disk layout: root/a, root/a/b, root/a/b/c (acyclic arm),
+        // root/a/b/d (cycle arm), root/a/b/d/b (D loops back to B —
+        // identity collision; on-disk path is fresh so classify
+        // succeeds).
+        let a_dir = root_dir.join("a");
+        let b_dir = a_dir.join("b");
+        let c_dir = b_dir.join("c");
+        let d_dir = b_dir.join("d");
+        let b2_dir = d_dir.join("b");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        make_sub_meta_on_disk(&c_dir, "c");
+        make_sub_meta_on_disk(&d_dir, "d");
+        make_sub_meta_on_disk(&b2_dir, "b");
+        let url_a = "https://example.com/a.git";
+        let url_b = "https://example.com/b.git";
+        let url_c = "https://example.com/c.git";
+        let url_d = "https://example.com/d.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_b, "b")]))
+            // b has both an acyclic child (c) and a cyclic one (d).
+            .with(
+                b_dir.clone(),
+                meta_manifest_with("b", vec![child(url_c, "c"), child(url_d, "d")]),
+            )
+            .with(c_dir.clone(), meta_manifest_with("c", vec![]))
+            // d re-declares b → cycle inside the b/d subtree.
+            .with(d_dir.clone(), meta_manifest_with("d", vec![child(url_b, "b")]))
+            .with(b2_dir.clone(), meta_manifest_with("b", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("nested-prefix cycle must abort");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                let id_root = pack_identity_for_root(&root_dir);
+                let id_a = format!("url:{url_a}");
+                let id_b = format!("url:{url_b}");
+                let id_d = format!("url:{url_d}");
+                // The cycle hits inside the subtree at depth 4:
+                // [path:root, a, b, d, b].
+                assert_eq!(
+                    chain,
+                    vec![id_root.clone(), id_a, id_b.clone(), id_d, id_b.clone()],
+                    "cycle should appear inside the subtree, not at the top"
+                );
+                // Recurring identity is `b`, and it does NOT appear
+                // at the chain's outermost position — the root path
+                // identity does. This verifies the cycle is "inside"
+                // the tree.
+                let last = chain.last().unwrap();
+                assert_eq!(last, &id_b, "recurring identity is B");
+                assert_ne!(
+                    chain.first().unwrap(),
+                    last,
+                    "cycle must not start at the root frame: {chain:?}"
+                );
+                assert_eq!(
+                    chain.first().unwrap(),
+                    &id_root,
+                    "chain must begin with the root path identity: {chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    /// B1 regression: max_depth must NOT mask cycle detection. Cycle
+    /// check fires before depth-cap return in phase3_handle_child.
+    ///
+    /// Topology: same 4-node cycle as `cycle_four_node_aborts`
+    /// (`root → A → B → C → D → A`). Recurring `A` is reached at
+    /// `next_depth = 5`. With `max_depth: Some(4)`, the depth cap
+    /// would skip the recurring frame BEFORE it can be tested for
+    /// cycle membership — *if* B1 were reverted (i.e. depth-cap
+    /// early-return placed before the cycle check). The current
+    /// ordering (cycle-then-depth-cap, see `phase3_handle_child`)
+    /// surfaces `CycleDetected` regardless of the cap.
+    ///
+    /// If anyone reverts B1's reorder, this test fails: the walker
+    /// returns `Ok(_)` instead of `Err(CycleDetected)` because the
+    /// recurring frame is silently truncated.
+    #[test]
+    fn cycle_aborts_under_max_depth_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let a_dir = root_dir.join("a");
+        let b_dir = a_dir.join("b");
+        let c_dir = b_dir.join("c");
+        let d_dir = c_dir.join("d");
+        let a2_dir = d_dir.join("a");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        make_sub_meta_on_disk(&c_dir, "c");
+        make_sub_meta_on_disk(&d_dir, "d");
+        make_sub_meta_on_disk(&a2_dir, "a");
+        let url_a = "https://example.com/a.git";
+        let url_b = "https://example.com/b.git";
+        let url_c = "https://example.com/c.git";
+        let url_d = "https://example.com/d.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_b, "b")]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![child(url_c, "c")]))
+            .with(c_dir.clone(), meta_manifest_with("c", vec![child(url_d, "d")]))
+            .with(d_dir.clone(), meta_manifest_with("d", vec![child(url_a, "a")]))
+            .with(a2_dir.clone(), meta_manifest_with("a", vec![]));
+        let backend = InMemGit::new();
+        // max_depth: Some(4) — the recurring A frame would land at
+        // next_depth=5, which exceeds the cap. With B1, the cycle
+        // check still fires first; without B1, the cap would skip
+        // before the cycle is detected.
+        let opts = SyncMetaOptions { max_depth: Some(4), ..SyncMetaOptions::default() };
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("cycle must surface even when its closing frame exceeds max_depth");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                let id_a = format!("url:{url_a}");
+                assert!(
+                    chain.last() == Some(&id_a),
+                    "recurring identity must be A, got chain={chain:?}"
+                );
+                let last = chain.last().unwrap();
+                let first_match = chain.iter().position(|s| s == last).unwrap();
+                assert!(
+                    first_match < chain.len() - 1,
+                    "the recurring identity must appear earlier in the chain: {chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    /// B2 regression: `pack_identity_for_child` must NOT emit a
+    /// trailing `@` when `r#ref` is `Some("")` (empty string). Both
+    /// `Some("")` and `None` collapse to the bare `url:<url>` form so
+    /// the on-the-wire identity matches the Lean model
+    /// (`Grex.Walker.ChildRef.identity`). Without this elision two
+    /// children that differ only in `ref: None` vs `ref: Some("")`
+    /// would serialise the same way as `url:<url>@`, masking the
+    /// distinction the Lean spec draws — and worse, an identity
+    /// ending in `@` leaks an empty-ref artifact into operator
+    /// diagnostics.
+    #[test]
+    fn child_identity_some_empty_ref_omits_at() {
+        let url = "https://example.com/a.git";
+        let with_none = ChildRef { url: url.to_string(), path: Some("a".to_string()), r#ref: None };
+        let with_empty = ChildRef {
+            url: url.to_string(),
+            path: Some("a".to_string()),
+            r#ref: Some(String::new()),
+        };
+        let id_none = pack_identity_for_child(&with_none);
+        let id_empty = pack_identity_for_child(&with_empty);
+        let expected = format!("url:{url}");
+        assert_eq!(id_none, expected, "None ref must produce bare url identity");
+        assert_eq!(
+            id_empty, expected,
+            "Some(\"\") ref must collapse to bare url identity (no trailing @)"
+        );
+        assert_eq!(id_none, id_empty, "Some(\"\") and None must yield the same identity");
+        assert!(!id_empty.ends_with('@'), "identity must not end with trailing @: {id_empty:?}");
     }
 }
