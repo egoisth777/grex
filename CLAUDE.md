@@ -31,4 +31,4 @@ On every new session, read in order:
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: v1.2.1 follow-up — mdbook doc-debt + rayon parallel scheduler + CLI migrate-lockfile dispatcher. v1.2.0 SHIPPED 2026-04-30 (main @ commit 2c1791d, tag v1.2.0). Pick up from progress.md "## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)" and the "Deferred to v1.2.1+" list within.
+Active feature: v1.2.4 (NOT STARTED, scope-pending). v1.2.3 SHIPPED 2026-05-02 (main @ commit 6f996fb post-purge, tags v1.2.0 → v1.2.3 rewritten). SSOT reliability + history purge META SHIPPED 2026-05-02 (grex-inst main @ 65233e2). Pick up from progress.md "## Endpoint (2026-05-02, main — SSOT reliability + history purge SHIPPED)" + the carry-forward list within (architecture: par_iter cancellation token + partial-clone cleanup; perf: pool.install deadlock guard; polish: visited→ancestors rename, m7_scope dead-code; tests: proptest cycle generator).

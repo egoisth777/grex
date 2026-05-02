@@ -1,13 +1,54 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.3 SHIPPED)` (immediately below). Active branch: `main @ 7de96d1` (v1.2.3 squash-merge of PR #62). Tags `v1.2.2` + `v1.2.3` pushed to origin. `feat/v1.2.2` and `feat/v1.2.3` deleted (local + remote). v1.2.4 cycle: NOT STARTED. Last action: v1.2.3 ship.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — SSOT reliability + history purge SHIPPED)` (immediately below). Active branch: `main @ 6f996fb` (post-purge SHA; pre-purge progression was `7de96d1` → `643ac33` → `73c2cb4`). Tags `v1.2.1`, `v1.2.2`, `v1.2.3` all rewritten + force-pushed (now point to trailer-free commits). `feat/v1.2.2` and `feat/v1.2.3` deleted (local + remote). v1.2.4 cycle: NOT STARTED. Last action: SSOT reliability shipment + history purge across both repos.
 
-**v1.2.3 SHIPPED 2026-05-02 on `main` (squash commit `7de96d1`, PR #62).** SemVer = PATCH. Three pure bug fixes from v1.2.2 reviewer findings: B1 (depth-cap masking), B2 (empty-ref `Display` trailing `@`), B4 (root identity in cycle chain). B3 dropped pre-impl (non-bug). Lean theorem `sync_meta_no_cycle_infinite_clone` generalized over arbitrary initial `visited` — same theorem now covers v1.2.2 (`visited=[]`) and v1.2.3 (`visited=[root_id]`); `lake build` green, 0 `sorry`, kernel deps `[propext]` only, axioms 9/4/0. 5 new tests (T1-T3 + F1-F2 review fix-ups). All 4 crates (grex-core/grex-plugins-builtin/grex-mcp/grex-cli) live on crates.io at `1.2.3`.
+**SSOT reliability + history purge SHIPPED 2026-05-02.** grex-inst PR #1 (`feat-ssot-reliability → main @ 65233e2`) landed Tier 1 (G1 routing table, G2 frontmatter schema, G7 workflow doc, G8 disciplines 10-15) + Tier 2 (G3 INDEX.yaml — 37 entries auto-generated, G4 validate.py + build_index.py + pre-commit hook). Reviewed by 4 parallel subagents + 4 fix-up workers + Codex rescue. grex CLAUDE.md DON'T #8 added: project-scope override of global Co-Authored-By trailer template per discipline 13 (commit `c325b32` → `6f996fb` post-purge). History purge (DESTRUCTIVE) completed: grex 37 reachable trailer commits → 0, all 10 tags rewritten (v1.0.0 → v1.2.3); grex-inst 19 refs rewritten across all branches; branch protection on grex main temporarily lifted, force-pushed, restored. **All v1.2.x crates.io releases intact** (only commit metadata changed, code unchanged).
 
-**v1.2.2 SHIPPED 2026-05-02 on `main` (squash commit `92ec7fd`, PR #61).** SemVer = PATCH. Closed the v1.2.1 BLOCKER: `sync_meta` cycle detection at Walker Phase 3 recurse edge (Q6) using A.1 clone-per-child `Vec<String>` visited propagation (Q7). Lean theorem `sync_meta_no_cycle_infinite_clone` proved (lake green, axioms 9/4/0). `e2e_cycle_aborts` re-enabled + 3 new unit tests. Tag `v1.2.2` pushed. Crates published at `1.2.2`. Post-merge fix-up `bfe3359` for CI version-coupled artifacts (`xtask/tests/version_test.rs` pin + man-drift).
+**v1.2.3 SHIPPED 2026-05-02 on `main` (squash commit `7de96d1` pre-purge, PR #62).** SemVer = PATCH. Three pure bug fixes from v1.2.2 reviewer findings: B1 (depth-cap masking), B2 (empty-ref `Display` trailing `@`), B4 (root identity in cycle chain). B3 dropped pre-impl (non-bug). Lean theorem `sync_meta_no_cycle_infinite_clone` generalized over arbitrary initial `visited` — same theorem now covers v1.2.2 (`visited=[]`) and v1.2.3 (`visited=[root_id]`); `lake build` green, 0 `sorry`, kernel deps `[propext]` only, axioms 9/4/0. 5 new tests (T1-T3 + F1-F2 review fix-ups). All 4 crates (grex-core/grex-plugins-builtin/grex-mcp/grex-cli) live on crates.io at `1.2.3` (unchanged by purge).
+
+**v1.2.2 SHIPPED 2026-05-02 on `main` (squash commit `92ec7fd` pre-purge, PR #61).** SemVer = PATCH. Closed the v1.2.1 BLOCKER: `sync_meta` cycle detection at Walker Phase 3 recurse edge (Q6) using A.1 clone-per-child `Vec<String>` visited propagation (Q7). Lean theorem `sync_meta_no_cycle_infinite_clone` proved (lake green, axioms 9/4/0). `e2e_cycle_aborts` re-enabled + 3 new unit tests. Tag `v1.2.2` rewritten + force-pushed post-purge. Crates published at `1.2.2`. Post-merge fix-up `bfe3359` (pre-purge) for CI version-coupled artifacts (`xtask/tests/version_test.rs` pin + man-drift).
 
 **v1.2.0 + v1.2.1 SHIPPED 2026-04-30.** Detailed endpoints preserved under "## Archived endpoints" below.
+
+**SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
+
+## Endpoint (2026-05-02, main — SSOT reliability + history purge SHIPPED)
+
+**State:** main @ 6f996fb. SSOT updated to enforce schema + validation gates. All Co-Authored-By trailers purged across both repos.
+
+**This session shipped (post-v1.2.3):**
+- SSOT reliability + harness determinism (Tier 1 + Tier 2). PR #1 grex-inst → main @ 65233e2.
+  - G1 GENERATED-vs-hand-edited routing table (38 rows in schemas/rules.md)
+  - G2 frontmatter schema (slug + type + status + last_updated required; 37 .md files retrofitted)
+  - G3 auto-generated INDEX.yaml (37 entries, agent grep target)
+  - G4 scripts/validate.py + build_index.py + .git-hooks/pre-commit (no `--no-verify` bypass per discipline 15)
+  - G7 cfg/workflow.md (5-phase end-to-end pattern codified)
+  - G8 disciplines 10-15 (frontmatter required, routing-table compliance, INDEX generated, no Co-Authored-By, parallel-non-conflicting, validation-gate-no-bypass)
+- grex CLAUDE.md DON'T #8: project-scope override of global commit template (commit 6f996fb)
+- History purge (DESTRUCTIVE):
+  - grex: filter-branch on --all, all 10 tags rewritten, force-push main + tags, branch protection cycled
+  - grex-inst: filter-branch on --all, force-push main
+  - 0 trailer commits remain in either repo
+
+**Process gaps closed:**
+- Pre-SSOT-reliability sessions had Co-Authored-By trailer leak across all commits — now blocked by discipline 13 + grex CLAUDE.md DON'T #8
+- No SSOT schema enforcement → now validate.py + pre-commit hook guard every SSOT commit
+- history.md draft → SHIPPED promotion drift — formalized via G2 status enum (active|deprecated|stub|generated)
+- Pre-push local gate misses (fmt, doc, clippy, version_test pin, man-drift) — now codified in cfg/workflow.md Phase 2 Step 7
+
+**Carry-forward to v1.2.4 / v1.3 (unchanged from prior endpoints):**
+- Architecture: par_iter cancellation token, partial-clone cleanup on cycle abort, pool.install deadlock guard on size-1 pool
+- Test coverage: proptest cycle generator, T1 destination spot-check
+- Polish: rename `visited`→`ancestors`, dead-code from m7_scope (PackLock::acquire sync, Scheduler::permits, etc.)
+- Doc: `#print axioms` smoke check in CI to lock proof foundation
+- v1.2.0 follow-ups: quarantine GC/restore, retention policy, TreeError variant split, cap-std hardening, --workspace→--pack rename, stale manifest.md
+- SSOT v2 (deferred from this pass): owners.yaml, topic-reorg of cfg/, lib/cfg dedup, history.md aggregator-driven migration
+
+**Open at session end:**
+- v1.2.4 NOT STARTED; ready to align scope
+- Working-tree drift (statusline-probe.txt, crates/grex/.grex/, .gitignore CRLF/NUL recurrence) — investigate root cause in v1.2.4
+- Branch state: main clean (grex + grex-inst); feature branches deleted post-merge
 
 ## Endpoint (2026-05-02, main — v1.2.3 SHIPPED)
 
