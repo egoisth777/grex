@@ -150,6 +150,14 @@ pub struct SyncOptions {
     /// is unbounded recursion when `recurse` is `true`. `Some(n)`
     /// caps depth at `n` levels of nesting.
     pub max_depth: Option<usize>,
+    /// v1.2.5 — when `Some(N)`, every meta sync starts with a
+    /// best-effort GC sweep over `<meta>/.grex/trash/`, deleting
+    /// entries older than `N` days. `None` (default) preserves the
+    /// v1.2.1 indefinite-retention behavior. The CLI surfaces this
+    /// as `grex sync --retain-days N`; library callers wire it via
+    /// [`SyncOptions::with_retain_days`]. Sweep failures log via
+    /// `tracing::warn!` and DO NOT halt the sync.
+    pub retain_days: Option<u32>,
 }
 
 impl Default for SyncOptions {
@@ -171,6 +179,7 @@ impl Default for SyncOptions {
             migrate_lockfile: false,
             recurse: true,
             max_depth: None,
+            retain_days: None,
         }
     }
 }
@@ -277,6 +286,17 @@ impl SyncOptions {
     #[must_use]
     pub fn with_quarantine(mut self, quarantine: bool) -> Self {
         self.quarantine = quarantine;
+        self
+    }
+
+    /// Set `retain_days` (`--retain-days N`). See
+    /// [`SyncOptions::retain_days`] for the GC-sweep contract.
+    /// `None` preserves v1.2.1 indefinite-retention behavior;
+    /// `Some(N)` triggers a best-effort sweep at the start of every
+    /// meta sync.
+    #[must_use]
+    pub fn with_retain_days(mut self, retain_days: Option<u32>) -> Self {
+        self.retain_days = retain_days;
         self
     }
 }
@@ -767,6 +787,11 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
         trash_root: workspace.join(".grex").join("trash"),
         audit_log: crate::manifest::event_log_path(workspace),
     });
+    // v1.2.5 — thread `--retain-days N` into the per-meta options so
+    // every recursion frame swept its own trash bucket. `None` skips
+    // the GC entirely (v1.2.1 indefinite-retention).
+    let retention =
+        opts.retain_days.map(|retain_days| crate::tree::RetentionConfig { retain_days });
     let meta_opts = SyncMetaOptions {
         ref_override: opts.ref_override.clone(),
         recurse: opts.recurse,
@@ -775,6 +800,7 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
         force_prune_with_ignored: opts.force_prune_with_ignored,
         parallel,
         quarantine,
+        retention,
     };
     let prune_candidates = compute_prune_candidates(workspace, &loader);
     let report = sync_meta(workspace, &backend, &loader, &meta_opts, &prune_candidates)?;

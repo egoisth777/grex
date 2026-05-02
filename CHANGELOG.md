@@ -40,6 +40,62 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.2.5] - 2026-05-02
+
+### Added
+
+- A2 partial-clone cleanup: failed / skipped / cancelled clone
+  outcomes now atomically remove the destination directory before
+  surfacing the error, so a half-cloned `<dest>/.git/` cannot
+  poison subsequent `grex sync` runs. New helper
+  `cleanup_partial_clone` centralises the dest-removal logic and
+  is invoked from the `Skipped`, `Cancelled`, and `Failed` arms of
+  the walker clone outcome match.
+- A3 pool deadlock guard: debug-only `PoolInstallDepthGuard` plus a
+  thread-local `HELD_PACK_LOCKS` counter. A debug-assert fires if
+  `pool.install` re-entry is attempted while a pack lock is held on
+  the same thread, catching the re-entrancy class of deadlock at
+  test time. Release builds compile the guard out (zero overhead).
+- Quarantine GC + restore + retention: new `prune` and `restore`
+  functions in `grex_core::quarantine`; `--retain-days N` CLI flag
+  on `grex sync`; GC sweep exposed via
+  `grex doctor --prune-quarantine [--retain-days N]`; restore
+  exposed via
+  `grex doctor --restore-quarantine TS[:BASENAME] [--force]`.
+  Two new audit `Event` variants `QuarantineRestored` and
+  `QuarantineGCSwept` written to the per-meta
+  `.grex/events.jsonl`.
+- New public types: `RetentionConfig` (retention policy carrier),
+  `PruneReport` (GC sweep result envelope), and `RestoreReport`
+  (restore operation result envelope) in `grex_core::quarantine`.
+- New `Event::Unknown` forward-compat variant — silently dropped on
+  read so older binaries tolerate future audit-log variants;
+  refused on write to keep the writer surface authoritative.
+- New `CheckKind::QuarantineGc` and `CheckKind::QuarantineRestore`
+  variants surfacing the new `doctor` flags as first-class checks
+  in the `DoctorReport`.
+- `#[non_exhaustive]` retrofitted onto `QuarantineError`,
+  `SyncMetaOptions`, `CheckKind`, and `DoctorOpts` so future PATCH
+  releases can add variants / fields without a SemVer break.
+- New tests: T-A2 (cleanup-on-fail invariant), T-A3
+  (deadlock-guard debug-panic), T-Q1 / T-Q2 / T-Q3 / T-Q4
+  (quarantine restore / gc / retention / audit-log), T-R1
+  (`sync --retain-days` end-to-end retention sweep).
+
+### Changed
+
+- Lean axiom budget unchanged at 9 bridge / 4 types / 0 model.
+  v1.2.5 added 2 new theorems whose kernel dependencies are
+  `[propext]` only — no new axiom introduced; CI axiom-set gate
+  asserts unchanged counts.
+
+### Deprecated
+
+- (No new deprecations in v1.2.5.) Carry-forward from v1.2.4,
+  still slated for removal in v1.3.0: `PackLock::acquire` (sync
+  variant), `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS`
+  const.
+
 ## [1.2.4] - 2026-05-02
 
 ### Added
@@ -538,7 +594,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.5...HEAD
+[1.2.5]: https://github.com/egoisth777/grex/releases/tag/v1.2.5
 [1.2.4]: https://github.com/egoisth777/grex/releases/tag/v1.2.4
 [1.2.3]: https://github.com/egoisth777/grex/releases/tag/v1.2.3
 [1.2.2]: https://github.com/egoisth777/grex/releases/tag/v1.2.2

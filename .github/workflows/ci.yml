@@ -101,15 +101,15 @@ jobs:
       - name: Build docs (warnings as errors)
         run: cargo doc --workspace --no-deps --all-features
 
-  # Gate 3: MSRV guard (Rust 1.75, matches workspace rust-version).
+  # Gate 3: MSRV guard (Rust 1.79, matches workspace rust-version).
   msrv:
-    name: msrv (1.75)
+    name: msrv (1.79)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.75"
+          toolchain: "1.79"
       - uses: Swatinem/rust-cache@v2
       - name: cargo check on MSRV
         run: cargo check --workspace --all-targets
@@ -267,12 +267,17 @@ jobs:
         working-directory: proof
         shell: bash
         run: |
-          # v1.2.4 Rule-8 gate (.omne/schemas/rules.md §8): the two
-          # walker correctness theorems below MUST depend on at most
+          # v1.2.4 + v1.2.5 Rule-8 gate (.omne/schemas/rules.md §8):
+          # the four correctness theorems below MUST depend on at most
           # `propext` — no bridge axiom, no model placeholder, no
           # Classical.choice. Any drift means a downstream proof leaked
           # a hypothesis-level dependency and the Lean model no longer
           # corresponds to the documented Rust contract.
+          #
+          # v1.2.4: Grex.Walker.cancellation_terminates_promptly
+          # v1.2.4: Grex.Walker.sync_meta_no_cycle_infinite_clone
+          # v1.2.5: Grex.Walker.partial_clone_cleanup_idempotent
+          # v1.2.5: Grex.Scheduler.pool_deadlock_guard_terminates
           #
           # Mechanism: write a probe file that imports the proof library
           # and emits `#print axioms` for each theorem, run it through
@@ -287,8 +292,11 @@ jobs:
           trap 'rm -f "$probe"' EXIT
           cat > "$probe" <<'EOF'
           import Grex.Walker
+          import Grex.Scheduler
           #print axioms Grex.Walker.cancellation_terminates_promptly
           #print axioms Grex.Walker.sync_meta_no_cycle_infinite_clone
+          #print axioms Grex.Walker.partial_clone_cleanup_idempotent
+          #print axioms Grex.Scheduler.pool_deadlock_guard_terminates
           EOF
           # Run the probe via `lake env lean --run` semantics: plain
           # `lake env lean <file>` elaborates the file and prints all
@@ -301,6 +309,8 @@ jobs:
           theorems=(
             "Grex.Walker.cancellation_terminates_promptly"
             "Grex.Walker.sync_meta_no_cycle_infinite_clone"
+            "Grex.Walker.partial_clone_cleanup_idempotent"
+            "Grex.Scheduler.pool_deadlock_guard_terminates"
           )
           fail=0
           for thm in "${theorems[@]}"; do

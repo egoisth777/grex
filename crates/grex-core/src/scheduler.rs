@@ -32,10 +32,83 @@
 //! wrap the whole `Scheduler` in your own `Arc` and share that. The
 //! internal handle will be removed in v1.3.0.
 
+#[cfg(debug_assertions)]
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
+
+// A3 (v1.2.5) — Pool deadlock guard.
+//
+// Per-OS-thread depth counter for nested `rayon::ThreadPool::install` calls.
+// Used in debug builds by `phase3_recurse` (and the `pack_lock` thread-local
+// `HELD_PACK_LOCKS` set) to assert that no thread re-enters `pool.install`
+// while holding a `PackLock` — the v1.2.2 R#1 MED deadlock pattern.
+//
+// Release builds compile this out via `cfg(debug_assertions)`; the
+// release-build `PoolInstallDepthGuard` below is a zero-sized no-op so
+// callers in `walker.rs` / `pack_lock.rs` compile under both profiles.
+//
+// See `openspec/changes/feat-v1.2.5-cleanup-deadlock-quarantine/design.md` §A3.
+#[cfg(debug_assertions)]
+thread_local! {
+    pub(crate) static POOL_INSTALL_DEPTH: RefCell<usize> = const { RefCell::new(0) };
+}
+
+/// RAII guard that increments `POOL_INSTALL_DEPTH` on construction and
+/// decrements on drop. Use at the entry of every `pool.install` call site.
+///
+/// Debug builds: tracks depth via the thread-local counter so nested-pool
+/// assertions in `phase3_recurse` can fire when the deadlock pattern is hit.
+///
+/// Release builds: zero-sized no-op. The counter is unavailable; the type
+/// only exists so callers compile under both profiles without `cfg` gates.
+#[cfg(debug_assertions)]
+#[allow(dead_code)] // call sites land in W1 (walker.rs) + W2 (pack_lock.rs)
+pub(crate) struct PoolInstallDepthGuard(());
+
+#[cfg(debug_assertions)]
+impl PoolInstallDepthGuard {
+    #[allow(dead_code)] // call sites land in W1 (walker.rs) + W2 (pack_lock.rs)
+    pub(crate) fn new() -> Self {
+        POOL_INSTALL_DEPTH.with(|d| *d.borrow_mut() += 1);
+        Self(())
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Drop for PoolInstallDepthGuard {
+    fn drop(&mut self) {
+        POOL_INSTALL_DEPTH.with(|d| {
+            let next = d.borrow().saturating_sub(1);
+            *d.borrow_mut() = next;
+        });
+    }
+}
+
+/// Release-build no-op variant — see the debug-build doc comment for intent.
+#[cfg(not(debug_assertions))]
+#[allow(dead_code)] // call sites land in W1 (walker.rs) + W2 (pack_lock.rs)
+pub(crate) struct PoolInstallDepthGuard;
+
+#[cfg(not(debug_assertions))]
+impl PoolInstallDepthGuard {
+    #[allow(dead_code)] // call sites land in W1 (walker.rs) + W2 (pack_lock.rs)
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+/// Read the current thread's `POOL_INSTALL_DEPTH`. Debug-only;
+/// unavailable to release builds because the underlying counter is
+/// gated. Available under `#[cfg(debug_assertions)]` (not just
+/// `#[cfg(test)]`) because the walker production code path itself
+/// reads it inside a `debug_assert!` block in `phase3_recurse`.
+#[cfg(debug_assertions)]
+pub(crate) fn pool_install_depth_for_test() -> usize {
+    POOL_INSTALL_DEPTH.with(|d| *d.borrow())
+}
 
 /// Bounded parallel scheduler — caps concurrent pack operations.
 ///

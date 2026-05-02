@@ -235,7 +235,11 @@ async fn cancellation_under_scheduler_pressure_does_not_deadlock() {
     // a deadlock regression would manifest as a timeout panic.
     let backend = Arc::new(InMemGit::new());
     let backend_for_walker = Arc::clone(&backend);
-    let opts = SyncMetaOptions { parallel: Some(4), ..SyncMetaOptions::default() };
+    // `SyncMetaOptions` is `#[non_exhaustive]` (v1.2.5 W1) — external crates
+    // cannot use struct-literal construction even with `..base` spread per
+    // E0639. Mutate a `default()` instance instead.
+    let mut opts = SyncMetaOptions::default();
+    opts.parallel = Some(4);
 
     let walk_fut = tokio::task::spawn_blocking(move || {
         sync_meta(&root_dir, &*backend_for_walker, &loader, &opts, &[])

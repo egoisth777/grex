@@ -55,7 +55,11 @@ pub(crate) async fn handle(
     let workspace = (*state.workspace).clone();
     // `fix: false` is pinned on the MCP surface. Heals are a CLI-only
     // affordance.
-    let opts = DoctorOpts { fix: false, lint_config: p.lint_config, ..DoctorOpts::default() };
+    // `DoctorOpts` is `#[non_exhaustive]` (v1.2.5 W1) — external crates
+    // cannot use struct-literal construction even with `..base` per E0639.
+    let mut opts = DoctorOpts::default();
+    opts.lint_config = p.lint_config;
+    // `fix: false` is the Default; keep explicit assignment skipped.
 
     // `run_doctor` is synchronous fs I/O. Push onto a blocking thread.
     let ws_c = workspace.clone();

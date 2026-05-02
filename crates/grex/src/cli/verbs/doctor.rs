@@ -12,7 +12,38 @@ use tokio_util::sync::CancellationToken;
 
 pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let workspace = std::env::current_dir()?;
-    let opts = DoctorOpts { fix: args.fix, lint_config: args.lint_config, shallow: args.shallow };
+
+    // v1.2.5 — `--prune-quarantine` resolves the retention window from
+    // the explicit `--retain-days` flag, falling back to the canonical
+    // crate-level default. `--retain-days` without `--prune-quarantine`
+    // is a no-op at the doctor surface (it's threaded into `grex sync`
+    // separately via `SyncArgs::retain_days`).
+    let prune_quarantine = if args.prune_quarantine {
+        Some(args.retain_days.unwrap_or(grex_core::tree::DEFAULT_RETAIN_DAYS))
+    } else {
+        None
+    };
+    // v1.2.5 — parse `--restore-quarantine TS[:BASENAME]`. The `:`
+    // separator is unambiguous because the on-disk timestamp segment
+    // emitted by `iso8601_utc_now` replaces all colons with hyphens
+    // (so a literal `:` cannot appear inside the TS portion).
+    let restore_quarantine = args.restore_quarantine.as_deref().map(|raw| {
+        if let Some((ts, basename)) = raw.split_once(':') {
+            (ts.to_owned(), Some(basename.to_owned()))
+        } else {
+            (raw.to_owned(), None)
+        }
+    });
+
+    // `DoctorOpts` is `#[non_exhaustive]` (v1.2.5 W1) — external crates
+    // cannot use struct-literal construction even with `..base` per E0639.
+    let mut opts = DoctorOpts::default();
+    opts.fix = args.fix;
+    opts.lint_config = args.lint_config;
+    opts.shallow = args.shallow;
+    opts.prune_quarantine = prune_quarantine;
+    opts.restore_quarantine = restore_quarantine;
+    opts.force = args.force;
     let report = run_doctor(&workspace, &opts)?;
 
     if global.json {

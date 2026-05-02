@@ -73,7 +73,8 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
         .with_force(args.force)
         .with_force_prune(args.force_prune)
         .with_force_prune_with_ignored(args.force_prune_with_ignored)
-        .with_quarantine(args.quarantine);
+        .with_quarantine(args.quarantine)
+        .with_retain_days(args.retain_days);
     match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::UsageError => std::process::exit(2),

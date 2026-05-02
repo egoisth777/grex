@@ -185,11 +185,12 @@ fn rayon_fan_out_50_runs_byte_identical_state() {
         let meta_dir = tmp.path().to_path_buf();
         let loader = build_fan_out_loader(&meta_dir);
         let backend = InMemGit::new();
-        let opts = SyncMetaOptions {
-            parallel: Some(8),
-            recurse: false, // leaf children carry no `.grex/pack.yaml`
-            ..SyncMetaOptions::default()
-        };
+        // `SyncMetaOptions` is `#[non_exhaustive]` (v1.2.5 W1) — external
+        // crates cannot use struct-literal construction even with `..base`
+        // per E0639. Mutate a `default()` instance instead.
+        let mut opts = SyncMetaOptions::default();
+        opts.parallel = Some(8);
+        opts.recurse = false; // leaf children carry no `.grex/pack.yaml`
         let report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
 
         // Each fan-out child is `Missing` → exactly KIDS clones.
@@ -342,7 +343,8 @@ fn rayon_nested_3_level_correctness_matches_sequential() {
         pre_materialise(&root);
         let loader = build_nested_loader(&root);
         let backend = InMemGit::new();
-        let opts = SyncMetaOptions { parallel, ..SyncMetaOptions::default() };
+        let mut opts = SyncMetaOptions::default();
+        opts.parallel = parallel;
         let report = sync_meta(&root, &backend, &loader, &opts, &[]).expect("ok");
         // Use basename-relative path for set equality across tempdirs.
         let touched: BTreeSet<String> = backend
@@ -386,7 +388,9 @@ fn rayon_parallel_one_is_sequential_equivalent() {
     let meta_dir = tmp.path().to_path_buf();
     let loader = build_fan_out_loader(&meta_dir); // 16-child fan-out
     let backend = InMemGit::new();
-    let opts = SyncMetaOptions { parallel: Some(1), recurse: false, ..SyncMetaOptions::default() };
+    let mut opts = SyncMetaOptions::default();
+    opts.parallel = Some(1);
+    opts.recurse = false;
     let _report = sync_meta(&meta_dir, &backend, &loader, &opts, &[]).expect("ok");
 
     let urls: Vec<String> = backend

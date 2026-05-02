@@ -36,6 +36,7 @@ use tokio_util::sync::CancellationToken;
 // on this struct and on its handler entry point.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[non_exhaustive]
 pub struct SyncParams {
     /// Pack root: directory holding `.grex/pack.yaml` or the YAML file itself.
     pub pack_root: PathBuf,
@@ -60,6 +61,13 @@ pub struct SyncParams {
     /// Max parallel pack ops. `None` → core default; `0` → unbounded; `1` → serial.
     #[serde(default)]
     pub parallel: Option<u32>,
+    /// Quarantine retention window in days for the meta-sync GC sweep.
+    /// `None` preserves v1.2.1 indefinite-retention behavior; `Some(N)`
+    /// triggers a best-effort sweep at the start of every meta sync. See
+    /// [`grex_core::sync::SyncOptions::retain_days`] for the contract.
+    /// Mirrors the CLI's `--retain-days N` flag (added in v1.2.5).
+    #[serde(default)]
+    pub retain_days: Option<u32>,
 }
 
 pub(crate) async fn handle(
@@ -283,6 +291,7 @@ fn build_opts(p: &SyncParams) -> SyncOptions {
         .with_ref_override(p.ref_override.clone())
         .with_only_patterns(only)
         .with_force(p.force)
+        .with_retain_days(p.retain_days)
 }
 
 fn success_envelope(report: &grex_core::sync::SyncReport) -> CallToolResult {
@@ -317,10 +326,49 @@ mod tests {
             only: Vec::new(),
             force: false,
             parallel: None,
+            retain_days: None,
         };
         let r = handle(&s, Parameters(p), CancellationToken::new()).await.unwrap();
         // We expect failure — pack root does not exist. Either way the
         // tool MUST return Ok(envelope), not a JSON-RPC -32xxx.
         assert!(r.is_error.is_some(), "must set isError flag");
+    }
+
+    /// Codex MEDIUM #5 / v1.2.5 — `retain_days` must propagate from the
+    /// MCP `SyncParams` envelope into the core `SyncOptions` so MCP
+    /// callers reach feature parity with the CLI's `--retain-days N`
+    /// flag.  None and Some(N) both round-trip verbatim.
+    #[test]
+    fn build_opts_propagates_retain_days() {
+        let mut p = SyncParams {
+            pack_root: std::path::PathBuf::from("/tmp/grex-mcp-retain-days-fixture"),
+            workspace: None,
+            dry_run: true,
+            no_validate: true,
+            ref_override: None,
+            only: Vec::new(),
+            force: false,
+            parallel: None,
+            retain_days: Some(30),
+        };
+        let opts = build_opts(&p);
+        assert_eq!(opts.retain_days, Some(30), "Some(30) must propagate verbatim");
+
+        p.retain_days = None;
+        let opts_none = build_opts(&p);
+        assert_eq!(opts_none.retain_days, None, "None must propagate verbatim");
+    }
+
+    /// Companion to the round-trip test: confirm `retainDays` deserialises
+    /// from the camelCase JSON-RPC wire shape (matching the rest of
+    /// `SyncParams`'s `rename_all = "camelCase"` discipline).
+    #[test]
+    fn sync_params_deserialises_retain_days_camel_case() {
+        let json = serde_json::json!({
+            "packRoot": "/tmp/grex-mcp-retain-days-wire",
+            "retainDays": 45_u32,
+        });
+        let p: SyncParams = serde_json::from_value(json).expect("camelCase retainDays parses");
+        assert_eq!(p.retain_days, Some(45));
     }
 }
