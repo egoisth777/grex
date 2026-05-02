@@ -1,7 +1,9 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — SSOT reliability + history purge SHIPPED)` (immediately below). Active branch: `main @ 6f996fb` (post-purge SHA; pre-purge progression was `7de96d1` → `643ac33` → `73c2cb4`). Tags `v1.2.1`, `v1.2.2`, `v1.2.3` all rewritten + force-pushed (now point to trailer-free commits). `feat/v1.2.2` and `feat/v1.2.3` deleted (local + remote). v1.2.4 cycle: NOT STARTED. Last action: SSOT reliability shipment + history purge across both repos.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.4 SHIPPED)` (immediately below). Active branch: `main @ 2136bce` (squash-merge of PR #63 `feat-v1.2.4 → main`). Tag `v1.2.4` on `origin`. All 4 crates live on crates.io at 1.2.4. v1.2.4 cycle: COMPLETE. Next up: v1.2.5 OpenSpec draft.
+
+**v1.2.4 SHIPPED 2026-05-02 on `main` (squash commit `2136bce`, PR #63).** SemVer = PATCH. A1 rayon cooperative cancellation token (`Arc<AtomicBool>` observed at each Phase 3 child entry; first `CycleDetected` flips the flag, in-flight siblings short-circuit) + 6 polish items (`visited`→`ancestors` rename, `OwnCycleGuard`→`VisitedInsertGuard`, dead-code purge: `PackLock::acquire` sync variant, `Scheduler::permits()`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const) + 3 new tests (cancellation behavior, T1 diamond, proptest cycle generator) + CI axiom-set gate + v1.3.0-readiness e2e smoke. Lean theorem `cancellation_terminates_promptly` extends `sync_meta_inner_model` with `cancelled : Bool` param; `lake build` green, kernel deps `[propext]` only, 0 `sorry` / 0 `admit`. All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.4`.
 
 **SSOT reliability + history purge SHIPPED 2026-05-02.** grex-inst PR #1 (`feat-ssot-reliability → main @ 65233e2`) landed Tier 1 (G1 routing table, G2 frontmatter schema, G7 workflow doc, G8 disciplines 10-15) + Tier 2 (G3 INDEX.yaml — 37 entries auto-generated, G4 validate.py + build_index.py + pre-commit hook). Reviewed by 4 parallel subagents + 4 fix-up workers + Codex rescue. grex CLAUDE.md DON'T #8 added: project-scope override of global Co-Authored-By trailer template per discipline 13 (commit `c325b32` → `6f996fb` post-purge). History purge (DESTRUCTIVE) completed: grex 37 reachable trailer commits → 0, all 10 tags rewritten (v1.0.0 → v1.2.3); grex-inst 19 refs rewritten across all branches; branch protection on grex main temporarily lifted, force-pushed, restored. **All v1.2.x crates.io releases intact** (only commit metadata changed, code unchanged).
 
@@ -13,7 +15,41 @@
 
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
-**v1.2.4 IN FLIGHT:** openspec triplet on feat-v1.2.4 @ 71069c8. Phase 2 (Lean + Rust) pending. Roadmap to v1.3.0 documented in proposal.md.
+**v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-02, main — v1.2.4 SHIPPED)
+
+**State:** main @ 2136bce. Tag `v1.2.4` on `origin`. All 4 crates live on crates.io at `1.2.4`. SSOT main updated with v1.2.4 SHIPPED block in cfg/history.md. v1.2.4 cycle complete; next session opens v1.2.5 OpenSpec draft.
+
+**This session shipped:**
+- 4 crates published in topology order: grex-core → (grex-mcp ‖ grex-plugins-builtin) → grex-cli
+  - https://crates.io/crates/grex-core/1.2.4
+  - https://crates.io/crates/grex-mcp/1.2.4
+  - https://crates.io/crates/grex-plugins-builtin/1.2.4
+  - https://crates.io/crates/grex-cli/1.2.4
+- grex-cli published with `--allow-dirty` (runtime artifact `crates/grex/.grex/events.jsonl` in working tree; not in package contents)
+- SSOT cfg/history.md v1.2.4 entry flipped from "Publish status: DEFERRED" to "SHIPPED 2026-05-02" with the 4 crates.io URLs
+
+**Verification:**
+- Lean theorems: kernel deps `[propext]` only — same axiom posture as v1.2.3 (no new bridge axioms)
+- A1 cancellation token: `Arc<AtomicBool>` shared across rayon scope, observed at each Phase 3 child entry
+- Deprecated shims: SemVer-compat aliases retained for `visited`/`OwnCycleGuard` consumers if any (additive)
+- All v1.2.x manifests/lockfiles continue to resolve unchanged (1.2.4 is additive)
+
+**Next session pickup:**
+1. Open v1.2.5 OpenSpec triplet at `openspec/changes/feat-v1.2.5-*/` (scope: A2 partial-clone cleanup, A3 pool deadlock guard, quarantine GC/restore, retention policy per v1.2.4 carry-forward)
+2. Rule 8 gate: identify Lean obligations for v1.2.5 BEFORE Rust code
+3. Cycle: branch → openspec → Lean → Rust → review → PR → merge → publish
+
+**Open at session end:**
+- Working-tree drift carry-forward to v1.2.6 (statusline-probe.txt, crates/grex/.grex/) — investigate root cause then
+- main + SSOT main both clean (post-this-commit)
+
+**Carry-forward beyond v1.2.4 (unchanged from prior endpoint):**
+- v1.2.5 items: A2 partial-clone cleanup, A3 pool deadlock, quarantine GC/restore, retention policy
+- v1.2.6 items: TreeError split, cap-std hardening, stale manifest.md, drift root cause
+- v1.3.0 items: --workspace→--pack rename, contract freeze, MINOR cut
+- SSOT v2: owners.yaml, topic-reorg cfg/, lib/cfg dedup, history.md aggregator
 
 ## Endpoint (2026-05-02, feat-v1.2.4 — openspec triplet landed, Phase 2 pending)
 
