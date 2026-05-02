@@ -1906,6 +1906,7 @@ mod tests {
     /// `path:` identity also leads the chain (B4), so the final
     /// length is 6.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn cycle_four_node_aborts() {
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path().to_path_buf();
@@ -1978,6 +1979,7 @@ mod tests {
     /// Specifically: A's children = [B], B's children = [C, D], C
     /// has no children, D's children = [B] (cycle).
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn cycle_nested_prefix_aborts() {
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path().to_path_buf();
