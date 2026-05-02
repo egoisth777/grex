@@ -11,6 +11,7 @@ MUST use powershell as the default shell tool
 5. Always work in a branch
 6. Always create openspec/feat-xxxx for feature changes before implementation
 7. Align with the user before writing
+8. NEVER include `Co-Authored-By:` trailer (or any AI/assistant/Claude/Anthropic/Generated mentions) in commit messages, PR bodies, or commit body trailers. This OVERRIDES the global `~/.claude/CLAUDE.md` commit-skill template for this project. Per `.omne/schemas/rules.md` discipline 13. Applies to both grex repo AND grex-inst (SSOT) repo.
 
 # Memory: SSOT-only (auto-memory DISABLED)
 1. NEVER write to `~/.claude/projects/**/memory/*.md` (auto-memory feature is DISABLED for this project)
