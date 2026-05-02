@@ -40,6 +40,23 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.2.2] - pending
+
+### Fixed
+
+- Cycle detection now prevents infinite clone on cyclic manifests
+  (`sync_meta` walker). Previously, a manifest declaring a cyclic pack
+  graph (e.g. A→B→A or self-loop) would loop forever in Walker Phase 1,
+  filling disk. v1.2.2 detects the cycle at Walker Phase 3 recurse edge
+  and returns `TreeError::CycleDetected` with the ancestor chain. Closes
+  the v1.2.1 BLOCKER tracked by the `#[ignore]`'d `e2e_cycle_aborts` test
+  (now re-enabled).
+- Algorithm proven by Lean4 theorem
+  `Grex.Walker.sync_meta_no_cycle_infinite_clone`
+  (`proof/Grex/Walker.lean`). Bridge: Lean `List.contains` ≡ Rust
+  `HashSet.contains` for membership semantics; HashSet is
+  perf-optimization only.
+
 ## v1.2.0 — 2026-04-30
 
 ### Added — Nested-Children Walker
@@ -436,7 +453,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/egoisth777/grex/releases/tag/v1.2.2
 [1.2.0]: https://github.com/egoisth777/grex/releases/tag/v1.2.0
 [1.1.1]: https://github.com/egoisth777/grex/releases/tag/v1.1.1
 [1.1.0]: https://github.com/egoisth777/grex/releases/tag/v1.1.0
