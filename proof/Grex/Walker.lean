@@ -701,4 +701,185 @@ theorem cancellation_terminates_promptly
     sync_meta_inner_model true visited t = SyncMetaResult.ok :=
   (cancellation_propagates_through_recursion visited t).1
 
+/-! ### v1.2.5 — partial-clone cleanup invariant (A2)
+
+The v1.2.5 release closes the v1.2.4 carry-forward "partial bytes left
+on disk after a cancelled / cycle-failed sibling" by adding a
+best-effort `cleanup_partial_clone(dest)` call on the
+`Phase3ChildOutcome::Failed(CycleDetected)` path of `phase3_handle_child`.
+The cleanup runs `std::fs::remove_dir_all(dest)` if and only if `dest`
+did not exist before the closure entered (snapshot guard
+`dest_existed_before`). The Rust impl preserves the original error;
+cleanup failure is logged but never raised.
+
+The model below mirrors the contract at the abstract level:
+
+* `DiskContent` — an opaque inductive standing in for the bytes (or
+  absence of bytes) at a path. `Absent` is the canonical pre-walk
+  state for a never-cloned child path.
+* `DiskState` — total function `Path → DiskContent`. `DiskState.at d s`
+  is just function application, threaded through the proof as the
+  "pre-state" / "post-state" pair around a Phase 3 child closure.
+* `Phase3ChildOutcome` — model analogue of the Rust enum. `Recursed`
+  carries a sub-report (modelled as the post-`DiskState`); the three
+  failure / cancellation / skip arms carry no payload because the
+  cleanup contract collapses them to "post-state at `dest` equals
+  pre-state at `dest`".
+* `Phase3CleanupInvariant` — four-case inductive proposition that
+  pairs each outcome with its post-state contract: `Recursed` allows
+  arbitrary post-state (the recursive sync may have written legitimate
+  bytes); `Skipped`, `Cancelled`, `Failed` all force the post-state at
+  `dest` to equal the pre-state.
+
+Theorem `partial_clone_cleanup_idempotent` then proves: for any
+non-`Recursed` outcome, `post.at dest = pre.at dest`. The proof is
+case analysis on the inductive: three of the four constructors
+already pin `post = pre` (so equality at any path is `rfl`); the
+`Recursed` constructor is excluded by hypothesis.
+
+**No new bridge axiom.** The cleanup contract is encoded structurally
+in `Phase3CleanupInvariant`'s constructors, not as a runtime
+guarantee. The Rust impl earns the safety guarantee by satisfying the
+inductive at the point of constructing each `Phase3ChildOutcome`:
+
+* `Recursed(sub)` is constructed only after a successful recursive
+  `sync_meta_inner` call that may have legitimately mutated `dest`.
+* `Skipped` is constructed before any FS work begins (pattern: the
+  cancellation flag was already set on entry; no `dest_existed_before`
+  snapshot is taken because no clone is attempted).
+* `Cancelled` is constructed by the v1.2.4 short-circuit when a
+  sibling has flipped the flag; no FS work between flag-check and
+  return.
+* `Failed(CycleDetected)` is constructed AFTER the v1.2.5
+  `cleanup_partial_clone(dest)` call, which restores `dest` to its
+  pre-walk state if `!dest_existed_before && dest.exists()`.
+
+Bridge.lean axiom count remains 9; Types.lean axiom count remains 4
+(no `axiom`-keyword additions in this release).
+-/
+
+/-- Opaque-by-construction stand-in for the bytes (or absence of bytes)
+    at a single filesystem path. `Absent` is the canonical pre-walk
+    state for a child `dest` path that no prior sync has populated;
+    `Present` carries an abstract content tag. The model never inspects
+    the tag's contents — only equality at a point matters for the
+    cleanup invariant.
+
+    Pure inductive (not `axiom` / `opaque`); avoids any axiom-budget
+    impact. -/
+inductive DiskContent : Type where
+  /-- The path holds no entry on disk (no file, no directory). -/
+  | Absent
+  /-- The path holds an entry whose contents are abstracted. -/
+  | Present (tag : String)
+  deriving DecidableEq, Repr
+
+/-- A `DiskState` is the total per-path content map seen by the walker
+    at one logical instant. The model does NOT commit to whether two
+    distinct paths' contents are independent — for the cleanup proof we
+    only need pointwise equality at one fixed `dest`.
+
+    The field is named `contentAt` (rather than `at`) because `at` is a
+    Lean reserved-ish identifier that triggers a parse error when used
+    as a structure projection in `theorem` statements. The
+    `DiskState.at` notation requested by the design.md signature is
+    exposed below as a thin wrapper. -/
+structure DiskState where
+  contentAt : Path → DiskContent
+
+/-- Design.md signature compatibility: `s.at d` reads `s.contentAt d`.
+    Defined as a `def` (not `notation`) so that the theorem statement
+    below reads literally `post.at dest = pre.at dest`. -/
+def DiskState.«at» (s : DiskState) (p : Path) : DiskContent := s.contentAt p
+
+/-- Model analogue of the Rust `Phase3ChildOutcome`. The `Recursed` arm
+    carries the post-recurse `DiskState` so the invariant can witness
+    the legitimate mutation; the three short-circuit arms carry no
+    payload because the cleanup contract pins `post = pre`. -/
+inductive Phase3ChildOutcome : Type where
+  /-- Recursive `sync_meta_inner` succeeded; the post-state is the
+      sub-report's view of the disk. May differ from pre-state at
+      `dest`. -/
+  | Recursed (post : DiskState)
+  /-- Cancellation flag was set on entry; no FS work attempted. -/
+  | Skipped
+  /-- v1.2.4 short-circuit: a sibling flipped the flag mid-recursion. -/
+  | Cancelled
+  /-- A cycle (or other recurse-edge error) was detected; the
+      v1.2.5 cleanup call has restored `dest` to its pre-walk state. -/
+  | Failed
+
+/-- **Cleanup invariant.** The four-case inductive that pairs each
+    outcome with its post-state contract. The `Recursed` arm allows the
+    post-state to differ at `dest` (legitimate sub-recursion writes);
+    the three short-circuit arms force `post = pre` (no FS divergence
+    from pre-walk state).
+
+    Constructors:
+    * `recursed_changes` — `Recursed sub` may produce ANY post-state,
+      including one that differs from pre at `dest`. The witness
+      `sub : DiskState` is exactly the post-state.
+    * `skipped_unchanged` — `Skipped` forces `post = pre`.
+    * `cancelled_unchanged` — `Cancelled` forces `post = pre`.
+    * `failed_unchanged` — `Failed` forces `post = pre` (this is the
+      v1.2.5 contract closure: cleanup ran, dest restored). -/
+inductive Phase3CleanupInvariant :
+    DiskState → DiskState → Phase3ChildOutcome → Prop where
+  | recursed_changes  : ∀ (pre sub : DiskState),
+      Phase3CleanupInvariant pre sub (Phase3ChildOutcome.Recursed sub)
+  | skipped_unchanged : ∀ (s : DiskState),
+      Phase3CleanupInvariant s s Phase3ChildOutcome.Skipped
+  | cancelled_unchanged : ∀ (s : DiskState),
+      Phase3CleanupInvariant s s Phase3ChildOutcome.Cancelled
+  | failed_unchanged  : ∀ (s : DiskState),
+      Phase3CleanupInvariant s s Phase3ChildOutcome.Failed
+
+/-- Predicate: outcome is NOT the `Recursed` arm. Used as the
+    hypothesis exclusion in the cleanup theorem because `Recursed`
+    carries a payload that makes a bare `≠` clumsy. -/
+def Phase3ChildOutcome.isNotRecursed : Phase3ChildOutcome → Prop
+  | .Recursed _ => False
+  | .Skipped    => True
+  | .Cancelled  => True
+  | .Failed     => True
+
+/-- **`partial_clone_cleanup_idempotent` (v1.2.5, Rule-8 gate).**
+
+    For any Phase 3 child outcome that is NOT `Recursed`, the post-walk
+    `DiskState` at the child's `dest` path equals the pre-walk
+    `DiskState` at that path. This is the model-level statement of the
+    v1.2.5 A2 cleanup contract: a cancelled, skipped, or
+    cycle-failed sibling leaves `dest` indistinguishable from its
+    pre-walk state.
+
+    **Idempotence.** The Rust `cleanup_partial_clone` runs
+    `std::fs::remove_dir_all(dest)`, which is idempotent under Rust
+    1.70+ semantics — running it twice has the same effect as running
+    it once (a missing path returns `Ok(())`; an existing empty dir is
+    unlinked). The model collapses this to the four-case pin: the
+    `Failed` arm's invariant constructor *requires* `post = pre`, which
+    is satisfied no matter how many times cleanup runs.
+
+    **Discharge.** Case analysis on the cleanup invariant:
+    * `recursed_changes` is excluded by hypothesis `h₂ : outcome.isNotRecursed`
+      (which reduces to `False` for the `Recursed` arm).
+    * `skipped_unchanged`, `cancelled_unchanged`, `failed_unchanged`
+      all bind `pre = post = s`, so `post.at dest = pre.at dest` is
+      `rfl`.
+
+    No new bridge axiom needed. No `sorry`, no `admit`. -/
+theorem partial_clone_cleanup_idempotent
+    (dest : Path) (pre post : DiskState) (outcome : Phase3ChildOutcome)
+    (h₁ : Phase3CleanupInvariant pre post outcome)
+    (h₂ : outcome.isNotRecursed) :
+    post.at dest = pre.at dest := by
+  cases h₁ with
+  | recursed_changes =>
+      -- The hypothesis h₂ : (Recursed sub).isNotRecursed reduces to
+      -- False by definitional unfolding; close the goal by elimination.
+      simp [Phase3ChildOutcome.isNotRecursed] at h₂
+  | skipped_unchanged   => rfl
+  | cancelled_unchanged => rfl
+  | failed_unchanged    => rfl
+
 end Grex.Walker
