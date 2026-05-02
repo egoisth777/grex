@@ -4,7 +4,7 @@
 .SH NAME
 grex\-serve \- Start MCP stdio server
 .SH SYNOPSIS
-\fBgrex\-serve\fR [\fB\-\-manifest\fR] [\fB\-\-workspace\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-serve\fR [\fB\-\-manifest\fR] [\fB\-\-pack\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
 Start MCP stdio server
 .SH OPTIONS
@@ -12,8 +12,8 @@ Start MCP stdio server
 \fB\-\-manifest\fR \fI<PATH>\fR
 Path to the `.grex/events.jsonl` event log. Captured at server launch and immutable for the session (per spec §"Manifest binding"). Defaults to `<workspace>/.grex/events.jsonl` when omitted, where `<workspace>` is resolved by walking up from cwd to the nearest `.grex/` marker. v1.x `<workspace>/grex.jsonl` event logs are auto\-migrated to the canonical location on first access
 .TP
-\fB\-\-workspace\fR \fI<PATH>\fR
-Workspace root the MCP server resolves relative paths against. Defaults to the current working directory when omitted
+\fB\-\-pack\fR \fI<PATH>\fR
+Path to the pack root (formerly `\-\-workspace`) the MCP server resolves relative paths against. Defaults to the current working directory when omitted. The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
 .TP
 \fB\-\-parallel\fR \fI<PARALLEL>\fR
 Harness\-level worker cap inherited by the MCP server\*(Aqs `Scheduler` (feat\-m7\-1 stage 8.3). `1` = serial; range `1..=1024`. Defaults to `std::thread::available_parallelism()` when omitted. Distinct from `sync \-\-parallel` which uses `0` = unbounded

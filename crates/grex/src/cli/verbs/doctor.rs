@@ -47,7 +47,7 @@ pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
     let report = run_doctor(&workspace, &opts)?;
 
     if global.json {
-        println!("{}", render_json(&report));
+        println!("{}", render_json(&workspace, &report));
     } else {
         print_table(&report);
     }
@@ -88,11 +88,20 @@ fn print_table(report: &DoctorReport) {
     }
 }
 
-/// Canonical `doctor` JSON shape. Must remain byte-equal to the MCP
-/// handler's output (`crates/grex-mcp/src/tools/doctor.rs::render_report_json`)
-/// and match `man/reference/cli-json.md §doctor`. Any field rename or
-/// addition MUST land in all three places in the same commit.
-fn render_json(report: &DoctorReport) -> String {
+/// Canonical `doctor` JSON shape.
+///
+/// v1.3.0: top-level envelope dual-emits `workspace` + `pack`
+/// (identical values, `workspace` first per the diff-friendly stability
+/// contract — see `crates/grex/tests/cli_json.rs`) and nests the
+/// existing report under `report`. The nested `report` object's shape
+/// (exit_code / worst_severity / findings array) remains byte-equal to
+/// the MCP handler's output (`crates/grex-mcp/src/tools/doctor.rs::render_report_json`)
+/// — the dual-emit envelope is additive (CLI-only) and does NOT change
+/// the inner report shape consumed by MCP clients. `man/reference/cli-json.md
+/// §doctor` documents the envelope; the inner shape continues to live
+/// alongside the MCP twin. Any field rename or addition inside `report`
+/// MUST land in BOTH places in the same commit.
+fn render_json(workspace: &std::path::Path, report: &DoctorReport) -> String {
     let findings: Vec<serde_json::Value> = report
         .findings
         .iter()
@@ -107,13 +116,23 @@ fn render_json(report: &DoctorReport) -> String {
             })
         })
         .collect();
+    // v1.3.0 dual-emit envelope. `workspace` first, `pack` second
+    // (identical value); `report` carries the byte-stable inner shape
+    // shared with the MCP handler. `serde_json/preserve_order` (enabled
+    // in this crate's Cargo.toml) keeps the source-order intact so the
+    // diff-friendly key ordering survives serialisation.
+    let workspace_str = workspace.display().to_string();
     let doc = serde_json::json!({
-        "exit_code": report.exit_code(),
-        "worst_severity": severity_label(report.worst()),
-        "findings": findings,
+        "workspace": workspace_str,
+        "pack": workspace_str,
+        "report": {
+            "exit_code": report.exit_code(),
+            "worst_severity": severity_label(report.worst()),
+            "findings": findings,
+        },
     });
-    // Compact form so byte-comparison against the MCP surface (which
-    // uses `Value::to_string`, also compact) is trivial.
+    // Compact form keeps the inner `report.*` byte-comparison against
+    // the MCP surface trivial (MCP uses `Value::to_string`, also compact).
     serde_json::to_string(&doc).unwrap_or_else(|_| "{}".to_string())
 }
 
@@ -173,9 +192,13 @@ fn render_undeclared_json(
             })
         })
         .collect();
+    // v1.3.0: dual-emit "workspace" + "pack". v1.4.0 drops "workspace".
+    // Order pinned: `workspace` first, `pack` second; identical value.
+    let workspace_str = workspace.display().to_string();
     let doc = serde_json::json!({
         "scan_undeclared": {
-            "workspace": workspace.display().to_string(),
+            "workspace": workspace_str,
+            "pack": workspace_str,
             "depth": depth,
             "count": found.len(),
             "repos": entries,

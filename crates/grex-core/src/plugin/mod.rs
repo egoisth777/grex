@@ -1,3 +1,9 @@
+//! # Plugin API
+//!
+//! **UNSTABLE — v1.x:** Plugin trait surface is in-process only. v2 will
+//! extract a separately-versioned `grex-plugin-api` crate; until then,
+//! this surface MAY change in any v1.x release without semver-major.
+//!
 //! Plugin system — Stage A slicing (M4-A).
 //!
 //! Introduces the [`ActionPlugin`] trait and an in-process [`Registry`] as

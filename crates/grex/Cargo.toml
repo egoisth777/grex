@@ -21,7 +21,12 @@ path = "src/main.rs"
 clap = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# v1.3.0: `preserve_order` ensures `serde_json::json!({...})` macro
+# expansions write keys in source-order rather than alphabetical.
+# Required by the dual-emit JSON envelope contract (`workspace` MUST
+# appear before `pack` in `grex ls --json` / `grex doctor --json`
+# output — see `crates/grex/tests/cli_json.rs`).
+serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -827,14 +827,24 @@ pub async fn assert_parity_doctor_report() {
     let cli = normalize(cli_raw);
     let mcp = normalize(mcp_raw);
 
-    // Canonical doctor shape pins:
-    //   {exit_code: number, worst_severity: string, findings: [...]}
-    // No wrapper keys. Any divergence is a schema contract break.
-    assert_eq!(cli, mcp, "doctor CLI/MCP JSON bodies must be byte-equal after normalise");
+    // v1.3.0 — CLI doctor --json now wraps the inner report inside a
+    // `{workspace, pack, report: {...}}` envelope (operator-facing
+    // dual-emit contract; see `crates/grex/tests/cli_json.rs`). MCP
+    // continues to emit the bare report (it has no envelope — its
+    // workspace is fixed by `state.workspace`). Parity is asserted on
+    // the inner `report` object, which remains byte-equal to MCP.
+    let cli_inner = cli
+        .get("report")
+        .cloned()
+        .expect("v1.3.0: CLI doctor --json must wrap inner shape under `report`");
+    assert_eq!(
+        cli_inner, mcp,
+        "doctor CLI(report)/MCP JSON bodies must be byte-equal after normalise"
+    );
     for (k, expected_type) in
         [("exit_code", "number"), ("worst_severity", "string"), ("findings", "array")]
     {
-        let got = &cli[k];
+        let got = &cli_inner[k];
         let ok = match expected_type {
             "number" => got.is_number(),
             "string" => got.is_string(),
@@ -843,7 +853,7 @@ pub async fn assert_parity_doctor_report() {
         };
         assert!(
             ok,
-            "doctor JSON missing or wrong-typed field `{k}` (expected {expected_type}): {cli:?}"
+            "doctor inner-report JSON missing or wrong-typed field `{k}` (expected {expected_type}): {cli_inner:?}"
         );
     }
 }

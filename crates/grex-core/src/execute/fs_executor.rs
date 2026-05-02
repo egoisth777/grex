@@ -105,6 +105,8 @@ impl ActionExecutor for FsExecutor {
             vars: ctx.vars,
             pack_root: ctx.pack_root,
             workspace: ctx.workspace,
+            // v1.3.0: pack added as additive sibling. workspace retained for ABI stability through v1.x. Both hold identical value.
+            pack: ctx.pack,
             platform: ctx.platform,
             registry: Some(&self.registry),
             pack_type_registry: ctx.pack_type_registry,

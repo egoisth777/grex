@@ -9,9 +9,11 @@
 //!
 //! # Behaviour
 //!
-//! * `--workspace <path>` selects the meta whose
-//!   `<workspace>/.grex/grex.lock.jsonl` is migrated. Defaults to the
-//!   current working directory.
+//! * `--pack <path>` selects the meta whose
+//!   `<pack>/.grex/grex.lock.jsonl` is migrated. Defaults to the
+//!   current working directory. The legacy `--workspace` spelling is
+//!   preserved as a deprecated alias and emits a one-time warning per
+//!   process; removal scheduled for v2.0.0.
 //! * `--dry-run` (`-n`) inspects the on-disk shape and reports what
 //!   would happen without writing. Lockfile bytes are unchanged.
 //! * Without `--dry-run`, the migrator rewrites the lockfile in place
@@ -34,7 +36,8 @@ pub fn run(
     global: &GlobalFlags,
     _cancel: &CancellationToken,
 ) -> Result<()> {
-    let workspace = match args.workspace.clone() {
+    crate::cli::deprecation::warn_workspace_alias_used();
+    let workspace = match args.pack.clone() {
         Some(p) => p,
         None => std::env::current_dir()?,
     };

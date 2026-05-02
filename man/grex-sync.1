@@ -4,7 +4,7 @@
 .SH NAME
 grex\-sync \- Git fetch and pull (recurse by default)
 .SH SYNOPSIS
-\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-force\-prune\fR] [\fB\-\-force\-prune\-with\-ignored\fR] [\fB\-\-quarantine\fR] [\fB\-\-parallel\fR] [\fB\-\-retain\-days\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
+\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-pack\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-force\-prune\fR] [\fB\-\-force\-prune\-with\-ignored\fR] [\fB\-\-quarantine\fR] [\fB\-\-parallel\fR] [\fB\-\-retain\-days\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
 .SH DESCRIPTION
 Git fetch and pull (recurse by default)
 .SH OPTIONS
@@ -12,8 +12,8 @@ Git fetch and pull (recurse by default)
 \fB\-\-recursive\fR
 Recurse into child packs
 .TP
-\fB\-\-workspace\fR \fI<WORKSPACE>\fR
-Override the workspace root. Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<workspace>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `workspace: <input> → <canonical>` when it differs)
+\fB\-\-pack\fR \fI<PACK>\fR
+Path to the pack root (formerly `\-\-workspace`). Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<pack>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `pack: <input> → <canonical>` when it differs). The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
 .TP
 \fB\-n\fR, \fB\-\-dry\-run\fR
 Plan actions without touching the filesystem

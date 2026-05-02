@@ -121,6 +121,13 @@ pub struct ExecCtx<'a> {
     /// destination paths (though rare — spec encourages absolute) resolve
     /// here.
     pub workspace: &'a Path,
+    // v1.3.0: pack added as additive sibling. workspace retained for ABI stability through v1.x. Both hold identical value.
+    /// Pack root sibling of [`Self::workspace`]. Additive in v1.3.0:
+    /// every constructor populates it with the same value as
+    /// [`Self::workspace`]. Plugin authors writing new code SHOULD prefer
+    /// `pack`; legacy readers of `workspace` keep working unchanged.
+    /// v2 will remove `workspace` once the rename has propagated.
+    pub pack: &'a Path,
     /// Platform tag. Defaults to [`Platform::current`] but is overridable in
     /// tests to exercise `when.os` branches deterministically.
     pub platform: Platform,
@@ -185,6 +192,8 @@ impl<'a> ExecCtx<'a> {
             vars,
             pack_root,
             workspace,
+            // v1.3.0: pack added as additive sibling. workspace retained for ABI stability through v1.x. Both hold identical value.
+            pack: workspace,
             platform: Platform::current(),
             registry: None,
             pack_type_registry: None,

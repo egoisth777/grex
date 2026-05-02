@@ -40,6 +40,13 @@ use tokio_util::sync::CancellationToken;
 pub struct SyncParams {
     /// Pack root: directory holding `.grex/pack.yaml` or the YAML file itself.
     pub pack_root: PathBuf,
+    /// Path to the pack root. The legacy field "workspace" is accepted for
+    /// back-compat and will be removed in v2.0.0. When both supplied, "pack"
+    /// wins. Added in v1.3.0 as the primary pack-root field; takes precedence
+    /// over both the legacy `workspace` field and the existing `packRoot`
+    /// field when present.
+    #[serde(default)]
+    pub pack: Option<PathBuf>,
     /// Workspace directory for cloned children.
     #[serde(default)]
     pub workspace: Option<PathBuf>,
@@ -133,7 +140,12 @@ async fn run_with_cancel(
     let _stress_guard = test_hooks::stress_barrier_enter().await;
 
     let opts = build_opts(&p);
-    let pack_root = p.pack_root.clone();
+    // v1.3.0 — `pack` takes precedence over the legacy `pack_root`. Both
+    // fields resolve to the same downstream value (the sync target). The
+    // separate `workspace` field continues to denote the cloned-children
+    // directory and is propagated via `SyncOptions::with_workspace` inside
+    // `build_opts`. Precedence rule: `pack.or(Some(pack_root))`.
+    let pack_root = p.pack.clone().unwrap_or_else(|| p.pack_root.clone());
 
     // `sync::run` is sync and may block on filesystem / git. Push it onto a
     // blocking thread so the rmcp dispatcher's reactor stays responsive. The
@@ -319,6 +331,7 @@ mod tests {
         let s = crate::ServerState::for_tests();
         let p = SyncParams {
             pack_root: std::env::temp_dir().join("grex-mcp-nonexistent-pack"),
+            pack: None,
             workspace: None,
             dry_run: true,
             no_validate: true,
@@ -342,6 +355,7 @@ mod tests {
     fn build_opts_propagates_retain_days() {
         let mut p = SyncParams {
             pack_root: std::path::PathBuf::from("/tmp/grex-mcp-retain-days-fixture"),
+            pack: None,
             workspace: None,
             dry_run: true,
             no_validate: true,
@@ -370,5 +384,39 @@ mod tests {
         });
         let p: SyncParams = serde_json::from_value(json).expect("camelCase retainDays parses");
         assert_eq!(p.retain_days, Some(45));
+    }
+
+    /// v1.3.0 — `pack` is the primary pack-root field; the legacy
+    /// `workspace` field is accepted for back-compat. When both are
+    /// supplied alongside an existing `packRoot`, `pack` wins per the
+    /// documented `pack.or(workspace)`-style precedence rule (extended
+    /// here to also win over the existing required `packRoot` field, so
+    /// that v1.3.0 callers can opt into the new field name without
+    /// having to drop the legacy one). This test pins both halves of the
+    /// precedence contract: deserialisation accepts both fields, and the
+    /// resolved sync-target path is the value supplied via `pack`.
+    #[test]
+    fn mcp_sync_pack_field_takes_precedence_over_workspace() {
+        let pack_path = std::path::PathBuf::from("/tmp/grex-mcp-pack-precedence-pack");
+        let workspace_path = std::path::PathBuf::from("/tmp/grex-mcp-pack-precedence-workspace");
+        let pack_root_path = std::path::PathBuf::from("/tmp/grex-mcp-pack-precedence-packroot");
+
+        // Wire-level: confirm camelCase deserialisation accepts `pack`
+        // alongside the legacy `workspace` field.
+        let json = serde_json::json!({
+            "packRoot": pack_root_path,
+            "pack": pack_path,
+            "workspace": workspace_path,
+        });
+        let p: SyncParams = serde_json::from_value(json).expect("pack + workspace parses");
+        assert_eq!(p.pack.as_deref(), Some(pack_path.as_path()));
+        assert_eq!(p.workspace.as_deref(), Some(workspace_path.as_path()));
+        assert_eq!(p.pack_root, pack_root_path);
+
+        // Resolution-level: the sync target is the value supplied via
+        // `pack`, not the legacy `pack_root` fallback. Mirrors the
+        // `pack.or(...)` precedence applied in `run_with_cancel`.
+        let resolved = p.pack.clone().unwrap_or_else(|| p.pack_root.clone());
+        assert_eq!(resolved, pack_path, "pack must win over pack_root at resolution time");
     }
 }

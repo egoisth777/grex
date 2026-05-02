@@ -360,8 +360,10 @@ fn doctor_after_plain_git_sync_reports_ok_synthetic_and_no_unregistered_warning(
         .assert()
         .code(predicates::ord::eq(0));
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    let report: serde_json::Value =
+    let envelope: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("doctor --json must produce valid JSON");
+    // v1.3.0: doctor --json envelope is `{workspace, pack, report: {...}}`.
+    let report = &envelope["report"];
     let findings = report["findings"].as_array().expect("findings array");
 
     // Acceptance #1: one `synthetic-pack` finding per plain-git child,

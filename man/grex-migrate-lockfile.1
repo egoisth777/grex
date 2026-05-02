@@ -4,13 +4,13 @@
 .SH NAME
 grex\-migrate\-lockfile \- Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt\-in, idempotent). Thin shim over the v1.2.0 Stage 1.h library migrator (`grex_core::lockfile::migrate_v1_1_1`)
 .SH SYNOPSIS
-\fBgrex\-migrate\-lockfile\fR [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-migrate\-lockfile\fR [\fB\-\-pack\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
 Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt\-in, idempotent). Thin shim over the v1.2.0 Stage 1.h library migrator (`grex_core::lockfile::migrate_v1_1_1`)
 .SH OPTIONS
 .TP
-\fB\-\-workspace\fR \fI<PATH>\fR
-Workspace root (the meta whose `.grex/grex.lock.jsonl` to migrate). Defaults to the current working directory
+\fB\-\-pack\fR \fI<PATH>\fR
+Path to the pack root (formerly `\-\-workspace`) — the meta whose `.grex/grex.lock.jsonl` is migrated. Defaults to the current working directory. The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
 .TP
 \fB\-n\fR, \fB\-\-dry\-run\fR
 Inspect\-only: detect schema version and report what would happen without writing. Lockfile bytes are unchanged
