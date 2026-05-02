@@ -64,7 +64,7 @@ impl Scheduler {
         T: Send,
     {
         let _permit = self.permits.clone().acquire_owned().await?;
-        let _plock  = PackLock::acquire(pack_path).await?;
+        let _plock  = PackLock::open(pack_path)?.acquire_async().await?;  // v1.2.4+: legacy `PackLock::acquire` is a deprecated shim
         fut.await
     }
 }
@@ -76,12 +76,15 @@ The semaphore caps process-wide in-flight pack ops; the per-pack lock prevents d
 
 File: `<pack_workdir>/.grex-lock`. Held exclusively via `fd-lock::RwLock::write`. Non-blocking try-first; on contention the task yields and retries with backoff.
 
+> **API note (v1.2.4+):** the canonical async entry point is `PackLock::acquire_async` (and `PackLock::acquire_cancellable` for the cancellable variant). The original `PackLock::acquire` signature shown in the sketch below is **deprecated** and retained only as a thin shim for backward compatibility — new call sites should use `acquire_async`.
+
 ```rust
 pub struct PackLock {
     _guard: fd_lock::RwLockWriteGuard<'static, std::fs::File>,
 }
 
 impl PackLock {
+    // Deprecated since v1.2.4 — prefer `acquire_async` (shown for prose continuity only).
     pub async fn acquire(pack_path: &std::path::Path) -> anyhow::Result<Self> {
         let lock_path = pack_path.join(".grex-lock");
         let file = std::fs::OpenOptions::new()
@@ -110,7 +113,7 @@ schedule(packs, op):
     for pack in packs:
         fut = async {
             _sem_permit     = semaphore.acquire()            # bound parallelism
-            _pack_lock      = PackLock::acquire(pack.path)   # per-pack exclusive
+            _pack_lock      = PackLock::acquire_async(pack.path)   # per-pack exclusive (v1.2.4+; sync `acquire` is deprecated shim)
             result          = op.run_on(pack)
             _manifest_lock  = pack.meta.manifest.write_lock()  # innermost (per-meta)
             manifest.append(event_from(result))
@@ -129,7 +132,7 @@ Key property: locks acquired outer-to-inner, released inner-to-outer. Manifest l
 
 > `I1` = "Invariant 1" — first concurrency-series invariant. Distinct from walker `I1` (boundary preservation) and architecture `I1` (the same scheduler theorem re-cited from the architecture doc). See the invariant series cross-reference table in the SSOT.
 
-**Informal**: `PackLock::acquire` is exclusive per path; the later arrival awaits the earlier's drop.
+**Informal**: `PackLock::acquire_async` (canonical entry point since v1.2.4; the legacy `PackLock::acquire` is a deprecated shim) is exclusive per path; the later arrival awaits the earlier's drop.
 
 **File**: `proof/Grex/Scheduler.lean`.
 

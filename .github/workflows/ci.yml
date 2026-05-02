@@ -263,6 +263,85 @@ jobs:
             echo "$stragglers"
             exit 1
           fi
+      - name: "Assert #print axioms ⊆ {propext} for Rule-8 gate theorems"
+        working-directory: proof
+        shell: bash
+        run: |
+          # v1.2.4 Rule-8 gate (.omne/schemas/rules.md §8): the two
+          # walker correctness theorems below MUST depend on at most
+          # `propext` — no bridge axiom, no model placeholder, no
+          # Classical.choice. Any drift means a downstream proof leaked
+          # a hypothesis-level dependency and the Lean model no longer
+          # corresponds to the documented Rust contract.
+          #
+          # Mechanism: write a probe file that imports the proof library
+          # and emits `#print axioms` for each theorem, run it through
+          # `lake env lean`, then parse each theorem's axiom verdict.
+          # Lean emits one of two forms per theorem:
+          #   1. `<Name> depends on axioms: [a, b, ...]`
+          #   2. `<Name> does not depend on any axioms`
+          # We accept either (1) with the bracketed set ⊆ {propext}, or
+          # (2). Anything else fails the gate.
+          set -euo pipefail
+          probe=$(mktemp --suffix=.lean)
+          trap 'rm -f "$probe"' EXIT
+          cat > "$probe" <<'EOF'
+          import Grex.Walker
+          #print axioms Grex.Walker.cancellation_terminates_promptly
+          #print axioms Grex.Walker.sync_meta_no_cycle_infinite_clone
+          EOF
+          # Run the probe via `lake env lean --run` semantics: plain
+          # `lake env lean <file>` elaborates the file and prints all
+          # `#print` outputs to stdout. We capture stdout+stderr together
+          # for robustness against diagnostic ordering, but we anchor the
+          # parse on theorem-name-prefixed lines so Lake build noise
+          # (e.g. `[1/3] Compiling ...`) cannot pollute the verdict.
+          out=$(lake env lean "$probe" 2>&1)
+          echo "$out"
+          theorems=(
+            "Grex.Walker.cancellation_terminates_promptly"
+            "Grex.Walker.sync_meta_no_cycle_infinite_clone"
+          )
+          fail=0
+          for thm in "${theorems[@]}"; do
+            # Look for a line beginning with `<thm> depends on axioms:`
+            # OR `<thm> does not depend on any axioms`. grep -F on the
+            # name avoids regex-escape pain around the dotted path.
+            verdict=$(echo "$out" | grep -F "$thm" | grep -E "(depends on axioms:|does not depend on any axioms)" || true)
+            if [ -z "$verdict" ]; then
+              echo "ERROR: no #print axioms verdict line found for $thm."
+              fail=1
+              continue
+            fi
+            if echo "$verdict" | grep -qE "does not depend on any axioms$"; then
+              echo "OK: $thm depends on no axioms."
+              continue
+            fi
+            # Form 1 — extract the bracketed axiom list anchored to this
+            # theorem's verdict line. Strip everything up to and
+            # including `[`, then everything from the first `]` onward.
+            inner=$(echo "$verdict" | sed -E 's/^[^[]*\[//; s/\].*$//')
+            # Split comma-separated axiom names, trim whitespace, and
+            # check each one is in the allowlist {propext}.
+            IFS=',' read -ra axioms <<< "$inner"
+            for raw in "${axioms[@]}"; do
+              # Trim leading/trailing whitespace; bash parameter expansion
+              name="${raw#"${raw%%[![:space:]]*}"}"
+              name="${name%"${name##*[![:space:]]}"}"
+              if [ "$name" != "propext" ]; then
+                echo "ERROR: $thm depends on disallowed axiom '$name' (verdict: $verdict)."
+                fail=1
+              fi
+            done
+            if [ $fail -eq 0 ]; then
+              echo "OK: $thm depends on [propext] only."
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            echo "Rule-8 gate failed: theorems must depend on at most {propext}."
+            exit 1
+          fi
+          echo "OK: all Rule-8 gate theorems satisfy axiom-allowlist ⊆ {propext}."
       - name: Snapshot wall-time
         shell: bash
         run: |

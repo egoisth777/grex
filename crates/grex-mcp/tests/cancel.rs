@@ -357,8 +357,9 @@ async fn cancel_permit_released_under_budget() {
 /// budget after the first is cancelled".
 ///
 /// If the first call leaked the PackLock, the second call would block
-/// on `PackLock::acquire` indefinitely; the wall-clock timeout on the
-/// second response surfaces the leak.
+/// on `PackLock::acquire_async` (v1.2.4+ canonical async entry point;
+/// the legacy `PackLock::acquire` is a deprecated shim) indefinitely;
+/// the wall-clock timeout on the second response surfaces the leak.
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,

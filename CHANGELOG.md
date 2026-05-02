@@ -40,6 +40,57 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.2.4] - 2026-05-02
+
+### Added
+
+- Cooperative cancellation token in the parallel walker
+  (`Arc<AtomicBool>`): on first cycle detection inside a `rayon`
+  sibling iteration, in-flight siblings observe the flag and abort
+  promptly instead of running to completion. Cancellation scope is
+  per-Phase-3-fan-out: a cycle in one sub-pack cancels its siblings
+  at the same fan-out level only; disjoint sub-trees continue
+  independently. Recursive sub-fan-outs construct their own
+  cancellation flag.
+- Lean theorem `cancellation_terminates_promptly` — extends
+  `sync_meta_inner_model` with a `cancelled : Bool` parameter and
+  proves termination once the flag is set. `lake build` green; zero
+  `sorry`; zero `admit`.
+- New cancellation behavior test asserting prompt sibling abort on
+  first `CycleDetected`.
+- New T1 diamond-DAG spot-check test (shared descendant, no cycle —
+  guards the cancellation path against false positives on legal
+  diamonds).
+- New proptest cycle generator producing arbitrary cyclic manifest
+  graphs; asserts walker always returns `CycleDetected` (never loops,
+  never panics).
+- CI axiom-set gate: `.github/workflows/ci.yml` now asserts the
+  exact axiom counts (substantive / bridge / model) and fails on any
+  drift, closing the manual-counter trap surfaced in v1.2.1.
+- e2e v1.3.0-readiness smoke test exercising sub-pack-under-meta-pack
+  flow + basic action commands end-to-end (the v1.3.0 release-readiness
+  AC).
+
+### Changed
+
+- Internal rename `visited` → `ancestors` in walker. The set was
+  always a path-prefix (parent chain), never a global visit set; the
+  new name matches the semantics already proven in Lean.
+- Internal rename `OwnCycleGuard` → `VisitedInsertGuard` (carry-forward
+  from M6 cleanup; symbol is internal — no public API impact).
+- Doc cleanup on `sync_meta`: rustdoc now states the cancellation
+  contract and links the Lean theorem.
+
+### Deprecated
+
+- `PackLock::acquire` (sync variant) — use `acquire_async` or
+  `try_acquire`. Will be removed in v1.3.0.
+- `Scheduler::permits` — internal handle no longer required by
+  callers. Will be removed in v1.3.0.
+- `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const — use
+  `default_managed_gitignore_patterns()` accessor. Will be removed in
+  v1.3.0.
+
 ## [1.2.3] - pending
 
 ### Fixed
@@ -487,7 +538,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/egoisth777/grex/releases/tag/v1.2.4
 [1.2.3]: https://github.com/egoisth777/grex/releases/tag/v1.2.3
 [1.2.2]: https://github.com/egoisth777/grex/releases/tag/v1.2.2
 [1.2.0]: https://github.com/egoisth777/grex/releases/tag/v1.2.0

@@ -4,18 +4,20 @@
 //!
 //! 1. `new(N)` reports `max_parallelism() == N` (bounded).
 //! 2. `new(0)` reports `Semaphore::MAX_PERMITS` (unbounded sentinel).
-//! 3. Saturation: once all permits are out, `try_acquire_owned` on the
-//!    permits handle returns `Err`; dropping a held permit lets a pending
-//!    `acquire()` future complete.
+//! 3. Saturation: once all permits are out, a fresh `acquire()` future
+//!    cannot resolve within a short bounded timeout; dropping a held
+//!    permit lets a pending `acquire()` future complete.
 //! 4. FIFO fairness: tokio's `Semaphore` is FIFO under contention; three
 //!    waiters drain in submission order.
 //! 5. 100-waiter stress under an 8-permit cap completes without panic.
-//! 6. `permits()` returns a shared `Arc<Semaphore>` — the same pool,
-//!    not a fresh allocation.
+//! 6. `permits()` (deprecated since 1.2.4) returns a shared
+//!    `Arc<Semaphore>` — the same pool, not a fresh allocation. Retained
+//!    in v1.2.4 to guard the SemVer-compat surface; slated for removal in
+//!    v1.3.0.
 //!
-//! Saturation is asserted via `try_acquire_owned()` on the raw permits
-//! handle rather than `FutureExt::now_or_never`, so the test suite stays
-//! free of a `futures` dev-dep.
+//! Saturation is asserted via a short `tokio::time::timeout` on
+//! `Scheduler::acquire()` rather than `FutureExt::now_or_never`, so the
+//! test suite stays free of a `futures` dev-dep.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,13 +48,12 @@ async fn scheduler_acquire_blocks_when_saturated() {
     let p1 = s.acquire().await;
     let p2 = s.acquire().await;
 
-    // With both permits held, `try_acquire_owned` on the shared permits
-    // handle must fail — this is the semaphore-native saturation probe.
-    let permits = s.permits();
-    assert!(
-        permits.clone().try_acquire_owned().is_err(),
-        "saturated scheduler must refuse try_acquire"
-    );
+    // With both permits held, a fresh `acquire()` future must not resolve
+    // within a short bounded window — this is the saturation probe now
+    // that the inner-semaphore handle is no longer exposed. 200 ms gives
+    // jitter headroom on slow/loaded CI runners (Reviewer 1 P2-1).
+    let probe = timeout(Duration::from_millis(200), s.acquire()).await;
+    assert!(probe.is_err(), "saturated scheduler must not grant a permit within the probe window");
 
     // Release one permit; a fresh acquire must now succeed within a short
     // bounded timeout.
@@ -126,10 +127,13 @@ async fn scheduler_100_parallel_no_panic() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn scheduler_permits_clone_is_shared() {
     // feat-m6-1 spec §Test plan: acquiring from a cloned `Arc<Semaphore>`
     // drains the same pool — proves the permit handle is shared, not a
-    // new per-call allocation.
+    // new per-call allocation. Retained in v1.2.4 to guard SemVer-compat
+    // of the deprecated `Scheduler::permits()` surface (slated for removal
+    // in v1.3.0).
     let s = Arc::new(Scheduler::new(1));
     let permits_a = s.permits();
     let permits_b = s.permits();

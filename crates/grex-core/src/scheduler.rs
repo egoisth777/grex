@@ -15,14 +15,22 @@
 //!
 //! ## Why `Arc<Semaphore>` rather than `Semaphore` directly
 //!
-//! `ExecCtx` threads the scheduler through `async` plugin dispatch; plugins
-//! may `Arc::clone` the inner permits handle into spawned sub-tasks (for
-//! future meta-pack parallelisation). Owning the semaphore behind an `Arc`
-//! lets every acquire site share the same permit pool without ceremony.
+//! `ExecCtx` threads the scheduler through `async` plugin dispatch; the
+//! shared `Arc<Semaphore>` lets every internal `acquire()` site share the
+//! same permit pool without ceremony, including across spawned sub-tasks
+//! (for future meta-pack parallelisation).
 //!
 //! The `Scheduler` struct itself is typically wrapped in an `Arc` by the
 //! caller (`sync::run`) so the `ExecCtx::scheduler` slot can be a
 //! `&'a Arc<Scheduler>` — see `concurrency.md` §Scheduler pseudocode.
+//!
+//! ## Deprecation: `Scheduler::permits()`
+//!
+//! [`Scheduler::permits`] is `#[deprecated(since = "1.2.4")]`. The handle
+//! exposed the inner `Arc<Semaphore>` so callers could share the raw pool;
+//! v1.2.4 keeps it for SemVer-compat but the recommended pattern is to
+//! wrap the whole `Scheduler` in your own `Arc` and share that. The
+//! internal handle will be removed in v1.3.0.
 
 use std::sync::Arc;
 
@@ -32,8 +40,13 @@ use tokio_util::sync::CancellationToken;
 /// Bounded parallel scheduler — caps concurrent pack operations.
 ///
 /// Construction is cheap (one `Arc` + one `Semaphore` allocation). The
-/// struct is `Clone`-free on purpose: callers clone the inner [`Arc`] via
-/// [`Scheduler::permits`] or wrap the whole struct in their own `Arc`.
+/// struct is `Clone`-free on purpose: callers wrap the whole struct in
+/// their own `Arc` and share that handle.
+///
+/// The legacy [`Scheduler::permits`] handle that exposed the inner
+/// `Arc<Semaphore>` is `#[deprecated(since = "1.2.4")]` and will be
+/// removed in v1.3.0; new code should rely solely on [`Scheduler::acquire`]
+/// and [`Scheduler::acquire_cancellable`].
 ///
 /// ## Example
 ///
@@ -85,7 +98,16 @@ impl Scheduler {
     /// Clone of the inner permits handle. Every clone shares the same
     /// permit pool. Returned as an owned [`Arc`] so consumers can pass it
     /// into spawned tasks without borrowing from `self`.
+    ///
+    /// **Deprecated since 1.2.4** — exposing the raw inner `Arc<Semaphore>`
+    /// leaks an implementation detail and prevents future refactors of the
+    /// scheduler internals. Wrap the whole `Scheduler` in your own `Arc`
+    /// and share that instead. This handle will be removed in v1.3.0.
     #[must_use]
+    #[deprecated(
+        since = "1.2.4",
+        note = "callers should wrap Scheduler in their own Arc; this internal handle exposure will be removed in v1.3.0"
+    )]
     pub fn permits(&self) -> Arc<Semaphore> {
         Arc::clone(&self.permits)
     }

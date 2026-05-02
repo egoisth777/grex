@@ -327,8 +327,10 @@ axiom runtime_respects_ordering :
 /-- **Axiom 2 / model bridge.** Two distinct tasks that both hold
     `Lock.pack p` for the same path `p` have non-overlapping time
     windows. This encodes the FIFO mutual-exclusion semantics of
-    `fd_lock::RwLock::write` as used by `PackLock::acquire` in
-    `.omne/cfg/concurrency.md` §Per-pack `PackLock`.
+    `fd_lock::RwLock::write` as used by `PackLock::acquire_async`
+    (v1.2.4+ canonical entry point; the legacy `PackLock::acquire` is
+    retained as a deprecated shim) in `.omne/cfg/concurrency.md`
+    §Per-pack `PackLock`.
 
     Promotion to theorem requires modelling `fd-lock`'s kernel-level FIFO
     queue in Lean — deferred to v2 per spec §Non-goals. -/

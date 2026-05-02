@@ -59,6 +59,9 @@ pub const PACK_LOCK_FILE_NAME: &str = ".grex-lock";
 
 /// Error surfaced by [`PackLock::open`], [`PackLock::acquire`], and
 /// [`PackLock::try_acquire`].
+///
+/// Note: [`PackLock::acquire`] is deprecated since v1.2.4; prefer
+/// [`PackLock::acquire_async`] or [`PackLock::try_acquire`].
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum PackLockError {
@@ -148,9 +151,12 @@ fn canonical_or_raw(path: &Path) -> PathBuf {
 ///
 /// Construction via [`PackLock::open`] creates (or re-opens) the sidecar
 /// `<pack_path>/.grex-lock` but does **not** acquire the lock — call
-/// [`PackLock::acquire_async`] for the async-safe blocking path,
-/// [`PackLock::acquire`] for the thread-blocking synchronous path, or
+/// [`PackLock::acquire_async`] for the async-safe blocking path or
 /// [`PackLock::try_acquire`] for a fail-fast probe.
+///
+/// Note: [`PackLock::acquire`] is deprecated since v1.2.4; prefer
+/// [`PackLock::acquire_async`] or [`PackLock::try_acquire`]. The sync
+/// blocking variant will be removed in v1.3.0.
 pub struct PackLock {
     inner: RwLock<File>,
     path: PathBuf,
@@ -402,6 +408,19 @@ impl PackLock {
     /// # Errors
     ///
     /// Returns [`PackLockError::Io`] if the OS lock call fails.
+    ///
+    /// # Deprecation
+    ///
+    /// Implementation strategy: restored as the original direct
+    /// blocking `fd_lock::write()` call (single-line body, no
+    /// behaviour change vs v1.2.3) — simpler and safer than a
+    /// busy-wait shim, since `fd-lock` already parks the calling OS
+    /// thread on the kernel flock and a busy-wait would burn CPU
+    /// without engaging the kernel waiter queue.
+    #[deprecated(
+        since = "1.2.4",
+        note = "use `acquire_async` for async contexts or `try_acquire` for non-blocking; sync `acquire` will be removed in v1.3.0"
+    )]
     pub fn acquire(&mut self) -> Result<RwLockWriteGuard<'_, File>, PackLockError> {
         self.inner.write().map_err(|source| PackLockError::Io { path: self.path.clone(), source })
     }
@@ -659,6 +678,7 @@ pub(crate) mod tier {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[allow(deprecated)] // exercising deprecated `PackLock::acquire` for back-compat
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};

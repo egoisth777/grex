@@ -50,9 +50,10 @@ about the Rust runtime:
 2. **`pack_lock_exclusive`** — asserts that two distinct tasks holding
    `Lock.pack p` for the same path `p` have non-overlapping time windows.
    Encodes the FIFO mutual-exclusion semantics of
-   `fd_lock::RwLock::write` as used by `PackLock::acquire`. Promotion to
-   theorem requires modelling `fd-lock`'s kernel-level FIFO queue in
-   Lean. Deferred to v2.
+   `fd_lock::RwLock::write` as used by `PackLock::acquire_async`
+   (v1.2.4+ canonical entry point; the legacy `PackLock::acquire` is
+   retained as a deprecated shim). Promotion to theorem requires
+   modelling `fd-lock`'s kernel-level FIFO queue in Lean. Deferred to v2.
 
 Both axioms are documented inline with `/--` doc-comments linking back to
 the corresponding mechanism in the Rust implementation.

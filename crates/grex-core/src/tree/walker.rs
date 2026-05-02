@@ -9,7 +9,7 @@
 //! # Cycle detection
 //!
 //! Cycles are detected **during** the walk, not post-hoc. Each recursion
-//! maintains a walk stack of pack identifiers (source-url when present,
+//! maintains an ancestor stack of pack identifiers (source-url when present,
 //! otherwise the canonical on-disk path). If a child is about to be entered
 //! whose identifier is already on the stack, the walker short-circuits with
 //! [`TreeError::CycleDetected`]. A separate `CycleValidator` runs
@@ -24,6 +24,8 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 
@@ -125,8 +127,11 @@ impl<'a> Walker<'a> {
         Ok(PackGraph::new(state.nodes, state.edges))
     }
 
-    /// Recursive step. `stack` carries the pack identifiers currently on
-    /// the walk path — pushed on entry, popped on return.
+    /// Recursive step. `ancestors` carries the pack identifiers
+    /// currently on the in-progress walk path — pushed on entry,
+    /// popped on return. It is a path-prefix set (NOT a global
+    /// "visited" set), so a diamond reaching the same descendant
+    /// via two disjoint paths is not a cycle.
     ///
     /// Each loaded manifest's `children[]` is path-traversal-validated
     /// before any of those children are resolved on disk; the entry
@@ -138,10 +143,10 @@ impl<'a> Walker<'a> {
         parent_id: usize,
         manifest: &PackManifest,
         state: &mut BuildState,
-        stack: &mut Vec<String>,
+        ancestors: &mut Vec<String>,
     ) -> Result<(), TreeError> {
         self.record_depends_on(parent_id, manifest, state);
-        self.process_children(parent_id, manifest, state, stack)
+        self.process_children(parent_id, manifest, state, ancestors)
     }
 
     /// Record one `DependsOn` edge per `depends_on` entry. Resolution
@@ -162,10 +167,10 @@ impl<'a> Walker<'a> {
         parent_id: usize,
         manifest: &PackManifest,
         state: &mut BuildState,
-        stack: &mut Vec<String>,
+        ancestors: &mut Vec<String>,
     ) -> Result<(), TreeError> {
         for child in &manifest.children {
-            self.handle_child(parent_id, child, state, stack)?;
+            self.handle_child(parent_id, child, state, ancestors)?;
         }
         Ok(())
     }
@@ -175,11 +180,11 @@ impl<'a> Walker<'a> {
         parent_id: usize,
         child: &ChildRef,
         state: &mut BuildState,
-        stack: &mut Vec<String>,
+        ancestors: &mut Vec<String>,
     ) -> Result<(), TreeError> {
         let identity = pack_identity_for_child(child);
-        if stack.iter().any(|s| s == &identity) {
-            let mut chain = stack.clone();
+        if ancestors.iter().any(|s| s == &identity) {
+            let mut chain = ancestors.clone();
             chain.push(identity);
             return Err(TreeError::CycleDetected { chain });
         }
@@ -230,9 +235,9 @@ impl<'a> Walker<'a> {
         });
         state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 
-        stack.push(identity);
-        let result = self.walk_recursive(child_id, &child_manifest, state, stack);
-        stack.pop();
+        ancestors.push(identity);
+        let result = self.walk_recursive(child_id, &child_manifest, state, ancestors);
+        ancestors.pop();
         result
     }
 
@@ -630,25 +635,26 @@ impl SyncMetaReport {
     }
 }
 
-/// v1.2.0 Stage 1.g — three-phase per-meta walker entry point.
+/// Sync a meta pack and (optionally) its descendants.
 ///
 /// `meta_dir` is the on-disk directory containing the meta's
 /// `.grex/pack.yaml`. `prune_candidates` is the list of orphan dests
 /// (parent-relative) the caller's distributed-lockfile reader determined
-/// no longer appear in `manifest.children` — empty until Stage 1.h
-/// supplies the read side.
+/// no longer appear in `manifest.children`.
 ///
-/// Discharges Lean theorems W1–W8, V1, C1, C2, F1 via the bridges in
-/// `Bridge.lean`. The sequential implementation is a special case of
-/// the `sync_disjoint_commutes` axiom (single permit, no interleaving)
-/// so no new bridge axiom is required.
+/// The walker is **fail-loud, not fail-fast**: recoverable errors land
+/// in [`SyncMetaReport::errors`] and the walk continues so the caller
+/// sees the full picture in one pass. The only short-circuit is a
+/// detected cycle, which surfaces as `Err(TreeError::CycleDetected)`
+/// to keep the cyclic-clone storm risk contained.
 ///
 /// # Errors
 ///
-/// Returns the *first* catastrophic error (manifest parse failure on
-/// the supplied `meta_dir`). All recoverable errors land in
-/// [`SyncMetaReport::errors`] and the walker continues — fail-loud,
-/// not fail-fast.
+/// Returns the *first* catastrophic error: manifest parse failure on
+/// the supplied `meta_dir`, a cycle in the manifest forest (URL+ref
+/// identity), or a pre-walk path-traversal violation. Per-child
+/// clone / fetch / prune failures aggregate into
+/// [`SyncMetaReport::errors`] without aborting the walk.
 pub fn sync_meta(
     meta_dir: &Path,
     backend: &dyn GitBackend,
@@ -661,7 +667,7 @@ pub fn sync_meta(
     // `acyclic_path` precondition that drives
     // `sync_meta_no_cycle_infinite_clone` is established right at
     // the call site rather than implicitly relying on an empty
-    // initial visited. Children identify with `url:<url>@<ref>` —
+    // initial ancestor list. Children identify with `url:<url>@<ref>` —
     // disjoint namespace from the root's `path:` identity, so seeding
     // does not introduce false-positive cycle hits against any
     // legitimate child.
@@ -669,7 +675,7 @@ pub fn sync_meta(
     // `sync_meta_inner` extends this chain per recursion edge (Phase
     // 3) using clone-per-child so disjoint sibling branches do not
     // pollute each other's ancestor view.
-    let initial_visited = vec![pack_identity_for_root(meta_dir)];
+    let initial_ancestors = vec![pack_identity_for_root(meta_dir)];
     sync_meta_inner(
         meta_dir,
         backend,
@@ -677,7 +683,7 @@ pub fn sync_meta(
         opts,
         prune_candidates,
         /* depth */ 0,
-        &initial_visited,
+        &initial_ancestors,
     )
 }
 
@@ -688,7 +694,7 @@ fn sync_meta_inner(
     opts: &SyncMetaOptions,
     prune_candidates: &[PathBuf],
     depth: usize,
-    visited: &[String],
+    ancestors: &[String],
 ) -> Result<SyncMetaReport, TreeError> {
     let manifest = loader.load(meta_dir)?;
     // v1.2.0 Stage 1.c gate — every recursion frame re-runs the
@@ -714,7 +720,17 @@ fn sync_meta_inner(
     // an `Err` return so the caller sees `Err(CycleDetected)` directly
     // rather than burying it in `report.errors`. Cycles are catastrophic
     // (would otherwise clone forever); fail-loud here, NOT fold-into-report.
-    phase3_recurse(&pool, meta_dir, &manifest, backend, loader, opts, depth, visited, &mut report)?;
+    phase3_recurse(
+        &pool,
+        meta_dir,
+        &manifest,
+        backend,
+        loader,
+        opts,
+        depth,
+        ancestors,
+        &mut report,
+    )?;
 
     Ok(report)
 }
@@ -962,10 +978,20 @@ fn phase2_prune_orphans(
 /// caller via [`SyncMetaReport::merge`]) or a fatal error to push onto
 /// `report.errors`. Children whose dest does NOT carry a sub-meta
 /// produce `Skipped`.
+///
+/// v1.2.4 — `Cancelled` is the EARLY-OUT contributed by a sibling
+/// closure that observed the per-`phase3_recurse` cancellation flag
+/// already flipped to `true`. It carries no sub-report (no work was
+/// done) and never contributes to `report.metas_visited` or
+/// `report.errors` — the cycle that triggered the flip is the sole
+/// error reported. Mirrors the Lean
+/// `cancellation_terminates_promptly` theorem: when `cancelled` is
+/// observed at entry, return ok with zero descent.
 enum Phase3ChildOutcome {
     Skipped,
     Recursed(SyncMetaReport),
     Failed(TreeError),
+    Cancelled,
 }
 
 /// Phase 3: parallel recursion into child metas. A child qualifies for
@@ -1002,19 +1028,34 @@ enum Phase3ChildOutcome {
 /// (one discoverable Rust contract anchor per sibling unit of work)
 /// and keeps `phase3_recurse` itself under the clippy line cap.
 ///
-/// v1.2.2 — cycle detection lives here. `visited` is the ancestor
-/// identity chain from root down to (but excluding) this child. If
-/// the child's identity (`pack_identity_for_child`) is already in
-/// the chain we surface `TreeError::CycleDetected` with the chain
-/// extended by the recurring identity. Otherwise the child's
-/// identity is appended (clone-per-child, A.1) so disjoint sibling
-/// branches do not pollute each other's view.
+/// v1.2.2 — cycle detection lives here. `ancestors` is the in-progress
+/// ancestor identity chain from root down to (but excluding) this
+/// child. If the child's identity (`pack_identity_for_child`) is
+/// already in the chain we surface `TreeError::CycleDetected` with
+/// the chain extended by the recurring identity. Otherwise the
+/// child's identity is appended (clone-per-child, A.1) so disjoint
+/// sibling branches do not pollute each other's view.
 ///
 /// v1.2.3 (B1) — the depth-cap check (`next_depth > opts.max_depth`)
 /// MUST run AFTER the cycle check. Otherwise a cyclic manifest whose
 /// cycle length exceeds `max_depth` would silently truncate without
 /// surfacing `CycleDetected`: the depth cap is a "stop walking
 /// further" knob, not a "ignore correctness invariants" knob.
+///
+/// v1.2.4 (A1) — cancellation flag plumbed through. The closure
+/// observes `cancelled.load(Relaxed)` at entry: if a prior sibling
+/// already detected a cycle and signalled, this closure returns
+/// `Phase3ChildOutcome::Cancelled` with zero further work (no
+/// classify, no clone, no recursion). When this closure itself
+/// detects a cycle, it stores `true` into the flag BEFORE returning
+/// `Phase3ChildOutcome::Failed(CycleDetected)` so any rayon-co-iterated
+/// sibling not yet started observes the signal on its next entry. The
+/// flag is per-`phase3_recurse`-call: recursive sub-`sync_meta_inner`
+/// invocations build their own flag inside their own
+/// `phase3_recurse`, so a cycle two levels down does not cancel
+/// disjoint siblings at level one. Discharges the Lean
+/// `cancellation_terminates_promptly` obligation.
+#[allow(clippy::too_many_arguments)]
 fn phase3_handle_child(
     meta_dir: &Path,
     child: &ChildRef,
@@ -1022,8 +1063,17 @@ fn phase3_handle_child(
     loader: &dyn PackLoader,
     opts: &SyncMetaOptions,
     next_depth: usize,
-    visited: &[String],
+    ancestors: &[String],
+    cancelled: &AtomicBool,
 ) -> Phase3ChildOutcome {
+    // v1.2.4 EARLY-OUT — a sibling closure already detected a cycle
+    // and signalled. Return immediately with zero descent so partial
+    // clones / deep walks never start. Matches the Lean
+    // `cancellation_terminates_promptly` theorem: cancelled = true
+    // implies ok with zero recursive steps.
+    if cancelled.load(Ordering::Relaxed) {
+        return Phase3ChildOutcome::Cancelled;
+    }
     let dest = meta_dir.join(child.effective_path());
     if !dest.join(".grex").join("pack.yaml").is_file() {
         return Phase3ChildOutcome::Skipped;
@@ -1041,8 +1091,14 @@ fn phase3_handle_child(
     // v1.2.3 (B1): runs BEFORE the depth-cap early-return below so a
     // cycle longer than `max_depth` cannot hide behind truncation.
     let id = pack_identity_for_child(child);
-    if visited.iter().any(|v| v == &id) {
-        let mut chain = visited.to_vec();
+    if ancestors.iter().any(|v| v == &id) {
+        // v1.2.4 SIGNAL — flip the cancellation flag so any
+        // co-iterated sibling closures observe it on their next
+        // entry. `Relaxed` is sufficient: we need eventual visibility,
+        // not strict happens-before ordering against any other memory
+        // operation. See design doc §"Atomic ordering".
+        cancelled.store(true, Ordering::Relaxed);
+        let mut chain = ancestors.to_vec();
         chain.push(id);
         return Phase3ChildOutcome::Failed(TreeError::CycleDetected { chain });
     }
@@ -1059,12 +1115,12 @@ fn phase3_handle_child(
     // ancestor view, so disjoint sibling branches do not see each
     // other on the path. A diamond where two siblings legitimately
     // depend on the same descendant is therefore not a cycle.
-    let mut child_visited = visited.to_vec();
-    child_visited.push(id);
+    let mut child_ancestors = ancestors.to_vec();
+    child_ancestors.push(id);
     // Empty `prune_candidates` for the sub-meta — 1.h supplies the
     // sub-meta's distributed lockfile read via the same caller
     // pathway when it lands.
-    match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth, &child_visited) {
+    match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth, &child_ancestors) {
         Ok(sub) => Phase3ChildOutcome::Recursed(sub),
         Err(e) => Phase3ChildOutcome::Failed(e),
     }
@@ -1079,7 +1135,7 @@ fn phase3_recurse(
     loader: &dyn PackLoader,
     opts: &SyncMetaOptions,
     depth: usize,
-    visited: &[String],
+    ancestors: &[String],
     report: &mut SyncMetaReport,
 ) -> Result<(), TreeError> {
     if !opts.recurse {
@@ -1091,22 +1147,43 @@ fn phase3_recurse(
     // cycle longer than `max_depth` cannot mask itself by tripping
     // the depth cap before the cycle test fires. The per-child
     // handler now treats `next_depth > cap` as `Skipped`.
+    //
+    // v1.2.4 (A1): per-call cancellation flag. One `Arc<AtomicBool>`
+    // is constructed here and shared (read-only across closures, with
+    // a single point-of-truth `store` in any closure that detects a
+    // cycle) by every sibling iteration of this `par_iter`. Recursive
+    // sub-`sync_meta_inner` calls build their own flag via their own
+    // `phase3_recurse` — disjoint subtrees do not cross-cancel. The
+    // flag is dropped when this fn returns, so its lifetime is exactly
+    // the rayon parallel pass it scopes.
+    //
+    // Scope: cancels siblings within THIS Phase 3 fan-out call only;
+    // recursive sub-fan-outs construct their own flag, so a cycle deep
+    // in pack X does not cancel pack Y at root level. This isolation
+    // is intentional and tested by
+    // `cancellation_per_call_scope_isolates_subtrees`.
+    let cancelled = Arc::new(AtomicBool::new(false));
     let outcomes: Vec<Phase3ChildOutcome> = pool.install(|| {
         manifest
             .children
             .par_iter()
             .map(|child| {
-                phase3_handle_child(meta_dir, child, backend, loader, opts, next_depth, visited)
+                phase3_handle_child(
+                    meta_dir, child, backend, loader, opts, next_depth, ancestors, &cancelled,
+                )
             })
             .collect()
     });
     // Cycle errors short-circuit (catastrophic — clone-storm risk);
     // every other outcome folds into the report per the existing
-    // fail-loud-but-continue policy.
+    // fail-loud-but-continue policy. v1.2.4: `Cancelled` outcomes are
+    // skipped — they carry no sub-report and contribute neither to
+    // `report.metas_visited` nor to `report.errors`. The cycle that
+    // triggered the cancellation is the sole error reported.
     let mut first_cycle_idx: Option<usize> = None;
     for outcome in outcomes {
         match outcome {
-            Phase3ChildOutcome::Skipped => {}
+            Phase3ChildOutcome::Skipped | Phase3ChildOutcome::Cancelled => {}
             Phase3ChildOutcome::Recursed(sub) => report.merge(sub),
             Phase3ChildOutcome::Failed(e) => {
                 // v1.2.2 fix: surface all sibling cycles in
@@ -1847,9 +1924,19 @@ mod tests {
     ///
     /// Walker must traverse all four packs and produce no
     /// `CycleDetected`. Because the cycle detector clones the
-    /// `visited` chain per child, A's descendants do not poison B's
+    /// ancestor chain per child, A's descendants do not poison B's
     /// descendant view, so seeing `C` from both arms is a diamond,
     /// not a cycle.
+    ///
+    /// **v1.2.4 T1-spot-check extension.** In addition to the
+    /// `metas_visited == 5` count assertion, this test also confirms
+    /// that C is genuinely walked through BOTH arms: the
+    /// `phase1_classifications` table must record one entry whose
+    /// parent is `a/` (with dest `a/c`) AND one entry whose parent is
+    /// `b/` (with dest `b/c`). Counting alone (`metas_visited`) cannot
+    /// catch a regression where a future memoization optimization
+    /// collapses the second walk into a no-op while still incrementing
+    /// the counter — tracking the actual dest paths does.
     #[test]
     fn cycle_diamond_shared_descendant_no_cycle() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1891,13 +1978,40 @@ mod tests {
         );
         // Crucially, no errors of any kind — and certainly not a
         // CycleDetected — because the two `C` visits live on
-        // disjoint cloned visited chains.
+        // disjoint cloned ancestor chains.
         assert!(
             !report.errors.iter().any(|e| matches!(e, TreeError::CycleDetected { .. })),
             "diamond must not surface CycleDetected; errors={:?}",
             report.errors
         );
         assert!(report.errors.is_empty(), "diamond should produce no errors: {:?}", report.errors);
+
+        // v1.2.4 T1-spot-check: assert `c` was genuinely walked under
+        // BOTH arms. The phase1_classifications table records every
+        // (parent_meta, dest, class) triple observed during Phase 1
+        // dispatch; for the diamond layout we expect:
+        //   * (root, a)    — a is a direct child of root
+        //   * (root, b)    — b is a direct child of root
+        //   * (a, a/c)     — c-via-a (Phase 1 inside a's recursion)
+        //   * (b, b/c)     — c-via-b (Phase 1 inside b's recursion)
+        // If a future memoization regression collapses the second `c`
+        // walk into a no-op while still incrementing `metas_visited`,
+        // the (b, b/c) pair will be missing from this table and the
+        // assertion below fails.
+        let dests_under_a = destinations_under(&report, &a_dir);
+        let dests_under_b = destinations_under(&report, &b_dir);
+        assert!(
+            dests_under_a.iter().any(|d| d == &c_under_a_dir),
+            "diamond: expected c-via-a in classifications under a, got {dests_under_a:?}"
+        );
+        assert!(
+            dests_under_b.iter().any(|d| d == &c_under_b_dir),
+            "diamond: expected c-via-b in classifications under b, got {dests_under_b:?}"
+        );
+        assert_ne!(
+            c_under_a_dir, c_under_b_dir,
+            "the two `c` visits must land on distinct on-disk dests"
+        );
     }
 
     /// T2 — 4-node cycle: `root → A → B → C → D → A`. Cycle length 4
@@ -2146,5 +2260,410 @@ mod tests {
         );
         assert_eq!(id_none, id_empty, "Some(\"\") and None must yield the same identity");
         assert!(!id_empty.ends_with('@'), "identity must not end with trailing @: {id_empty:?}");
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.4 — A1 cancellation token (T-cancel).
+    //
+    // Discharges the Lean `cancellation_terminates_promptly` theorem
+    // in `proof/Grex/Walker.lean`: when one sibling closure detects a
+    // cycle and signals the per-`phase3_recurse` cancellation flag,
+    // every subsequent in-flight sibling closure observes the flag at
+    // its next entry and returns `Phase3ChildOutcome::Cancelled` with
+    // zero recursive descent.
+    // -----------------------------------------------------------------
+
+    /// T-cancel — sibling cancellation under cycle.
+    ///
+    /// Topology: `root → A`, where A has FOUR children
+    /// `[A_cyclic, X, Y, Z]` (in this exact source order). `A_cyclic`'s
+    /// URL collides with A's own URL, so A's `phase3_recurse` detects
+    /// the cycle when iterating its first child. `X`, `Y`, `Z` are
+    /// independent sub-metas, each containing a deep chain
+    /// (`X → X1 → X2`, etc) that would inflate `metas_visited` if
+    /// genuinely walked. With `opts.parallel = Some(1)` the rayon
+    /// pool runs siblings serially in source order, so the cyclic
+    /// sibling fires first, sets the flag, and `X`/`Y`/`Z` observe
+    /// `Cancelled` at entry — none of their subtrees are walked.
+    ///
+    /// Determinism: `parallel: Some(1)` removes thread interleaving
+    /// from the test surface — the cyclic arm is *guaranteed* to run
+    /// before the acyclic siblings. The flag is checked at entry of
+    /// `phase3_handle_child`, so any sibling that has not yet started
+    /// observes it. `metas_visited` is the side-effect-visible counter
+    /// used to assert the cancellation discipline: pre-cancellation
+    /// (v1.2.3) the walker would visit every sibling subtree before
+    /// surfacing `Err(CycleDetected)`; post-cancellation (v1.2.4)
+    /// only the cyclic arm and its prefix contribute.
+    ///
+    /// Without the cancellation flag, `metas_visited` would total
+    /// 1 (root) + 1 (A) + 3 (X, Y, Z themselves) + 6 (X1,X2,Y1,Y2,Z1,Z2)
+    /// = 11. With the flag, X/Y/Z's `phase3_handle_child` short-circuits
+    /// before recursing, so only root + A are recorded → 2.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn cancellation_aborts_siblings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let a_dir = root_dir.join("a");
+        // A_cyclic's path is a fresh slot under A so on-disk classify
+        // succeeds; identity collision with A's URL is what trips the
+        // cycle detector at A's `phase3_recurse`.
+        let a_cyclic_dir = a_dir.join("a-cyclic");
+        let x_dir = a_dir.join("x");
+        let x1_dir = x_dir.join("x1");
+        let x2_dir = x1_dir.join("x2");
+        let y_dir = a_dir.join("y");
+        let y1_dir = y_dir.join("y1");
+        let y2_dir = y1_dir.join("y2");
+        let z_dir = a_dir.join("z");
+        let z1_dir = z_dir.join("z1");
+        let z2_dir = z1_dir.join("z2");
+        for d in [
+            &a_dir,
+            &a_cyclic_dir,
+            &x_dir,
+            &x1_dir,
+            &x2_dir,
+            &y_dir,
+            &y1_dir,
+            &y2_dir,
+            &z_dir,
+            &z1_dir,
+            &z2_dir,
+        ] {
+            make_sub_meta_on_disk(d, d.file_name().unwrap().to_str().unwrap());
+        }
+
+        let url_a = "https://example.com/a.git";
+        let url_x = "https://example.com/x.git";
+        let url_x1 = "https://example.com/x1.git";
+        let url_x2 = "https://example.com/x2.git";
+        let url_y = "https://example.com/y.git";
+        let url_y1 = "https://example.com/y1.git";
+        let url_y2 = "https://example.com/y2.git";
+        let url_z = "https://example.com/z.git";
+        let url_z1 = "https://example.com/z1.git";
+        let url_z2 = "https://example.com/z2.git";
+
+        // A's children: [a-cyclic (collides with A's identity), x, y, z]
+        // — ORDER MATTERS for determinism. With parallel: Some(1) the
+        // cyclic arm runs first, signals, and the rest observe.
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(
+                a_dir.clone(),
+                meta_manifest_with(
+                    "a",
+                    vec![
+                        child(url_a, "a-cyclic"),
+                        child(url_x, "x"),
+                        child(url_y, "y"),
+                        child(url_z, "z"),
+                    ],
+                ),
+            )
+            .with(a_cyclic_dir.clone(), meta_manifest_with("a-cyclic", vec![]))
+            // X/Y/Z each carry a 3-level subtree that would inflate
+            // metas_visited if genuinely walked.
+            .with(x_dir.clone(), meta_manifest_with("x", vec![child(url_x1, "x1")]))
+            .with(x1_dir.clone(), meta_manifest_with("x1", vec![child(url_x2, "x2")]))
+            .with(x2_dir.clone(), meta_manifest_with("x2", vec![]))
+            .with(y_dir.clone(), meta_manifest_with("y", vec![child(url_y1, "y1")]))
+            .with(y1_dir.clone(), meta_manifest_with("y1", vec![child(url_y2, "y2")]))
+            .with(y2_dir.clone(), meta_manifest_with("y2", vec![]))
+            .with(z_dir.clone(), meta_manifest_with("z", vec![child(url_z1, "z1")]))
+            .with(z1_dir.clone(), meta_manifest_with("z1", vec![child(url_z2, "z2")]))
+            .with(z2_dir.clone(), meta_manifest_with("z2", vec![]));
+        let backend = InMemGit::new();
+        // parallel: Some(1) — single-threaded rayon pool. Source-order
+        // iteration => cyclic arm runs before X/Y/Z, signal observed.
+        let opts = SyncMetaOptions { parallel: Some(1), ..SyncMetaOptions::default() };
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("cyclic input must surface CycleDetected");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                let id_a = format!("url:{url_a}");
+                assert_eq!(
+                    chain.last(),
+                    Some(&id_a),
+                    "recurring identity must be A (the cyclic arm), got chain={chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+        // The cancellation discipline asserts: X/Y/Z's subtrees were
+        // NOT walked. Cancellation lives in Phase 3 (the recursion
+        // edge), so Phase 1 still fetches A's four direct children
+        // (a-cyclic, x, y, z) — one Fetch each. A's Phase 3 then
+        // detects the cycle on a-cyclic and signals; X/Y/Z's
+        // `phase3_handle_child` returns `Cancelled` at entry, so
+        // their `sync_meta_inner` never runs. Therefore X1/X2/Y1/Y2/
+        // Z1/Z2 are NEVER fetched.
+        //
+        // Without cancellation Fetch count = 11:
+        //   1 (root → a) + 4 (a → a-cyclic, x, y, z)
+        //   + 2 (x → x1 → x2) + 2 (y → y1 → y2) + 2 (z → z1 → z2).
+        // With cancellation Fetch count = 5:
+        //   1 (root → a) + 4 (a → a-cyclic, x, y, z).
+        //
+        // With `parallel: Some(1)` the rayon pool is single-threaded
+        // and visibility is immediate, so 5 is the deterministic tight
+        // bound: 1 (root → a) + 4 (a's Phase 1 fan-out for a-cyclic, x,
+        // y, z). No upper-bound slack — `Some(1)` removes interleaving
+        // entirely, and any deviation indicates a real regression.
+        let fetch_count =
+            backend.calls().iter().filter(|c| matches!(c, BackendCall::Fetch { .. })).count();
+        // Lower bound: Phase 1's per-child fan-out runs BEFORE the
+        // Phase 3 cycle check, so even under cancellation A's four
+        // direct children must have been fetched (1 root → A + 4 a's
+        // children = 5). Documents that Phase 1 is intentionally NOT
+        // cancellation-aware in v1.2.4 — cancellation only short-
+        // circuits the Phase 3 recursion edge.
+        assert!(
+            fetch_count >= 5,
+            "Phase 1 fan-out for A's 4 direct children must complete even under cancellation; \
+             observed {fetch_count} fetches"
+        );
+        assert_eq!(
+            fetch_count, 5,
+            "cancellation flag must short-circuit X/Y/Z subtrees; \
+             observed {fetch_count} fetches (acyclic walk would do 11)"
+        );
+        // Stronger assertion: NO fetch ever targeted x1/x2/y1/y2/z1/z2.
+        // If the cancellation token were broken, sync_meta_inner would
+        // recurse into x/y/z and Phase 1 there would fetch x1/y1/z1 at
+        // a minimum.
+        let cancelled_dests = [&x1_dir, &x2_dir, &y1_dir, &y2_dir, &z1_dir, &z2_dir];
+        for dest in cancelled_dests {
+            for call in backend.calls() {
+                if let BackendCall::Fetch { dest: fetched } = &call {
+                    assert_ne!(
+                        fetched,
+                        dest,
+                        "cancellation must prevent recursion into {} (observed Fetch call)",
+                        dest.display()
+                    );
+                }
+            }
+        }
+    }
+
+    /// G1 — multi-thread sibling cancellation race.
+    ///
+    /// Topology: `root → A`, where A has 12 children: two cyclic
+    /// siblings (`A_cyclic1`, `A_cyclic2`, both colliding with A's
+    /// own URL) and ten acyclic deep subtrees (`X0..X9` each →
+    /// `X{i}_1` → `X{i}_2`). With `parallel: Some(8)` rayon may
+    /// schedule the two cyclic arms onto different worker threads,
+    /// so BOTH can simultaneously detect the cycle and try to store
+    /// into `cancelled`. The aggregator (`phase3_recurse`) must:
+    ///   - return `Err(CycleDetected)` on every iteration with a
+    ///     non-empty chain (no panic, no Ok),
+    ///   - never spuriously double-count or wedge on the multiple
+    ///     concurrent stores (AtomicBool::store is idempotent),
+    ///   - keep fetch count bounded (no unbounded recursion).
+    ///
+    /// Looped 50 iterations — non-determinism would surface as
+    /// either a panic, an `Ok(_)` return, or an unbounded fetch
+    /// count (the acyclic 10-subtree walk would be at minimum
+    /// `1 (root → A) + 12 (A's children) + 20 (X*_1, X*_2)` = 33
+    /// without cancellation; we cap at 1000 to catch runaway).
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn cancellation_aborts_siblings_multithread() {
+        // Build helper: returns (loader, backend, root_dir) for a
+        // fresh per-iteration tempdir so iterations don't share state.
+        fn build_topology() -> (tempfile::TempDir, PathBuf, InMemLoader, InMemGit, String) {
+            let tmp = tempfile::tempdir().unwrap();
+            let root_dir = tmp.path().to_path_buf();
+            let a_dir = root_dir.join("a");
+            make_sub_meta_on_disk(&a_dir, "a");
+            let url_a = "https://example.com/a.git".to_string();
+            // Two cyclic siblings (both collide with A's identity)
+            let a_cyc1_dir = a_dir.join("a-cyclic1");
+            let a_cyc2_dir = a_dir.join("a-cyclic2");
+            make_sub_meta_on_disk(&a_cyc1_dir, "a-cyclic1");
+            make_sub_meta_on_disk(&a_cyc2_dir, "a-cyclic2");
+            // Ten acyclic deep subtrees: x0..x9, each → x{i}_1 → x{i}_2
+            let mut a_children = vec![child(&url_a, "a-cyclic1"), child(&url_a, "a-cyclic2")];
+            let mut loader = InMemLoader::new()
+                .with(root_dir.clone(), meta_manifest_with("root", vec![child(&url_a, "a")]))
+                .with(a_cyc1_dir.clone(), meta_manifest_with("a-cyclic1", vec![]))
+                .with(a_cyc2_dir.clone(), meta_manifest_with("a-cyclic2", vec![]));
+            for i in 0..10 {
+                let xi_name = format!("x{i}");
+                let xi_dir = a_dir.join(&xi_name);
+                let xi1_name = format!("x{i}_1");
+                let xi1_dir = xi_dir.join(&xi1_name);
+                let xi2_name = format!("x{i}_2");
+                let xi2_dir = xi1_dir.join(&xi2_name);
+                make_sub_meta_on_disk(&xi_dir, &xi_name);
+                make_sub_meta_on_disk(&xi1_dir, &xi1_name);
+                make_sub_meta_on_disk(&xi2_dir, &xi2_name);
+                let url_xi = format!("https://example.com/x{i}.git");
+                let url_xi1 = format!("https://example.com/x{i}_1.git");
+                let url_xi2 = format!("https://example.com/x{i}_2.git");
+                a_children.push(child(&url_xi, &xi_name));
+                loader = loader
+                    .with(xi_dir, meta_manifest_with(&xi_name, vec![child(&url_xi1, &xi1_name)]))
+                    .with(xi1_dir, meta_manifest_with(&xi1_name, vec![child(&url_xi2, &xi2_name)]))
+                    .with(xi2_dir, meta_manifest_with(&xi2_name, vec![]));
+            }
+            loader = loader.with(a_dir, meta_manifest_with("a", a_children));
+            let backend = InMemGit::new();
+            (tmp, root_dir, loader, backend, url_a)
+        }
+
+        for iter in 0..50 {
+            let (_tmp, root_dir, loader, backend, url_a) = build_topology();
+            let opts = SyncMetaOptions { parallel: Some(8), ..SyncMetaOptions::default() };
+            let result = sync_meta(&root_dir, &backend, &loader, &opts, &[]);
+            let err = match result {
+                Err(e) => e,
+                Ok(_) => panic!("iter {iter}: expected CycleDetected, got Ok"),
+            };
+            match err {
+                TreeError::CycleDetected { chain } => {
+                    assert!(
+                        !chain.is_empty(),
+                        "iter {iter}: CycleDetected chain must be non-empty: {chain:?}"
+                    );
+                    let id_a = format!("url:{url_a}");
+                    assert_eq!(
+                        chain.last(),
+                        Some(&id_a),
+                        "iter {iter}: recurring identity must be A, got chain={chain:?}"
+                    );
+                }
+                other => panic!("iter {iter}: expected CycleDetected, got {other:?}"),
+            }
+            // Bound check: even with two cyclic arms racing, the
+            // walker must not have walked unbounded subtrees. Acyclic
+            // walk would do 33 fetches; under cancellation Phase 1
+            // for A's 12 direct children fires (12 fetches) plus the
+            // initial root → A fetch (1) = 13, and depending on
+            // worker scheduling some X{i}_1 / X{i}_2 fetches may
+            // sneak in before the flag is observed. Cap loosely at
+            // 200 — any wild blowup indicates the flag is broken.
+            let fetch_count =
+                backend.calls().iter().filter(|c| matches!(c, BackendCall::Fetch { .. })).count();
+            assert!(
+                fetch_count >= 1,
+                "iter {iter}: at least the root → A fetch must occur; got {fetch_count}"
+            );
+            assert!(
+                fetch_count < 200,
+                "iter {iter}: fetch count blew up under multi-thread cancellation; got {fetch_count}"
+            );
+        }
+    }
+
+    /// G2 — per-call cancellation flag scope: a cycle deep in pack A
+    /// MUST NOT cancel a sibling pack B at the root level.
+    ///
+    /// Topology:
+    ///   root → [A, B]
+    ///     A → A1 → A2 → A2_cyclic   (A2_cyclic.url == A2.url ⇒ cycle
+    ///                                 inside A's deep subtree)
+    ///     B → B1 → B2 → B3          (clean acyclic subtree)
+    ///
+    /// The cancellation flag for root's Phase 3 fan-out covers root's
+    /// direct children (A, B). The cycle inside A is detected during
+    /// recursion into A's deep subtree, by a NEW per-call flag built
+    /// at the deep `phase3_recurse` frame — that flag is scoped to A's
+    /// inner closures only. It must NOT propagate up and cancel B's
+    /// independent walk.
+    ///
+    /// Assertions:
+    ///   (i)  walker returns `Err(CycleDetected)` (the deep cycle
+    ///        propagates up via the short-circuit path),
+    ///   (ii) B's deep subtree IS walked (B, B1, B2, B3 all fetched),
+    ///        proving B's walk was not aborted by A's deep-subtree
+    ///        cancellation flag (which lives in a recursion frame
+    ///        below root, disjoint from the root-level fan-out flag
+    ///        that scopes A and B as siblings).
+    ///
+    /// With `parallel: Some(2)` rayon schedules A and B onto separate
+    /// workers; B must run to completion regardless of A's cycle.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn cancellation_per_call_scope_isolates_subtrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // A's deep cycle arm
+        let a_dir = root_dir.join("a");
+        let a1_dir = a_dir.join("a1");
+        let a2_dir = a1_dir.join("a2");
+        let a2cyc_dir = a2_dir.join("a2-cyclic");
+        // B's clean deep subtree
+        let b_dir = root_dir.join("b");
+        let b1_dir = b_dir.join("b1");
+        let b2_dir = b1_dir.join("b2");
+        let b3_dir = b2_dir.join("b3");
+        for d in [&a_dir, &a1_dir, &a2_dir, &a2cyc_dir, &b_dir, &b1_dir, &b2_dir, &b3_dir] {
+            make_sub_meta_on_disk(d, d.file_name().unwrap().to_str().unwrap());
+        }
+        let url_a = "https://example.com/a.git";
+        let url_a1 = "https://example.com/a1.git";
+        let url_a2 = "https://example.com/a2.git";
+        let url_b = "https://example.com/b.git";
+        let url_b1 = "https://example.com/b1.git";
+        let url_b2 = "https://example.com/b2.git";
+        let url_b3 = "https://example.com/b3.git";
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with("root", vec![child(url_a, "a"), child(url_b, "b")]),
+            )
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_a1, "a1")]))
+            .with(a1_dir.clone(), meta_manifest_with("a1", vec![child(url_a2, "a2")]))
+            // a2's child re-declares a2's identity → cycle at depth 4
+            .with(a2_dir.clone(), meta_manifest_with("a2", vec![child(url_a2, "a2-cyclic")]))
+            .with(a2cyc_dir.clone(), meta_manifest_with("a2-cyclic", vec![]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![child(url_b1, "b1")]))
+            .with(b1_dir.clone(), meta_manifest_with("b1", vec![child(url_b2, "b2")]))
+            .with(b2_dir.clone(), meta_manifest_with("b2", vec![child(url_b3, "b3")]))
+            .with(b3_dir.clone(), meta_manifest_with("b3", vec![]));
+        let backend = InMemGit::new();
+        // parallel: Some(2) — A and B may schedule onto separate
+        // workers. The point of the test is to verify B's walk is
+        // not aborted by A's deep-subtree cancellation flag.
+        let opts = SyncMetaOptions { parallel: Some(2), ..SyncMetaOptions::default() };
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("deep cycle inside A must surface CycleDetected");
+        // (i) Cycle bubbled up.
+        match err {
+            TreeError::CycleDetected { chain } => {
+                let id_a2 = format!("url:{url_a2}");
+                assert_eq!(
+                    chain.last(),
+                    Some(&id_a2),
+                    "recurring identity must be A2 (the cyclic arm), got chain={chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+        // (ii) B's subtree was walked: B, B1, B2, B3 each fetched.
+        // The deep cycle in A fires inside a per-call flag scoped to
+        // that recursion frame; root's per-call flag is NOT signalled
+        // (cycle is returned from a child call, not stored at root
+        // scope), so B's sibling walk completes uninterrupted.
+        let fetched_dests: Vec<PathBuf> = backend
+            .calls()
+            .iter()
+            .filter_map(|c| match c {
+                BackendCall::Fetch { dest } => Some(dest.clone()),
+                _ => None,
+            })
+            .collect();
+        for dest in [&b_dir, &b1_dir, &b2_dir, &b3_dir] {
+            assert!(
+                fetched_dests.iter().any(|f| f == dest),
+                "per-call scope: B's subtree must have been walked despite A's deep cycle; \
+                 missing fetch for {} (observed {fetched_dests:?})",
+                dest.display()
+            );
+        }
     }
 }

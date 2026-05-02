@@ -133,10 +133,10 @@ fn walk_recursive(
     parent_meta: &Path,
     manifest: &PackManifest,
     state: &mut BuildState,
-    stack: &mut Vec<String>,
+    ancestors: &mut Vec<String>,
 ) -> Result<(), TreeError> {
     record_depends_on(parent_id, manifest, state);
-    process_children(backend, loader, parent_id, parent_meta, manifest, state, stack)
+    process_children(backend, loader, parent_id, parent_meta, manifest, state, ancestors)
 }
 
 fn record_depends_on(parent_id: usize, manifest: &PackManifest, state: &mut BuildState) {
@@ -154,10 +154,10 @@ fn process_children(
     parent_meta: &Path,
     manifest: &PackManifest,
     state: &mut BuildState,
-    stack: &mut Vec<String>,
+    ancestors: &mut Vec<String>,
 ) -> Result<(), TreeError> {
     for child in &manifest.children {
-        handle_child(backend, loader, parent_id, parent_meta, child, state, stack)?;
+        handle_child(backend, loader, parent_id, parent_meta, child, state, ancestors)?;
     }
     Ok(())
 }
@@ -169,11 +169,16 @@ fn handle_child(
     parent_meta: &Path,
     child: &ChildRef,
     state: &mut BuildState,
-    stack: &mut Vec<String>,
+    ancestors: &mut Vec<String>,
 ) -> Result<(), TreeError> {
+    // `ancestors` is the in-progress identity path from the root down
+    // to (but excluding) this child's parent — a path-prefix set, NOT
+    // a global "visited" set. A diamond reaching the same descendant
+    // via two disjoint paths is therefore not a cycle (the shared
+    // descendant never appears on either arm's ancestor chain).
     let identity = pack_identity_for_child(child);
-    if stack.iter().any(|s| s == &identity) {
-        let mut chain = stack.clone();
+    if ancestors.iter().any(|s| s == &identity) {
+        let mut chain = ancestors.clone();
         chain.push(identity);
         return Err(TreeError::CycleDetected { chain });
     }
@@ -216,9 +221,10 @@ fn handle_child(
     });
     state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 
-    stack.push(identity);
-    let result = walk_recursive(backend, loader, child_id, &dest, &child_manifest, state, stack);
-    stack.pop();
+    ancestors.push(identity);
+    let result =
+        walk_recursive(backend, loader, child_id, &dest, &child_manifest, state, ancestors);
+    ancestors.pop();
     result
 }
 
