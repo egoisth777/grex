@@ -2456,6 +2456,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "real-smoke"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

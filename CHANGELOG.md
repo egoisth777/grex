@@ -22,6 +22,15 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Added
 
+- Real-smoke harness (`crates/real-smoke/`) — black-box CLI regression
+  suite running against stable GH fixture repos via SSH + git
+  worktrees. 15 regression gates locking the v1.3.0 dogfood bugs
+  (B1-B15 per `.omne/cfg/dogfood-findings-v1.3.0.md`).
+- `scripts/provision-real-smoke-fixtures.ps1` — idempotent fixture
+  provisioning + `-Check` audit mode.
+- `.github/workflows/real-smoke.yml` — dedicated CI workflow (manual
+  + nightly + label-gated PR).
+
 ### Changed
 
 - Routed `grex import --from-repos-json` manifest writes through the shared
