@@ -1,11 +1,42 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-04-30, main — v1.2.1 SHIPPED + merged via PR #60)` (immediately below). Active branch: `main @ 2c23c6f` (v1.2.1 squash-merge of PR #60). Tag `v1.2.1` at `1db3579` (pre-squash, preserved). `feat/v1.2.1` deleted (local + remote). v1.2.1 release artifact set complete. Next focus = open v1.2.2 cycle, with `sync_meta` cycle detection as the first item (BLOCKER carried over from v1.2.1 follow-up gap list).
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.3 SHIPPED)` (immediately below). Active branch: `main @ 7de96d1` (v1.2.3 squash-merge of PR #62). Tags `v1.2.2` + `v1.2.3` pushed to origin. `feat/v1.2.2` and `feat/v1.2.3` deleted (local + remote). v1.2.4 cycle: NOT STARTED. Last action: v1.2.3 ship.
 
-**v1.2.1 SHIPPED + merged 2026-04-30 on `main` (squash commit `2c23c6f`, PR #60).** SemVer = PATCH (additive only). All 6 sub-features live: (1) mdbook doc-debt, (2) CLI `grex migrate-lockfile` dispatcher, (3) rayon parallel sibling sync (Phase 1 + Phase 3) + prod wiring + `build_graph` extraction / `Walker::walk` prod retirement / `--workspace` canonical resolve, (4) `grex doctor --scan-undeclared`, (5a) Lean4 `quarantine_snapshot_precedes_delete` proof, (5b) `--quarantine` Rust impl (recursive snapshot before force-prune). Architecture decision locked: `sync::run = sync_meta (mutate) + build_graph (read) + run_actions (consume)`. Full release-prep gate: 911 cargo tests pass / 0 fail / 2 `#[ignore]`'d (legacy semantics) / `lake build` green / clippy `-D warnings` clean. Local tag `v1.2.1 = 1db3579` preserved (pre-squash). 8 v1.2.2+ follow-up gaps filed (see endpoint below). `cargo publish` of 4 crates pending maintainer call.
+**v1.2.3 SHIPPED 2026-05-02 on `main` (squash commit `7de96d1`, PR #62).** SemVer = PATCH. Three pure bug fixes from v1.2.2 reviewer findings: B1 (depth-cap masking), B2 (empty-ref `Display` trailing `@`), B4 (root identity in cycle chain). B3 dropped pre-impl (non-bug). Lean theorem `sync_meta_no_cycle_infinite_clone` generalized over arbitrary initial `visited` — same theorem now covers v1.2.2 (`visited=[]`) and v1.2.3 (`visited=[root_id]`); `lake build` green, 0 `sorry`, kernel deps `[propext]` only, axioms 9/4/0. 5 new tests (T1-T3 + F1-F2 review fix-ups). All 4 crates (grex-core/grex-plugins-builtin/grex-mcp/grex-cli) live on crates.io at `1.2.3`.
 
-**v1.2.0 SHIPPED 2026-04-30.** All 4 crates live on crates.io (`grex-core`/`grex-plugins-builtin`/`grex-mcp`/`grex-cli` all `max_version: 1.2.0`). Tag `v1.2.0` on `main` at squash commit `2c1791d`. Detailed v1.2.0 endpoint preserved under "## Archived endpoints (pre-v1.2.1)" below.
+**v1.2.2 SHIPPED 2026-05-02 on `main` (squash commit `92ec7fd`, PR #61).** SemVer = PATCH. Closed the v1.2.1 BLOCKER: `sync_meta` cycle detection at Walker Phase 3 recurse edge (Q6) using A.1 clone-per-child `Vec<String>` visited propagation (Q7). Lean theorem `sync_meta_no_cycle_infinite_clone` proved (lake green, axioms 9/4/0). `e2e_cycle_aborts` re-enabled + 3 new unit tests. Tag `v1.2.2` pushed. Crates published at `1.2.2`. Post-merge fix-up `bfe3359` for CI version-coupled artifacts (`xtask/tests/version_test.rs` pin + man-drift).
+
+**v1.2.0 + v1.2.1 SHIPPED 2026-04-30.** Detailed endpoints preserved under "## Archived endpoints" below.
+
+## Endpoint (2026-05-02, main — v1.2.3 SHIPPED)
+
+**State:** main @ 7de96d1, all 4 crates @ 1.2.3 live on crates.io, tags v1.2.2 + v1.2.3 pushed.
+
+**This session shipped:**
+- v1.2.2: sync_meta cycle detection (BLOCKER from v1.2.1). Cycle check at Walker Phase 3 recurse edge. A.1 clone-per-child Vec<String> visited propagation. Lean theorem `sync_meta_no_cycle_infinite_clone` — lake green, 0 sorry, kernel deps `[propext]` only, axioms 9/4/0. PR #61 merged @ 92ec7fd.
+- v1.2.3: 3 bug fixes from v1.2.2 review. B1 (depth-cap masking), B2 (empty-ref Display trailing @), B4 (root identity in cycle chain). Lean theorem extended (generalized over arbitrary initial visited). 5 new tests (T1-T3 + F1-F2 review fix-ups). PR #62 merged @ 7de96d1.
+
+**Process gaps closed:**
+- v1.2.2: missed local cargo fmt --check, cargo doc -D warnings, axiom-policy script before PR. Caught 2 CI fails (version_test pin + man-drift) post-PR-open. Fix in commit bfe3359.
+- v1.2.3: missed local cargo clippy --workspace --all-targets -- -D warnings before PR. Caught 1 CI fail (clippy::too_many_lines on 2 verbose tests) post-PR-open. Fix in commit 1d56094.
+- Adopt for v1.2.4+: include `cargo clippy -D warnings` in local pre-push gate alongside fmt/build/doc/lake/axioms.
+
+**Carry-forward to v1.2.4 / v1.3:**
+- Architecture: par_iter cancellation token, partial-clone cleanup on cycle abort, pool.install deadlock guard on size-1 pool
+- Test coverage: proptest cycle generator, T1 destination spot-check (verify diamond's C visited via both arms), T3 chain index assertion
+- Polish: rename `visited`→`ancestors`, dead-code from m7_scope (PackLock::acquire sync variant, Scheduler::permits(), DEFAULT_MANAGED_GITIGNORE_PATTERNS inline, OwnCycleGuard→VisitedInsertGuard)
+- Doc: `#print axioms` smoke check in CI to lock proof foundation against drift
+- v1.2.0 follow-ups still open: quarantine GC/restore commands, retention policy, TreeError variant split, cap-std snapshot hardening, --workspace→--pack rename prep, stale manifest.md doc
+
+**Blockers cleared:**
+- v1.2.1 BLOCKER (sync_meta cycle detection) — closed in v1.2.2.
+- v1.2.2 reviewer findings B1/B2/B4 — closed in v1.2.3.
+
+**Open at session end:**
+- No active feature work.
+- Branch state: main clean. feat/v1.2.2 + feat/v1.2.3 deleted post-merge.
+- Working-tree drift: persistent untracked junk (statusline-probe.txt, crates/grex/.grex/) and a .gitignore CRLF/NUL-byte corruption that recurs across sessions — investigate root cause in v1.2.4.
 
 ## Endpoint (2026-04-30, main — v1.2.1 SHIPPED + merged via PR #60)
 
