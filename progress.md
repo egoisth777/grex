@@ -13,6 +13,51 @@
 
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
+**v1.2.4 IN FLIGHT:** openspec triplet on feat-v1.2.4 @ 71069c8. Phase 2 (Lean + Rust) pending. Roadmap to v1.3.0 documented in proposal.md.
+
+## Endpoint (2026-05-02, feat-v1.2.4 — openspec triplet landed, Phase 2 pending)
+
+**State:** feat-v1.2.4 branch @ 71069c8 (grex repo, not yet merged). main @ 2414ecd unchanged. SSOT main @ db46392 unchanged. v1.2.4 in OpenSpec phase per cfg/workflow.md; ready to start Stage 1 Lean theorem in next session.
+
+**This session shipped:**
+- Phase 1 OpenSpec for v1.2.4 (cancellation token + polish bundle):
+  - 3-file triplet at `openspec/changes/feat-v1.2.4-cancellation-token-polish/{proposal,design,tasks}.md`
+  - Drafted in parallel (3 writers), reviewed by 1 single-reviewer pass, 7 inconsistencies (3 HIGH + 4 MED) resolved by fix-up worker
+- v1.3.0 readiness AC added per maintainer directive: each v1.2.x ship MUST guard sub-pack-under-meta-pack flow + basic action commands; e2e smoke test `e2e_v1_3_0_readiness_smoke` codified in tasks Stage 2g
+
+**v1.2.4 scope (locked):**
+- A1 rayon par_iter cancellation token (Arc<AtomicBool>; siblings stop on first cycle)
+- 6 polish items (visited→ancestors rename, sync_meta doc cleanup, dead-code deletion, OwnCycleGuard→VisitedInsertGuard rename)
+- 3 tests (cancellation behavior, T1 diamond spot-check, proptest cycle generator)
+- 1 CI gate (#print axioms smoke check)
+- SemVer: PATCH 1.2.4 per maintainer (additive shipping per rule 6)
+- Lean obligation: theorem cancellation_terminates_promptly extends existing sync_meta_inner_model with cancelled:Bool param (rule 8 gate)
+
+**v1.3.0 roadmap (planning, not locked):**
+- v1.2.4 (this branch): cancellation + polish + tests + axiom CI
+- v1.2.5: A2 partial-clone cleanup + A3 pool deadlock guard + quarantine GC/restore + retention policy
+- v1.2.6: TreeError variant split + cap-std snapshot hardening + stale manifest.md doc + working-tree drift root cause
+- v1.3.0: `--workspace` → `--pack` CLI rename + behavior contract freeze + MINOR cut
+
+**Next session pickup:**
+1. Checkout feat-v1.2.4 (`git checkout feat-v1.2.4`)
+2. Phase 2 Stage 1: write Lean theorem `cancellation_terminates_promptly` (rule 8 gate — MUST land green before Rust)
+3. Phase 2 Stage 2: parallel Rust impl workers (W1 walker.rs cancellation, W2 polish bundle, W3 tests, W4 version bumps, W5 CHANGELOG)
+4. Phase 3: 4-6 parallel reviewers + Codex rescue
+5. Phase 4: PR + CI + merge
+6. Phase 5: cargo publish + tag + wrap-up
+
+**Open at session end:**
+- Working-tree drift (statusline-probe.txt, crates/grex/.grex/) — investigate v1.2.6
+- feat-v1.2.4 branch on remote, not merged
+- main + SSOT main both clean
+
+**Carry-forward beyond v1.2.4:**
+- v1.2.5 items: A2 partial-clone cleanup (builds on A1 from v1.2.4), A3 pool deadlock, quarantine GC/restore, retention policy
+- v1.2.6 items: TreeError split, cap-std hardening, stale manifest.md, drift root cause
+- v1.3.0 items: --workspace→--pack rename, contract freeze
+- SSOT v2: owners.yaml, topic-reorg cfg/, lib/cfg dedup, history.md aggregator
+
 ## Endpoint (2026-05-02, main — SSOT reliability + history purge SHIPPED)
 
 **State:** main @ 6f996fb. SSOT updated to enforce schema + validation gates. All Co-Authored-By trailers purged across both repos.
