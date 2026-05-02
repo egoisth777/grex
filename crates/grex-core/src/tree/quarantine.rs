@@ -608,7 +608,7 @@ pub fn snapshot_then_rm(
 }
 
 /// v1.2.5 — parse a quarantine `<ts>` directory name back into a
-/// [`SystemTime`]. The on-disk convention emitted by [`iso8601_utc_now`]
+/// [`SystemTime`]. The on-disk convention emitted by `iso8601_utc_now`
 /// is `YYYY-MM-DDTHH-MM-SS.sssZ` (colons replaced by hyphens, optional
 /// `-N` collision suffix). This helper accepts either form, ignores any
 /// `-N` suffix beyond the second-precision body, and returns `None` for

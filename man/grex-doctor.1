@@ -4,7 +4,7 @@
 .SH NAME
 grex\-doctor \- Run integrity checks
 .SH SYNOPSIS
-\fBgrex\-doctor\fR [\fB\-\-fix\fR] [\fB\-\-lint\-config\fR] [\fB\-\-shallow\fR] [\fB\-\-scan\-undeclared\fR] [\fB\-\-depth\fR] [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-doctor\fR [\fB\-\-fix\fR] [\fB\-\-lint\-config\fR] [\fB\-\-shallow\fR] [\fB\-\-scan\-undeclared\fR] [\fB\-\-depth\fR] [\fB\-\-prune\-quarantine\fR] [\fB\-\-retain\-days\fR] [\fB\-\-restore\-quarantine\fR] [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
 Run integrity checks
 .SH OPTIONS
@@ -23,6 +23,18 @@ v1.2.1 item 4 — opt\-in full\-filesystem scan for `.git/` directories that are
 .TP
 \fB\-\-depth\fR \fI<N>\fR
 v1.2.1 item 4 — bound the `\-\-scan\-undeclared` filesystem walk. Omitted: scan every level under the workspace (default). `\-\-depth 0`: workspace root only. `\-\-depth N`: descend up to `N` directory levels below the workspace root. Has no effect unless `\-\-scan\-undeclared` is also set
+.TP
+\fB\-\-prune\-quarantine\fR
+v1.2.5 — sweep `<workspace>/.grex/trash/` of entries older than the supplied retention window (in days). Pairs with the canonical retention default surfaced by [`grex_core::tree::DEFAULT_RETAIN_DAYS`] when the operator omits a value. Best\-effort: per\-entry failures log via `tracing::warn!` and do not halt the doctor run
+.TP
+\fB\-\-retain\-days\fR \fI<N>\fR
+v1.2.5 — explicit retention window for `\-\-prune\-quarantine` (and `grex sync`\*(Aqs GC sweep). Defaults to [`grex_core::tree::DEFAULT_RETAIN_DAYS`] when `\-\-prune\-quarantine` is set without an explicit value. Has no effect unless `\-\-prune\-quarantine` is also passed (or threaded into `grex sync` via the matching flag there)
+.TP
+\fB\-\-restore\-quarantine\fR \fI<TS[:BASENAME]>\fR
+v1.2.5 — restore the snapshot at `<workspace>/.grex/trash/<TS>/<BASENAME>/` back into the workspace. When BASENAME is omitted the `<TS>/` slot must hold exactly one child entry (otherwise restore is refused as ambiguous). Refuses to clobber an existing dest unless `\-\-force` is also passed
+.TP
+\fB\-\-force\fR
+v1.2.5 — paired with `\-\-restore\-quarantine`: when set, remove the existing dest before the rename. Without this flag, restore refuses to clobber an existing dest
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

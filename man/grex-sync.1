@@ -4,7 +4,7 @@
 .SH NAME
 grex\-sync \- Git fetch and pull (recurse by default)
 .SH SYNOPSIS
-\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-force\-prune\fR] [\fB\-\-force\-prune\-with\-ignored\fR] [\fB\-\-quarantine\fR] [\fB\-\-parallel\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
+\fBgrex\-sync\fR [\fB\-\-recursive\fR] [\fB\-\-workspace\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-no\-validate\fR] [\fB\-\-ref\fR] [\fB\-\-only\fR] [\fB\-\-force\fR] [\fB\-\-force\-prune\fR] [\fB\-\-force\-prune\-with\-ignored\fR] [\fB\-\-quarantine\fR] [\fB\-\-parallel\fR] [\fB\-\-retain\-days\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
 .SH DESCRIPTION
 Git fetch and pull (recurse by default)
 .SH OPTIONS
@@ -50,6 +50,9 @@ Semantics: * Absent → default `num_cpus::get()` resolved in `verbs::sync`. * `
 Env fallback: `GREX_PARALLEL` is honoured only when the flag is absent. Clap reads the env var automatically via `env`.
 
 Distinct from the global `\-\-parallel` on [`GlobalFlags`]; that knob is documented as the harness\-level worker cap and rejects `0`. Sync parallelism uses `0` as the "unbounded" sentinel per `.omne/cfg/concurrency.md`.
+.TP
+\fB\-\-retain\-days\fR \fI<N>\fR
+v1.2.5 — sweep `<meta>/.grex/trash/` of entries older than `N` days at the start of every meta sync (best\-effort). When omitted, no GC fires (v1.2.1 indefinite\-retention behavior is preserved). When set, sweep failures log via tracing and do NOT halt the sync
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help (see a summary with \*(Aq\-h\*(Aq)
