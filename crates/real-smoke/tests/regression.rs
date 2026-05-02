@@ -197,7 +197,7 @@ fn t_b03_pack_dot_and_workspace_dot() -> Result<()> {
     let workspace_dot = grex_cli::run(&["sync", "--workspace", ".", "--dry-run"], f.path())?;
     assert_success(&workspace_dot, "grex sync --workspace .");
     assert!(
-        workspace_dot.stderr.to_lowercase().contains("deprecat")
+        workspace_dot.stderr.to_lowercase().contains("deprecate")
             || workspace_dot.stderr.to_lowercase().contains("workspace"),
         "B3: expected deprecation warning for --workspace on stderr\n--- stderr ---\n{}",
         workspace_dot.stderr

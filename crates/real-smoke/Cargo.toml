@@ -15,7 +15,6 @@ path = "src/main.rs"
 
 [dependencies]
 # black-box subprocess only — DO NOT depend on grex-core / grex-cli internals.
-serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 anyhow = { workspace = true }
