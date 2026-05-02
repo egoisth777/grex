@@ -133,19 +133,23 @@ function Test-GhRepoExists {
 function Invoke-Native {
     param(
         [string]$Exe,
-        [string[]]$Args,
+        [string[]]$ArgList,
         [string]$Cwd,
         [switch]$AllowFailure
     )
+    # NOTE: parameter is `ArgList` (not `Args`) because `$Args` is a PowerShell
+    # automatic variable that silently shadows a same-named parameter, breaking
+    # @-splatting (the splatted call sees the empty automatic `$Args` of this
+    # function instead of the bound parameter).
     Push-Location $Cwd
     try {
-        & $Exe @Args
+        & $Exe @ArgList
         $code = $LASTEXITCODE
     } finally {
         Pop-Location
     }
     if (-not $AllowFailure -and $code -ne 0) {
-        throw "$Exe $($Args -join ' ') exited $code (cwd=$Cwd)"
+        throw "$Exe $($ArgList -join ' ') exited $code (cwd=$Cwd)"
     }
     return $code
 }
@@ -183,9 +187,9 @@ function Invoke-Provision {
     # operator run).
 
     if (-not (Test-Path -LiteralPath (Join-Path $seedDir '.git'))) {
-        Invoke-Native -Exe 'git' -Args @('init', '-b', 'main') -Cwd $seedDir | Out-Null
-        Invoke-Native -Exe 'git' -Args @('add', '-A') -Cwd $seedDir | Out-Null
-        Invoke-Native -Exe 'git' -Args @(
+        Invoke-Native -Exe 'git' -ArgList @('init', '-b', 'main') -Cwd $seedDir | Out-Null
+        Invoke-Native -Exe 'git' -ArgList @('add', '-A') -Cwd $seedDir | Out-Null
+        Invoke-Native -Exe 'git' -ArgList @(
             'commit', '-m', "chore: seed $name fixture for real-smoke harness"
         ) -Cwd $seedDir | Out-Null
     }
@@ -193,7 +197,7 @@ function Invoke-Provision {
     # gh repo create with --source pushes the existing local repo, then sets
     # the remote. Use --remote=origin and --push so the operator only runs one
     # command. After this, switch the remote to SSH (gh defaults to https).
-    Invoke-Native -Exe 'gh' -Args @(
+    Invoke-Native -Exe 'gh' -ArgList @(
         'repo', 'create', $fullName,
         '--public',
         '--source', $seedDir,
@@ -202,7 +206,7 @@ function Invoke-Provision {
     ) -Cwd $seedDir | Out-Null
 
     $sshUrl = "git@github.com:$Owner/$name.git"
-    Invoke-Native -Exe 'git' -Args @('remote', 'set-url', 'origin', $sshUrl) -Cwd $seedDir | Out-Null
+    Invoke-Native -Exe 'git' -ArgList @('remote', 'set-url', 'origin', $sshUrl) -Cwd $seedDir | Out-Null
 
     # Verify the remote is now SSH.
     Push-Location $seedDir
@@ -248,7 +252,7 @@ function Invoke-Check {
     $cloneDir = Join-Path $tmpRoot $name
 
     try {
-        $rc = Invoke-Native -Exe 'git' -Args @('clone', '--depth', '1', $httpsUrl, $cloneDir) -Cwd $tmpRoot -AllowFailure
+        $rc = Invoke-Native -Exe 'git' -ArgList @('clone', '--depth', '1', $httpsUrl, $cloneDir) -Cwd $tmpRoot -AllowFailure
         if ($rc -ne 0) {
             Write-Err "$fullName : HTTPS clone failed (exit $rc) — verify repo is public + reachable"
             throw "https clone failed for $fullName"
