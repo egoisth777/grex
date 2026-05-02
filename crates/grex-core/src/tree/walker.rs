@@ -22,7 +22,7 @@
 //! `walk` → `walk_recursive` → `process_children` → `handle_child` →
 //! `resolve_destination` | `record_depends_on`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -35,6 +35,7 @@ use crate::pack::validate::child_path::{
     nfc_duplicate_path,
 };
 use crate::pack::{ChildRef, PackManifest, PackType, PackValidationError, SchemaVersion};
+use crate::scheduler::PoolInstallDepthGuard;
 
 use super::consent::phase2_prune;
 use super::dest_class::{aggregate_untracked, classify_dest, DestClass};
@@ -549,7 +550,17 @@ pub(super) fn looks_like_url(s: &str) -> bool {
 /// signature small without coupling to the full [`crate::sync::SyncOptions`]
 /// surface — the orchestrator (`sync.rs::run`) is responsible for projecting
 /// `SyncOptions` into `SyncMetaOptions` when it wires this entry point.
+///
+/// v1.2.5 — marked `#[non_exhaustive]` so future PATCH-level field additions
+/// (e.g. new optional knobs threaded through the same struct) do not break
+/// downstream `let SyncMetaOptions { .. }` destructuring or struct-literal
+/// construction at call sites that omit the new field. External callers
+/// MUST construct via [`SyncMetaOptions::default()`] and field assignment on
+/// a `mut` binding — `let mut opts = SyncMetaOptions::default(); opts.recurse
+/// = false;`. Struct-literal construction (including the `..base` spread
+/// shorthand) is rejected by E0639 from outside this crate.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SyncMetaOptions {
     /// Global ref override (`grex sync --ref <sha|branch|tag>`). Mirrors
     /// [`Walker::with_ref_override`]: when `Some`, every child's
@@ -588,6 +599,14 @@ pub struct SyncMetaOptions {
     /// strategy. Lean theorem `quarantine_snapshot_precedes_delete`
     /// proves the safety contract.
     pub quarantine: Option<QuarantineConfig>,
+    /// v1.2.5 — when `Some`, every meta sync starts with a best-effort
+    /// GC sweep over `<meta>/.grex/trash/` per the supplied retention
+    /// window. `None` (default) preserves v1.2.1 indefinite-retention
+    /// behavior. Set by [`crate::sync::SyncOptions::retain_days`] at
+    /// the orchestrator boundary; threaded through every recursion
+    /// frame so each meta's own trash bucket gets swept. Sweep
+    /// failures log via tracing and DO NOT halt the sync.
+    pub retention: Option<super::RetentionConfig>,
 }
 
 impl Default for SyncMetaOptions {
@@ -600,6 +619,7 @@ impl Default for SyncMetaOptions {
             force_prune_with_ignored: false,
             parallel: None,
             quarantine: None,
+            retention: None,
         }
     }
 }
@@ -703,6 +723,51 @@ fn sync_meta_inner(
 
     let mut report = SyncMetaReport { metas_visited: 1, ..SyncMetaReport::default() };
 
+    // v1.2.5 — best-effort quarantine GC sweep at meta sync start.
+    // Runs BEFORE Phase 1 so the trash bucket is current when any
+    // Phase 2 quarantine snapshot lands later in the same sync. The
+    // audit log path mirrors what the quarantine pipeline already
+    // uses (`<meta>/.grex/events.jsonl`). Sweep failures are logged
+    // via tracing inside `prune_quarantine` and DO NOT halt the
+    // sync — this is the design.md "best-effort retention" contract.
+    if let Some(retention) = opts.retention {
+        let audit_log = crate::manifest::event_log_path(meta_dir);
+        if let Err(e) = super::quarantine::prune_quarantine(meta_dir, retention, Some(&audit_log)) {
+            tracing::warn!(
+                meta_dir = %meta_dir.display(),
+                error = %e,
+                "quarantine GC sweep failed at meta sync start; continuing",
+            );
+        }
+    }
+
+    // v1.2.5 (A2) — snapshot which child dest dirs already exist on
+    // disk BEFORE Phase 1 runs its clones. Phase 3 uses this set to
+    // decide whether a Failed/Cancelled outcome should trigger
+    // `cleanup_partial_clone`: only freshly-created dests (i.e.
+    // ones NOT in this set) are cleaned. Dests that pre-existed
+    // belong to an earlier successful sync and must be preserved
+    // even when a downstream cycle aborts the current walk.
+    //
+    // The snapshot is captured here rather than at `phase3_handle_child`
+    // entry because Phase 1 always clones missing dests before Phase 3
+    // recurses, so by the time `phase3_handle_child` runs every
+    // declared dest exists on disk and the per-fn snapshot would
+    // never see a "missing" pre-state.
+    //
+    // v1.2.5 (W1) — keys are normalised via [`normalize_dest_key`] so
+    // a trailing `/` or `./` prefix in `child.effective_path()` does
+    // not desync the snapshot from the lookup at `phase3_handle_child`.
+    // Both ends MUST apply the same normalisation; the `dest` computed
+    // at the lookup site is wrapped through the same helper before
+    // `pre_existing_dests.contains(&dest)` runs.
+    let pre_existing_dests: HashSet<PathBuf> = manifest
+        .children
+        .iter()
+        .map(|c| normalize_dest_key(&meta_dir.join(c.effective_path())))
+        .filter(|d| d.exists())
+        .collect();
+
     // v1.2.1 item 3: build a per-call rayon pool sized from
     // `opts.parallel`. Phase 1 + Phase 3 install on this pool; Phase 2
     // stays sequential (single-meta orphan sweep — no sibling
@@ -729,6 +794,7 @@ fn sync_meta_inner(
         opts,
         depth,
         ancestors,
+        &pre_existing_dests,
         &mut report,
     )?;
 
@@ -814,6 +880,12 @@ fn phase1_sync_children(
     opts: &SyncMetaOptions,
     report: &mut SyncMetaReport,
 ) {
+    // v1.2.5 (A3) — RAII guard tracks nested `pool.install` depth on
+    // the calling OS thread. In debug builds this powers an assertion
+    // in `phase3_recurse` that catches the v1.2.2 R#1 MED deadlock
+    // pattern (nested pool.install while holding a PackLock). Release
+    // builds compile to a zero-sized no-op.
+    let _depth_guard = PoolInstallDepthGuard::new();
     // Install on the per-call pool so `--parallel N` is honoured even
     // when this is invoked from inside another rayon context (Phase 3
     // recursion). `install` is a synchronous fence: the closure
@@ -1065,16 +1137,37 @@ fn phase3_handle_child(
     next_depth: usize,
     ancestors: &[String],
     cancelled: &AtomicBool,
+    pre_existing_dests: &HashSet<PathBuf>,
 ) -> Phase3ChildOutcome {
+    // v1.2.5 (W1) — `dest` is normalised via [`normalize_dest_key`] so
+    // membership checks against `pre_existing_dests` (snapshotted with
+    // the same normalisation in `sync_meta_inner`) compare apples to
+    // apples even when the manifest's `child.effective_path()` carries
+    // a trailing `/` or a `./` prefix. Lexical normalisation only —
+    // keeps `dest` a valid filesystem path for the subsequent
+    // `cleanup_partial_clone` and `sync_meta_inner` calls.
+    let dest = normalize_dest_key(&meta_dir.join(child.effective_path()));
     // v1.2.4 EARLY-OUT — a sibling closure already detected a cycle
-    // and signalled. Return immediately with zero descent so partial
-    // clones / deep walks never start. Matches the Lean
+    // and signalled. Return immediately with zero further descent so
+    // deep walks never start. Matches the Lean
     // `cancellation_terminates_promptly` theorem: cancelled = true
     // implies ok with zero recursive steps.
+    //
+    // v1.2.5 (W1): align with the Lean theorem
+    // `outcome ≠ Recursed → post.at dest = pre.at dest` — Cancelled is
+    // a non-Recursed outcome, so the dest must be restored to its
+    // pre-state. Phase 1 may have already freshly cloned the dest by
+    // the time this closure runs; if so, clean it. Pre-existing dests
+    // (legitimate prior content) are preserved via the same
+    // `pre_existing_dests` guard used by the Failed(CycleDetected)
+    // branch. Best-effort: cleanup failures are logged but do NOT
+    // mask the cancellation outcome.
     if cancelled.load(Ordering::Relaxed) {
+        if !pre_existing_dests.contains(&dest) {
+            cleanup_partial_clone(&dest);
+        }
         return Phase3ChildOutcome::Cancelled;
     }
-    let dest = meta_dir.join(child.effective_path());
     if !dest.join(".grex").join("pack.yaml").is_file() {
         return Phase3ChildOutcome::Skipped;
     }
@@ -1098,6 +1191,16 @@ fn phase3_handle_child(
         // not strict happens-before ordering against any other memory
         // operation. See design doc §"Atomic ordering".
         cancelled.store(true, Ordering::Relaxed);
+        // v1.2.5 (A2) — partial-clone cleanup. The dest may have been
+        // freshly cloned by Phase 1 within this same `sync_meta_inner`
+        // call. If it pre-existed (prior successful sync), preserve
+        // it — `pre_existing_dests` was snapshotted before Phase 1
+        // ran. Best-effort: cleanup failures are logged but do NOT
+        // mask the cycle error. Discharges the Lean theorem
+        // `partial_clone_cleanup_idempotent`.
+        if !pre_existing_dests.contains(&dest) {
+            cleanup_partial_clone(&dest);
+        }
         let mut chain = ancestors.to_vec();
         chain.push(id);
         return Phase3ChildOutcome::Failed(TreeError::CycleDetected { chain });
@@ -1122,11 +1225,140 @@ fn phase3_handle_child(
     // pathway when it lands.
     match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth, &child_ancestors) {
         Ok(sub) => Phase3ChildOutcome::Recursed(sub),
-        Err(e) => Phase3ChildOutcome::Failed(e),
+        Err(e) => {
+            // v1.2.5 (W1) — recursive failure path: the sub-walk
+            // returned ANY `TreeError` deep in the subtree. The dest
+            // itself was cloned by THIS frame's Phase 1 if it was
+            // missing, so symmetry with the same-frame cycle branch
+            // above demands the same pre-existence guard for ALL error
+            // variants — not just `CycleDetected`. Aligns with the
+            // Lean theorem `outcome ≠ Recursed → post.at dest = pre.at
+            // dest`: any non-Recursed outcome (Failed regardless of
+            // variant) must restore pre-state. Best-effort cleanup;
+            // logged on failure.
+            if !pre_existing_dests.contains(&dest) {
+                cleanup_partial_clone(&dest);
+            }
+            Phase3ChildOutcome::Failed(e)
+        }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// v1.2.5 (A2) — best-effort cleanup of a partially-cloned dest dir.
+///
+/// Invoked from the cycle-detected and cancelled paths in
+/// `phase3_handle_child` when `dest` was freshly cloned by THIS frame's
+/// Phase 1 (snapshotted via `pre_existing_dests`). Idempotent: a
+/// non-existent `dest` is a no-op (the inner walker treats `NotFound`
+/// as success). Failures are logged + swallowed so the original
+/// cycle/error is preserved as the caller-visible outcome.
+///
+/// **Symlink safety (v1.2.5 W1):** This helper does NOT use
+/// `std::fs::remove_dir_all` because that historically followed
+/// directory symlinks during cleanup on some platforms / std versions.
+/// Instead, it walks the tree manually using
+/// [`std::fs::symlink_metadata`] at every level: a symlink is unlinked
+/// AS a symlink (never followed into an unrelated tree), regular files
+/// are deleted via `remove_file`, and directories are descended into
+/// before being removed via `remove_dir`. Mirrors the
+/// `safe_remove_dir_all` helper in `quarantine.rs` (kept inlined here
+/// because the constraints of v1.2.5 W1 forbid touching that file).
+///
+/// Discharges the Lean theorem `partial_clone_cleanup_idempotent` in
+/// `proof/Grex/Walker.lean`: the post-state at `dest` equals the
+/// pre-state for any non-Recursed Phase 3 outcome.
+fn cleanup_partial_clone(dest: &Path) {
+    if let Err(e) = safe_remove_tree(dest) {
+        // Don't propagate — the caller's primary error (cycle) is the
+        // contract. Cleanup is best-effort hygiene.
+        tracing::warn!(
+            target: "grex::walker",
+            dest = %dest.display(),
+            error = %e,
+            "v1.2.5 A2: partial-clone cleanup failed; original error preserved"
+        );
+    }
+}
+
+/// v1.2.5 (W1) — lexical-normalisation key used for the
+/// `pre_existing_dests` HashSet so a manifest entry whose
+/// `effective_path()` carries a trailing `/`, a `./` prefix, or a
+/// redundant intermediate `./` component does not desync the snapshot
+/// site from the lookup site.
+///
+/// Strategy: walk the path's components, drop every `Component::CurDir`
+/// (`.`), and collect the rest back into a fresh `PathBuf`. Drops the
+/// trailing-separator artefact that some callers preserve via
+/// `PathBuf::push("foo/")`. Does NOT canonicalise (no FS access, no
+/// symlink resolution) — the goal is to make two textually-different
+/// representations of the SAME logical path compare equal.
+///
+/// `dunce::simplified` is the long-form alternative (it also strips
+/// the Windows `\\?\` UNC prefix); we deliberately avoid pulling in
+/// the dependency for a fix that the lexical strategy already covers
+/// for every observed case in practice.
+fn normalize_dest_key(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            std::path::Component::CurDir => {
+                // Drop redundant `./` components.
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        // Edge case: input was `.` or empty — preserve as `.` so
+        // downstream FS ops still resolve to the same dir rather than
+        // an empty path which has no meaning to the OS.
+        out.push(".");
+    }
+    out
+}
+
+/// v1.2.5 (W1) — symlink-secure recursive removal helper.
+///
+/// Walks `path` using [`std::fs::symlink_metadata`] at every level so a
+/// symlink encountered mid-traversal is unlinked AS a symlink rather
+/// than followed into an unrelated tree.
+///
+/// Behaviour:
+/// * `path` does not exist (`NotFound`) → `Ok(())` (idempotent).
+/// * `path` is a symlink → unlink the link itself (never the target).
+///   On Windows a directory symlink requires `remove_dir`; we try
+///   `remove_file` first and fall back to `remove_dir`.
+/// * `path` is a directory → recurse into each child via
+///   `symlink_metadata`, then `remove_dir(path)`.
+/// * `path` is a regular file → `remove_file`.
+fn safe_remove_tree(path: &Path) -> std::io::Result<()> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        // Unlink the symlink itself. On Windows, a symlink to a dir
+        // requires `remove_dir`; `remove_file` covers file/symlink_file.
+        // Try file-style first, then fall back to dir-style.
+        return match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(_) => std::fs::remove_dir(path),
+        };
+    }
+    if ft.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let child = entry.path();
+            safe_remove_tree(&child)?;
+        }
+        return std::fs::remove_dir(path);
+    }
+    // Regular file or other unlinkable entry.
+    std::fs::remove_file(path)
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn phase3_recurse(
     pool: &rayon::ThreadPool,
     meta_dir: &Path,
@@ -1136,6 +1368,7 @@ fn phase3_recurse(
     opts: &SyncMetaOptions,
     depth: usize,
     ancestors: &[String],
+    pre_existing_dests: &HashSet<PathBuf>,
     report: &mut SyncMetaReport,
 ) -> Result<(), TreeError> {
     if !opts.recurse {
@@ -1163,13 +1396,67 @@ fn phase3_recurse(
     // is intentional and tested by
     // `cancellation_per_call_scope_isolates_subtrees`.
     let cancelled = Arc::new(AtomicBool::new(false));
+    // v1.2.5 (A3) — RAII guard tracks nested `pool.install` depth on
+    // the calling OS thread. In debug builds the per-closure assertion
+    // below uses this counter (combined with `pack_lock`'s *global*
+    // `HELD_PACK_LOCKS` registry, scoped at read-time by `ThreadId`)
+    // to fire if any worker thread enters the per-child closure body
+    // while still holding a `PackLock` it acquired earlier on that
+    // same thread — the v1.2.2 R#1 MED deadlock pattern. The
+    // held-lock half of the check was migrated from a `thread_local!`
+    // to a `Mutex<HashSet<(PathBuf, ThreadId)>>` (W4 cross-thread fix)
+    // because rayon's work-stealing routes the closure onto worker
+    // threads whose TL would always be empty (the lock was acquired
+    // on the outer tokio worker, not on the rayon worker), masking
+    // the deadlock pattern entirely. The depth counter remains
+    // per-OS-thread (it tracks per-thread reentry depth correctly).
+    // Release builds compile both halves to a zero-sized no-op. The
+    // counter / global set live in `scheduler.rs` and `pack_lock.rs`
+    // respectively (W3 + W2/W4 worker outputs).
+    let _depth_guard = PoolInstallDepthGuard::new();
     let outcomes: Vec<Phase3ChildOutcome> = pool.install(|| {
         manifest
             .children
             .par_iter()
             .map(|child| {
+                // v1.2.5 (A3) — debug-build deadlock guard. If this
+                // worker thread already holds one or more PackLocks
+                // AND we are inside a nested `pool.install` (depth
+                // >= 2 means an outer Phase 1 / Phase 3 frame is
+                // still active on this thread), the v1.2.2 R#1
+                // deadlock pattern is reproducible. Single-frame
+                // `pool.install` (depth == 1) holding a lock is
+                // safe — the lock was acquired outside the pool and
+                // released after the closure returns. The assertion
+                // is `#[cfg(debug_assertions)]` only; release builds
+                // pay no runtime cost. `held_pack_locks_for_test`
+                // filters the global registry by `current().id()` so
+                // the assertion correctly reports only locks held by
+                // *this* worker thread, not concurrent acquires on
+                // other threads. Discharges the Lean theorem
+                // `pool_deadlock_guard_terminates` in
+                // `proof/Grex/Scheduler.lean`.
+                #[cfg(debug_assertions)]
+                {
+                    let depth = crate::scheduler::pool_install_depth_for_test();
+                    let held = crate::pack_lock::held_pack_locks_for_test();
+                    debug_assert!(
+                        depth < 2 || held.is_empty(),
+                        "pool deadlock guard: nested pool.install (depth={depth}) entered while \
+                         holding PackLock(s) {held:?} on this thread — see concurrency.md \
+                         §lock acquisition order"
+                    );
+                }
                 phase3_handle_child(
-                    meta_dir, child, backend, loader, opts, next_depth, ancestors, &cancelled,
+                    meta_dir,
+                    child,
+                    backend,
+                    loader,
+                    opts,
+                    next_depth,
+                    ancestors,
+                    &cancelled,
+                    pre_existing_dests,
                 )
             })
             .collect()
@@ -2665,5 +2952,427 @@ mod tests {
                 dest.display()
             );
         }
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.5 — A2 partial-clone cleanup (T-A2).
+    //
+    // Discharges the Lean theorem `partial_clone_cleanup_idempotent`
+    // in `proof/Grex/Walker.lean`: when Phase 3 returns a non-Recursed
+    // outcome (Failed / Cancelled / Skipped), the post-state at `dest`
+    // equals the pre-state. For a freshly-cloned dest (not in the
+    // pre-existing snapshot) the cleanup wipes the dir; for a
+    // pre-existing dest the cleanup is a no-op (preserves prior
+    // successful sync state).
+    // -----------------------------------------------------------------
+
+    /// T-A2 — partial-clone cleanup on cycle-detected failure.
+    ///
+    /// Topology: `root → a → a-cyclic` where `a-cyclic.url == a.url`
+    /// (cycle inside `a`'s Phase 3 fan-out). The dest dir for
+    /// `a-cyclic` does NOT exist before the walk starts, so it is
+    /// freshly created by Phase 1's clone (which materialises a
+    /// `.git/` plus a `.grex/pack.yaml` so Phase 3 enters the cycle
+    /// detector). Post-walk, the cycle has been surfaced AND the
+    /// freshly-cloned `a-cyclic/` dest must have been removed by
+    /// `cleanup_partial_clone`.
+    ///
+    /// Pre-existing dests must NOT be cleaned: `a/` itself was
+    /// pre-materialised on disk (`make_sub_meta_on_disk`) so the
+    /// snapshot taken inside `sync_meta_inner` includes it; even
+    /// if the cycle propagated up and the recursive-failure branch
+    /// fired, `a/` must remain on disk (legitimate prior content).
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn partial_clone_cleanup_after_cancellation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let a_dir = root_dir.join("a");
+        let a_cyclic_dir = a_dir.join("a-cyclic");
+        // Pre-materialise `a/` on disk so it counts as PresentDeclared
+        // (Phase 1 will fetch, not clone) AND is in the
+        // `pre_existing_dests` snapshot at `sync_meta_inner` entry.
+        make_sub_meta_on_disk(&a_dir, "a");
+        // a-cyclic deliberately NOT pre-materialised — Phase 1's
+        // clone (via the custom backend below) materialises a `.git/`
+        // PLUS a `.grex/pack.yaml` so Phase 3 enters the cycle
+        // detector on the freshly-cloned dest.
+        assert!(!a_cyclic_dir.exists(), "a-cyclic dest must be missing pre-walk");
+
+        let url_a = "https://example.com/a.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_a, "a-cyclic")]))
+            // a-cyclic's manifest is loadable (used post-clone if cycle
+            // weren't detected; never reached because the cycle fires).
+            .with(a_cyclic_dir.clone(), meta_manifest_with("a-cyclic", vec![]));
+        // Custom backend: clone materialises BOTH `.git/` and
+        // `.grex/pack.yaml` so Phase 3's existence check passes,
+        // letting cycle detection fire on the freshly-cloned dest.
+        struct CloneWithPackYaml {
+            inner: InMemGit,
+        }
+        impl GitBackend for CloneWithPackYaml {
+            fn name(&self) -> &'static str {
+                "v1_2_5-clone-with-pack-yaml"
+            }
+            fn clone(
+                &self,
+                url: &str,
+                dest: &Path,
+                r#ref: Option<&str>,
+            ) -> Result<crate::ClonedRepo, crate::GitError> {
+                let res = self.inner.clone(url, dest, r#ref)?;
+                // Also drop a pack.yaml so Phase 3 enters the cycle
+                // check (and not the `Skipped` early-return).
+                std::fs::create_dir_all(dest.join(".grex")).unwrap();
+                let yaml = format!(
+                    "schema_version: \"1\"\nname: {}\ntype: meta\n",
+                    dest.file_name().unwrap().to_str().unwrap()
+                );
+                std::fs::write(dest.join(".grex/pack.yaml"), yaml).unwrap();
+                Ok(res)
+            }
+            fn fetch(&self, dest: &Path) -> Result<(), crate::GitError> {
+                self.inner.fetch(dest)
+            }
+            fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), crate::GitError> {
+                self.inner.checkout(dest, r#ref)
+            }
+            fn head_sha(&self, dest: &Path) -> Result<String, crate::GitError> {
+                self.inner.head_sha(dest)
+            }
+        }
+        let backend = CloneWithPackYaml { inner: InMemGit::new() };
+        // parallel: Some(1) for deterministic ordering — a-cyclic is
+        // a's only child so the cycle fires on the first iteration.
+        let opts = SyncMetaOptions { parallel: Some(1), ..SyncMetaOptions::default() };
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("cyclic input must surface CycleDetected");
+        assert!(
+            matches!(err, TreeError::CycleDetected { .. }),
+            "expected CycleDetected, got {err:?}"
+        );
+
+        // T-A2 invariant: the freshly-cloned a-cyclic dest MUST have
+        // been cleaned up by `cleanup_partial_clone` on the
+        // Failed(CycleDetected) path.
+        assert!(
+            !a_cyclic_dir.exists(),
+            "v1.2.5 A2: freshly-cloned a-cyclic dest must be cleaned after cycle detection \
+             (path still on disk: {})",
+            a_cyclic_dir.display()
+        );
+        // Symmetric invariant: pre-existing `a/` MUST still exist —
+        // it was in the snapshot, so cleanup never targets it.
+        assert!(
+            a_dir.exists(),
+            "v1.2.5 A2: pre-existing a/ dest must NOT be cleaned (legitimate prior content)"
+        );
+    }
+
+    /// T-A2 idempotence — running `cleanup_partial_clone` twice on the
+    /// same path is a no-op on the second call. Mirrors the Lean
+    /// theorem `partial_clone_cleanup_idempotent` directly.
+    #[test]
+    fn cleanup_partial_clone_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("ghost");
+        std::fs::create_dir_all(dest.join("subdir")).unwrap();
+        std::fs::write(dest.join("file.txt"), b"bytes").unwrap();
+        assert!(dest.exists());
+        cleanup_partial_clone(&dest);
+        assert!(!dest.exists(), "first call must remove dest");
+        // Second call is a no-op on a missing dir.
+        cleanup_partial_clone(&dest);
+        assert!(!dest.exists(), "second call must be a no-op");
+    }
+
+    /// W1 — symlink-secure cleanup MUST NOT follow a directory symlink
+    /// into an unrelated tree. We point a symlink at a sibling
+    /// directory containing important files, then run
+    /// `cleanup_partial_clone` against the symlink. The symlink must
+    /// be unlinked AS a symlink; the target tree's contents must
+    /// remain intact on disk.
+    ///
+    /// Skips on hosts where unprivileged symlink creation fails
+    /// (notably Windows without Developer Mode).
+    #[test]
+    fn cleanup_partial_clone_does_not_follow_symlink() {
+        let outer = tempfile::tempdir().unwrap();
+        let target = outer.path().join("important-target");
+        std::fs::create_dir_all(&target).unwrap();
+        let canary = target.join("canary.txt");
+        std::fs::write(&canary, b"do-not-touch").unwrap();
+
+        let link = outer.path().join("partial-clone");
+        #[cfg(unix)]
+        let symlink_result = std::os::unix::fs::symlink(&target, &link);
+        #[cfg(windows)]
+        let symlink_result = std::os::windows::fs::symlink_dir(&target, &link);
+        if symlink_result.is_err() {
+            // Host won't let us create a symlink — nothing to test.
+            return;
+        }
+
+        cleanup_partial_clone(&link);
+
+        // The symlink itself MUST be gone.
+        assert!(
+            std::fs::symlink_metadata(&link).is_err(),
+            "symlink at {} must have been unlinked",
+            link.display()
+        );
+        // The target tree MUST remain intact.
+        assert!(
+            target.exists(),
+            "symlink target {} must NOT have been followed and deleted",
+            target.display()
+        );
+        assert!(canary.exists(), "canary file inside target must remain on disk");
+        assert_eq!(std::fs::read(&canary).unwrap(), b"do-not-touch");
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.5 (W1) — `pre_existing_dests` lexical-normalisation tests.
+    //
+    // Direct unit tests of `normalize_dest_key`. The integration
+    // contract — that snapshot site and lookup site agree on keys
+    // even when `child.effective_path()` carries a trailing `/` or
+    // `./` prefix — is covered indirectly because both call sites
+    // now route through the same helper.
+    // -----------------------------------------------------------------
+
+    /// W1 — a trailing `/` on the input MUST normalise away so two
+    /// representations of the same logical path produce equal keys.
+    #[test]
+    fn pre_existing_dests_normalizes_trailing_slash() {
+        // PathBuf::push("foo/") historically preserved the trailing
+        // separator on some platforms; normalize it out via the helper.
+        let with_slash: PathBuf = ["meta", "child/"].iter().collect();
+        let without_slash: PathBuf = ["meta", "child"].iter().collect();
+        let n_with = normalize_dest_key(&with_slash);
+        let n_without = normalize_dest_key(&without_slash);
+        assert_eq!(
+            n_with, n_without,
+            "normalize_dest_key must produce equal keys for trailing-slash variants \
+             (with={n_with:?}, without={n_without:?})"
+        );
+    }
+
+    /// W1 — a `./` prefix or intermediate `./` component MUST drop
+    /// out via `normalize_dest_key` so the snapshot and lookup sites
+    /// agree even when the manifest declares paths via `./child`.
+    #[test]
+    fn pre_existing_dests_normalizes_curdir_components() {
+        let with_curdir = PathBuf::from("./meta/./child");
+        let without_curdir = PathBuf::from("meta/child");
+        let n_with = normalize_dest_key(&with_curdir);
+        let n_without = normalize_dest_key(&without_curdir);
+        assert_eq!(
+            n_with, n_without,
+            "normalize_dest_key must drop `./` components \
+             (with={n_with:?}, without={n_without:?})"
+        );
+    }
+
+    /// W1 — empty / pure-CurDir input must round-trip to a non-empty
+    /// path so downstream FS ops still resolve to the same dir.
+    #[test]
+    fn pre_existing_dests_normalize_empty_input_yields_curdir() {
+        assert_eq!(normalize_dest_key(&PathBuf::from(".")), PathBuf::from("."));
+        assert_eq!(normalize_dest_key(&PathBuf::from("./.")), PathBuf::from("."));
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.5 — A3 pool deadlock guard (T-A3, debug-only).
+    //
+    // The guard is a `debug_assert!` inside `phase3_recurse`: if any
+    // worker thread enters a nested `pool.install` (depth >= 2) while
+    // it still holds a `PackLock`, the assertion fires. Release builds
+    // compile the assertion out — these tests are gated on
+    // `cfg(debug_assertions)` for the same reason.
+    //
+    // The depth counter lives in `scheduler::POOL_INSTALL_DEPTH` (W3,
+    // per-OS-thread). The held-lock set lives in
+    // `pack_lock::HELD_PACK_LOCKS` (W2/W4) — *process-global*
+    // `Mutex<HashSet<(PathBuf, ThreadId)>>` since the W4 cross-thread
+    // fix; the previous `thread_local!` storage was invisible to rayon
+    // worker threads (work-stealing routes the closure onto threads
+    // whose TL is empty), masking the deadlock pattern in production.
+    //
+    // The tests below depend on those test-only accessors:
+    //   - `crate::scheduler::pool_install_depth_for_test()`
+    //   - `crate::pack_lock::held_pack_locks_for_test()` — paths held
+    //     by the *current* OS thread (filtered by `ThreadId` inside
+    //     the global registry)
+    //   - `crate::pack_lock::register_pack_lock_for_test(p)` — inserts
+    //     `(p, current_thread_id)` into the global registry
+    //   - `crate::pack_lock::unregister_pack_lock_for_test(p)` —
+    //     removes `(p, current_thread_id)` from the global registry
+    // If W2/W3 rename or relocate these, update both call sites and
+    // the assertion in `phase3_recurse` together.
+    // -----------------------------------------------------------------
+
+    /// T-A3 — the depth guard correctly tracks nested `pool.install`.
+    /// Sanity check that the RAII `PoolInstallDepthGuard` increments
+    /// + decrements as expected. Independent of any deadlock pattern.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pool_install_depth_guard_tracks_nesting() {
+        use crate::scheduler::pool_install_depth_for_test;
+        assert_eq!(pool_install_depth_for_test(), 0, "starts at zero");
+        {
+            let _g1 = PoolInstallDepthGuard::new();
+            assert_eq!(pool_install_depth_for_test(), 1, "depth 1 after one guard");
+            {
+                let _g2 = PoolInstallDepthGuard::new();
+                assert_eq!(pool_install_depth_for_test(), 2, "depth 2 after nested guard");
+            }
+            assert_eq!(pool_install_depth_for_test(), 1, "back to 1 after inner drop");
+        }
+        assert_eq!(pool_install_depth_for_test(), 0, "back to 0 after outer drop");
+    }
+
+    /// T-A3 — deadlock pattern triggers a debug-build panic.
+    ///
+    /// Simulates the v1.2.2 R#1 MED pattern: seed a fake PackLock
+    /// path in the global registry under the current `ThreadId`
+    /// (mimicking `PackLock::acquire_async` having returned a hold on
+    /// this thread), increment the pool-install depth twice via two
+    /// `PoolInstallDepthGuard`s, then evaluate the production
+    /// `debug_assert!` predicate inline. The test thread panics with
+    /// the production message, satisfying `#[should_panic]`.
+    ///
+    /// Gated `#[cfg(debug_assertions)]` because release builds compile
+    /// the assertion out — that's by design (no runtime cost in
+    /// production; the documented lock acquisition order in
+    /// `concurrency.md` is the production contract).
+    ///
+    /// W4 cross-thread fix note: with the
+    /// `Mutex<HashSet<(PathBuf, ThreadId)>>` global registry,
+    /// `held_pack_locks_for_test()` filters by current `ThreadId`, so
+    /// the seeded path is visible to the assertion when it runs on
+    /// the same thread that called `register_pack_lock_for_test`. The
+    /// complementary cross-thread visibility test below
+    /// (`pool_deadlock_guard_registry_is_thread_id_scoped`) proves
+    /// the per-`ThreadId` view is correctly scoped — a rayon worker
+    /// only sees its own holds, not concurrent acquires on other
+    /// threads.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "pool deadlock guard")]
+    fn pool_deadlock_guard_panics_on_violation() {
+        use crate::pack_lock::{
+            held_pack_locks_for_test, register_pack_lock_for_test, unregister_pack_lock_for_test,
+        };
+        use crate::scheduler::pool_install_depth_for_test;
+
+        let fake_lock_path = PathBuf::from("/tmp/fake-pack-lock-T-A3");
+        // Defensive: cargo-test reuses worker threads via std panic
+        // catching, so a prior panic on this OS thread might have
+        // left the seed in place under the same `ThreadId`.
+        // Clear-then-seed guarantees a fresh entry under the current
+        // thread.
+        unregister_pack_lock_for_test(&fake_lock_path);
+        register_pack_lock_for_test(&fake_lock_path);
+
+        let _depth_guard = PoolInstallDepthGuard::new();
+        let depth = pool_install_depth_for_test();
+        let held = held_pack_locks_for_test();
+        debug_assert!(
+            depth < 2 || held.is_empty(),
+            "pool deadlock guard: nested pool.install (depth={depth}) entered while \
+             holding PackLock(s) {held:?} on this thread — see concurrency.md \
+             §lock acquisition order"
+        );
+        // Above asserts at depth==1 (outer guard), which is < 2, so it
+        // would NOT panic. Force the depth >= 2 case by entering a
+        // nested guard, then re-evaluate the predicate.
+        let _nested = PoolInstallDepthGuard::new();
+        let depth = pool_install_depth_for_test();
+        let held = held_pack_locks_for_test();
+        debug_assert!(
+            depth < 2 || held.is_empty(),
+            "pool deadlock guard: nested pool.install (depth={depth}) entered while \
+             holding PackLock(s) {held:?} on this thread — see concurrency.md \
+             §lock acquisition order"
+        );
+        // Unreachable on a correct build — the second debug_assert!
+        // above must have panicked. Cleanup left here for safety in
+        // case the assertion is ever weakened.
+        unregister_pack_lock_for_test(&fake_lock_path);
+    }
+
+    /// T-A3 (W4 cross-thread fix) — registry observability across
+    /// threads. Acquires the seed on thread A, reads the registry
+    /// from thread B, and asserts: (a) thread B's
+    /// `held_pack_locks_for_test()` is *empty* (the filter is per
+    /// `ThreadId`, so B does NOT see A's lock as one of its own
+    /// holds — this is the correct semantics for the per-closure
+    /// assertion in `phase3_recurse`); (b) thread B can register +
+    /// unregister its own independent entry without disturbing A's;
+    /// (c) thread A still sees the seed after B's reads. Together
+    /// these facts pin down the W4 fix: the global registry is
+    /// shared *storage* across threads, but `ThreadId`-keyed *reads*
+    /// give each thread its own scoped view. The previous
+    /// `thread_local!` storage made (a) trivially true but at the
+    /// cost of also masking the deadlock pattern on rayon workers
+    /// where the lock had been acquired on the outer tokio thread —
+    /// the Coffman cycle the assertion was meant to catch.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pool_deadlock_guard_registry_is_thread_id_scoped() {
+        use crate::pack_lock::{
+            held_pack_locks_for_test, register_pack_lock_for_test, unregister_pack_lock_for_test,
+        };
+
+        let path = PathBuf::from("/tmp/fake-pack-lock-T-A3-cross-thread");
+        // Clean any stale entry from a prior cargo-test run on this
+        // OS thread so the assertions below are deterministic.
+        unregister_pack_lock_for_test(&path);
+        register_pack_lock_for_test(&path);
+
+        // Thread A (this test thread) sees its own seed.
+        let held_a = held_pack_locks_for_test();
+        assert!(
+            held_a.iter().any(|p| p == &path),
+            "thread A must observe its own seeded lock; got {held_a:?}"
+        );
+
+        // Thread B reads the registry — it must NOT see A's lock as
+        // one of its own holds (per-`ThreadId` filter).
+        let path_for_b = path.clone();
+        let (held_on_b_before, held_on_b_after) = std::thread::spawn(move || {
+            let before = held_pack_locks_for_test();
+            // Sanity: B can register/unregister its own independent
+            // entry without disturbing A's.
+            register_pack_lock_for_test(&path_for_b);
+            let after = held_pack_locks_for_test();
+            unregister_pack_lock_for_test(&path_for_b);
+            (before, after)
+        })
+        .join()
+        .expect("thread B panicked");
+
+        assert!(
+            held_on_b_before.is_empty(),
+            "thread B's per-ThreadId view must NOT include A's seed; got {held_on_b_before:?}"
+        );
+        assert!(
+            held_on_b_after.iter().any(|p| p == &path),
+            "thread B must observe its own registered lock under its own ThreadId; \
+             got {held_on_b_after:?}"
+        );
+
+        // Thread A's seed survives B's reads.
+        let held_a_after = held_pack_locks_for_test();
+        assert!(
+            held_a_after.iter().any(|p| p == &path),
+            "thread A's seed must survive thread B's reads; got {held_a_after:?}"
+        );
+
+        // Cleanup.
+        unregister_pack_lock_for_test(&path);
     }
 }

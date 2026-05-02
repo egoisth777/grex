@@ -202,6 +202,14 @@ pub struct SyncArgs {
         value_parser = clap::value_parser!(u32).range(0..=1024),
     )]
     pub parallel: Option<u32>,
+
+    /// v1.2.5 — sweep `<meta>/.grex/trash/` of entries older than
+    /// `N` days at the start of every meta sync (best-effort). When
+    /// omitted, no GC fires (v1.2.1 indefinite-retention behavior is
+    /// preserved). When set, sweep failures log via tracing and do
+    /// NOT halt the sync.
+    #[arg(long = "retain-days", value_name = "N")]
+    pub retain_days: Option<u32>,
 }
 
 /// Clap `value_parser` that rejects empty or whitespace-only strings.
@@ -260,6 +268,39 @@ pub struct DoctorArgs {
     /// also set.
     #[arg(long = "depth", value_name = "N", requires = "scan_undeclared")]
     pub depth: Option<usize>,
+
+    /// v1.2.5 — sweep `<workspace>/.grex/trash/` of entries older than
+    /// the supplied retention window (in days). Pairs with the
+    /// canonical retention default surfaced by
+    /// [`grex_core::tree::DEFAULT_RETAIN_DAYS`] when the operator
+    /// omits a value. Best-effort: per-entry failures log via
+    /// `tracing::warn!` and do not halt the doctor run.
+    #[arg(long = "prune-quarantine")]
+    pub prune_quarantine: bool,
+
+    /// v1.2.5 — explicit retention window for `--prune-quarantine`
+    /// (and `grex sync`'s GC sweep). Defaults to
+    /// [`grex_core::tree::DEFAULT_RETAIN_DAYS`] when `--prune-quarantine`
+    /// is set without an explicit value. Has no effect unless
+    /// `--prune-quarantine` is also passed (or threaded into
+    /// `grex sync` via the matching flag there).
+    #[arg(long = "retain-days", value_name = "N")]
+    pub retain_days: Option<u32>,
+
+    /// v1.2.5 — restore the snapshot at
+    /// `<workspace>/.grex/trash/<TS>/<BASENAME>/` back into the
+    /// workspace. When BASENAME is omitted the `<TS>/` slot must hold
+    /// exactly one child entry (otherwise restore is refused as
+    /// ambiguous). Refuses to clobber an existing dest unless
+    /// `--force` is also passed.
+    #[arg(long = "restore-quarantine", value_name = "TS[:BASENAME]", num_args = 1)]
+    pub restore_quarantine: Option<String>,
+
+    /// v1.2.5 — paired with `--restore-quarantine`: when set, remove
+    /// the existing dest before the rename. Without this flag,
+    /// restore refuses to clobber an existing dest.
+    #[arg(long = "force", requires = "restore_quarantine")]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]

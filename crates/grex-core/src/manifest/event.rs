@@ -211,6 +211,70 @@ pub enum Event {
         /// I/O error). Bounded to keep one event on one line.
         error: String,
     },
+    /// v1.2.5 — operator restored a quarantined snapshot back into the
+    /// workspace via `grex doctor --restore-quarantine <ts>
+    /// [<basename>]`. Records both the source snapshot path the operator
+    /// pulled from and the dest the bytes were restored to. Fully
+    /// additive variant — older readers tolerate it via the
+    /// [`Event::Unknown`] fallback below (forward-compat per JSONL
+    /// policy).
+    QuarantineRestored {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Absolute path of the trash snapshot the bytes came from
+        /// (`<meta>/.grex/trash/<ts>/<basename>/`).
+        src: String,
+        /// Absolute path of the dest the snapshot was restored to.
+        dest: String,
+    },
+    /// v1.2.5 — quarantine GC sweep removed an aged trash entry. Emitted
+    /// per pruned entry by [`crate::tree::quarantine::prune_quarantine`]
+    /// (best-effort; failures log via tracing instead of producing this
+    /// event). Fully additive — older readers tolerate via
+    /// [`Event::Unknown`].
+    QuarantineGcSwept {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Absolute path of the trash entry that was deleted
+        /// (`<meta>/.grex/trash/<ts>/`).
+        entry: String,
+        /// Age in whole days of the entry at the time of the sweep
+        /// (cutoff = `now - retain_days`; entries with age > cutoff
+        /// are pruned).
+        age_days: u64,
+    },
+    /// v1.2.5 — forward-compat fallback for unknown `op` discriminants.
+    /// Exists so an OLDER `grex` binary reading a NEWER log (e.g.
+    /// containing variants added after this binary was built) decodes
+    /// the unknown line as `Unknown` instead of failing the whole
+    /// `read_all` with a `Corruption` error. The variant is unit (no
+    /// fields) by design: any payload the writer included is dropped on
+    /// the read side. Folding logic ([`crate::manifest::fold::fold`])
+    /// already ignores audit-only variants, and accessor methods
+    /// ([`Event::id`], [`Event::ts`]) return placeholder values so call
+    /// sites don't need to special-case the variant. Per JSONL forward-
+    /// compat policy in design.md.
+    ///
+    /// # `#[serde(other)]` semantics
+    ///
+    /// Catches unknown `op` discriminator values for forward-compat.
+    /// Filtered out by [`crate::manifest::read_all`] (silently dropped
+    /// regardless of position so older readers can still consume newer
+    /// logs without erroring on the rest of the stream). Cannot be
+    /// written back: the write-side guard in
+    /// [`crate::manifest::append_event`] panics in debug builds and
+    /// no-ops with a `tracing::error!` in release builds.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Lazy-initialised empty [`PackId`] returned by [`Event::id`] for the
+/// [`Event::Unknown`] forward-compat variant. Avoids a `'static` literal
+/// so the return type stays `&PackId` (= `&String`) without the variant
+/// having to carry a synthetic id field.
+fn empty_pack_id() -> &'static PackId {
+    static EMPTY: std::sync::OnceLock<PackId> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(String::new)
 }
 
 /// Max bytes retained in [`Event::ActionHalted::error_summary`].
@@ -243,7 +307,17 @@ impl Event {
             // `ForcePruneExecuted` (no owning pack id).
             Event::QuarantineStart { src, .. }
             | Event::QuarantineComplete { src, .. }
-            | Event::QuarantineFailed { src, .. } => src,
+            | Event::QuarantineFailed { src, .. }
+            | Event::QuarantineRestored { src, .. } => src,
+            // v1.2.5 — GC sweep variant carries the trash entry path
+            // as its identifier (no owning pack id; same audit-only
+            // pattern).
+            Event::QuarantineGcSwept { entry, .. } => entry,
+            // v1.2.5 — forward-compat fallback. No payload to
+            // surface; return a stable empty id so legacy callers
+            // that group by `id()` see the line as a non-pack-scoped
+            // entry.
+            Event::Unknown => empty_pack_id(),
         }
     }
 
@@ -260,7 +334,13 @@ impl Event {
             | Event::ForcePruneExecuted { ts, .. }
             | Event::QuarantineStart { ts, .. }
             | Event::QuarantineComplete { ts, .. }
-            | Event::QuarantineFailed { ts, .. } => *ts,
+            | Event::QuarantineFailed { ts, .. }
+            | Event::QuarantineRestored { ts, .. }
+            | Event::QuarantineGcSwept { ts, .. } => *ts,
+            // v1.2.5 — `Unknown` carries no payload; return the Unix
+            // epoch as the stable placeholder so consumers that order
+            // by `ts()` still get a well-defined value.
+            Event::Unknown => DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default(),
         }
     }
 }

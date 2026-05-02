@@ -10,7 +10,7 @@
 //!   * CRLF line endings
 
 use chrono::{Duration, TimeZone, Utc};
-use grex_core::manifest::{append_event, read_all, Event, ManifestError, SCHEMA_VERSION};
+use grex_core::manifest::{append_event, read_all, Event, SCHEMA_VERSION};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use tempfile::tempdir;
@@ -108,12 +108,14 @@ fn valid_json_invalid_event_schema_tail_is_discarded() {
 }
 
 // ---------------------------------------------------------------------------
-// HIGH #3: multiple trailing garbage lines.
+// HIGH #3: multiple trailing unknown-op lines.
 //
-// Current impl treats only the *single* last line as torn. Earlier garbage
-// lines become ManifestError::Corruption. This test documents that behavior:
-// if any middle line is unparsable, we get a typed error — not a silent
-// success.
+// v1.2.5 forward-compat: BOTH unknown-op lines parse via the
+// `Event::Unknown` `#[serde(other)]` fallback and are silently dropped
+// regardless of position. (Pre-v1.2.5 the penultimate row used to surface
+// as `ManifestError::Corruption`; that contract was removed because it
+// broke older readers streaming newer logs that contain unknown-op rows
+// sandwiched between known rows — see `event.rs` Unknown variant docs.)
 // ---------------------------------------------------------------------------
 #[test]
 fn multiple_torn_trailing_lines_are_all_ignored() {
@@ -124,16 +126,16 @@ fn multiple_torn_trailing_lines_are_all_ignored() {
         append_event(&p, &helpers::sample_add(i)).unwrap();
     }
 
-    // 2 trailing garbage lines, neither parseable.
+    // 2 trailing unknown-op lines. Under v1.2.5+ semantics both decode as
+    // Event::Unknown and are silently dropped by read_all.
     helpers::append_raw(&p, b"{\"op\":\"bogus1\"}\n");
     helpers::append_raw(&p, b"{\"op\":\"bogus2\"}\n");
 
-    // Only the final line is recovered as torn; the penultimate garbage
-    // line is treated as hard corruption. Document the contract.
-    let err = read_all(&p).unwrap_err();
-    assert!(
-        matches!(err, ManifestError::Corruption { line: 5, .. }),
-        "expected Corruption at line 5 (first of 2 bad tails), got {err:?}"
+    let events = read_all(&p).expect("unknown-op rows must be silently dropped, not error");
+    assert_eq!(
+        events.len(),
+        4,
+        "earlier 4 valid events must survive multiple unknown-op trailing rows"
     );
 }
 

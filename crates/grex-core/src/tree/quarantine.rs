@@ -56,16 +56,77 @@
 //! symlinks (not dereferenced). This matches operator expectations:
 //! a quarantined snapshot of `node_modules/` should not silently
 //! deep-copy every dependency through every nested symlink.
+//!
+//! # Stability
+//!
+//! [`QuarantineError`] is `#[non_exhaustive]` to allow additive variants
+//! in PATCH releases without breaking downstream `match` arms. Callers
+//! MUST include a `_ =>` wildcard arm.
 
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use thiserror::Error;
 
 use crate::manifest::append::append_event;
 use crate::manifest::event::Event;
+
+/// Default retention window applied when `--retain-days` is requested but
+/// no explicit value is provided. The CLI surfaces an explicit `Option`,
+/// so this default is consumed by callers (e.g. doctor wiring) that want
+/// a sensible fallback per design.md §"Retention policy".
+pub const DEFAULT_RETAIN_DAYS: u32 = 90;
+
+/// v1.2.5 — per-meta retention configuration. Threaded from
+/// [`crate::sync::SyncOptions`] / `grex doctor` flags into
+/// [`crate::tree::SyncMetaOptions`] so each meta sync (and each doctor
+/// invocation) can decide whether to GC-sweep its own trash bucket.
+///
+/// `None` at the call site preserves v1.2.1 indefinite-retention
+/// behavior (no implicit GC fires). `Some(retain_days)` triggers a
+/// best-effort sweep at meta sync start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetentionConfig {
+    /// Cutoff window in whole days. Trash entries whose timestamp is
+    /// older than `now - retain_days` are deleted on sweep; younger
+    /// entries are retained.
+    pub retain_days: u32,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self { retain_days: DEFAULT_RETAIN_DAYS }
+    }
+}
+
+/// Outcome of a [`prune_quarantine`] sweep. All paths are absolute and
+/// rooted under `<meta>/.grex/trash/`; entries are partitioned by
+/// outcome so callers can render a per-entry status line.
+#[derive(Debug, Default, Clone)]
+pub struct PruneReport {
+    /// Trash entries (one per `<ts>/` slot) that were deleted by this
+    /// sweep because their timestamp was older than the cutoff.
+    pub pruned: Vec<PathBuf>,
+    /// Trash entries that were retained because their timestamp was
+    /// younger than the cutoff.
+    pub retained: Vec<PathBuf>,
+    /// Trash entries the sweep TRIED to delete but failed. The string
+    /// is the underlying I/O error display form. Best-effort policy:
+    /// per-entry failures are logged, not fatal.
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+/// Outcome of a [`restore_quarantine`] call. Carries the dest the
+/// snapshot was restored to so the caller can render the operator
+/// confirmation.
+#[derive(Debug, Clone)]
+pub struct RestoreReport {
+    /// Absolute path of the dest the snapshot bytes were restored to.
+    pub dest: PathBuf,
+}
 
 /// v1.2.1 Item 5b — runtime configuration for the quarantine pipeline.
 ///
@@ -105,6 +166,7 @@ pub struct QuarantineResult {
 /// audit-post). Per the Lean contract, an `AuditCommit` failure on
 /// step 1 OR a `Snapshot` failure leaves the original dest intact.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum QuarantineError {
     /// Step 1 — appending + fsyncing the [`Event::QuarantineStart`]
     /// audit entry failed. NO FS mutation has occurred; the original
@@ -136,6 +198,69 @@ pub enum QuarantineError {
         /// Underlying I/O error from `remove_dir_all`.
         #[source]
         source: io::Error,
+    },
+
+    /// v1.2.5 — `restore_quarantine` was asked for a snapshot that
+    /// does not exist on disk (`<meta>/.grex/trash/<ts>/` is missing
+    /// or not a directory).
+    #[error("quarantine: snapshot {ts} not found under trash bucket")]
+    SnapshotNotFound {
+        /// The `<ts>` segment the operator passed.
+        ts: String,
+    },
+
+    /// v1.2.5 — `restore_quarantine` was called WITHOUT an explicit
+    /// `basename` against a `<ts>/` slot that holds more than one
+    /// child entry. Operator must disambiguate.
+    #[error("quarantine: restore ambiguous; {count} entries under <ts>/, specify basename")]
+    AmbiguousRestore {
+        /// Number of entries discovered under the `<ts>/` slot.
+        count: usize,
+    },
+
+    /// v1.2.5 — `restore_quarantine` would clobber an existing dest
+    /// and `--force` was not passed.
+    #[error("quarantine: dest {dest} already exists; pass --force to replace")]
+    DestExists {
+        /// Absolute path of the dest that already exists.
+        dest: PathBuf,
+    },
+
+    /// v1.2.5 — `restore_quarantine` succeeded the staging steps but
+    /// the final move (rename + cross-device fallback) failed.
+    #[error("quarantine: restore move from {src} to {dest} failed: {source}")]
+    RestoreFailed {
+        /// Absolute path of the snapshot source.
+        src: PathBuf,
+        /// Absolute path of the dest the snapshot was being restored
+        /// to.
+        dest: PathBuf,
+        /// Underlying I/O error from the failing rename or copy step.
+        #[source]
+        source: io::Error,
+    },
+
+    /// v1.2.5 — `prune_quarantine` could not list the trash root (the
+    /// directory exists but `read_dir` failed). Per-entry failures are
+    /// captured in [`PruneReport::failed`] instead; this variant fires
+    /// only for the orchestration-level read.
+    #[error("quarantine: GC sweep failed to enumerate {trash}: {source}")]
+    GcFailed {
+        /// Absolute path of the trash root (`<meta>/.grex/trash/`).
+        trash: PathBuf,
+        /// Underlying I/O error from `read_dir`.
+        #[source]
+        source: io::Error,
+    },
+
+    /// v1.2.5 — `parse_iso8601_quarantine` could not extract a valid
+    /// timestamp from a candidate entry name. Surfaced only when the
+    /// caller explicitly opts into strict parsing; the GC sweep
+    /// tolerates malformed names by skipping them.
+    #[error("quarantine: failed to parse ISO8601 timestamp from {name}")]
+    TimestampParseFailed {
+        /// The entry name that failed to parse.
+        name: String,
     },
 }
 
@@ -238,6 +363,49 @@ fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
             "quarantine: symlink replication not supported on this platform",
         ))
     }
+}
+
+/// v1.2.5 — symlink-secure recursive removal. Walks `path` using
+/// [`fs::symlink_metadata`] at every level so a symlink encountered
+/// mid-traversal is unlinked AS a symlink rather than followed into an
+/// unrelated tree. This is the safe counterpart to
+/// [`fs::remove_dir_all`], which on some platforms / std versions has
+/// historically followed directory symlinks during cleanup.
+///
+/// Behaviour:
+///
+/// * `path` is itself a symlink → remove the link (never the target).
+/// * `path` is a regular file → unlink it.
+/// * `path` is a directory → recurse into each child via
+///   `symlink_metadata`, then `remove_dir(path)`.
+/// * `path` does not exist (`NotFound`) → returns `Ok(())` so callers
+///   can use this as an idempotent "ensure absent" primitive.
+fn safe_remove_dir_all(path: &Path) -> io::Result<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        // Unlink the symlink itself. On Windows, a symlink to a dir
+        // requires `remove_dir`; `remove_file` covers file/symlink_file.
+        // Try file-style first, then fall back to dir-style.
+        match fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(_) => return fs::remove_dir(path),
+        }
+    }
+    if ft.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let child = entry.path();
+            safe_remove_dir_all(&child)?;
+        }
+        return fs::remove_dir(path);
+    }
+    // Regular file or other unlinkable entry.
+    fs::remove_file(path)
 }
 
 /// Resolve a unique `<trash_root>/<ts>/<basename>/` slot. Bumps the
@@ -437,6 +605,270 @@ pub fn snapshot_then_rm(
     append_complete_event(cfg, dest, &snapshot_path);
 
     Ok(QuarantineResult { snapshot_path, timestamp })
+}
+
+/// v1.2.5 — parse a quarantine `<ts>` directory name back into a
+/// [`SystemTime`]. The on-disk convention emitted by `iso8601_utc_now`
+/// is `YYYY-MM-DDTHH-MM-SS.sssZ` (colons replaced by hyphens, optional
+/// `-N` collision suffix). This helper accepts either form, ignores any
+/// `-N` suffix beyond the second-precision body, and returns `None` for
+/// entries that don't parse (operator-created `README.txt` and friends).
+///
+/// Returning `None` instead of an `Err` matches the GC-sweep tolerance
+/// policy: the caller logs + skips malformed entries rather than
+/// aborting the sweep on the first stranger.
+pub fn parse_iso8601_quarantine(name: &str) -> Option<SystemTime> {
+    // Strip optional `-N` collision suffix that `resolve_unique_slot`
+    // may have appended. The base form is fixed-width (24 chars ending
+    // in `Z`); anything longer with `-` then digits is a collision
+    // suffix added at slot resolution time.
+    let body = name.strip_suffix(|c: char| c.is_ascii_digit()).unwrap_or(name);
+    // After stripping trailing digits we may have a dangling `-`; peel
+    // back to a candidate that ends in `Z`.
+    let candidate = if let Some(idx) = body.rfind('Z') { &body[..=idx] } else { name };
+
+    // Format mirrors `iso8601_utc_now`: hyphenated time segment +
+    // `.sss` millis + literal `Z`.
+    let parsed = NaiveDateTime::parse_from_str(candidate, "%Y-%m-%dT%H-%M-%S%.3fZ").ok()?;
+    let dt = DateTime::<Utc>::from_naive_utc_and_offset(parsed, Utc);
+    Some(SystemTime::from(dt))
+}
+
+/// v1.2.5 — sweep aged entries out of a meta's trash bucket. Each
+/// entry directly under `<meta>/.grex/trash/` is parsed back to a
+/// timestamp via [`parse_iso8601_quarantine`]; entries older than
+/// `now - retain_days` are removed via `remove_dir_all`. Per-entry
+/// failures land in [`PruneReport::failed`] rather than aborting the
+/// sweep — the GC is best-effort by design (operators run it from
+/// `grex doctor` and want a complete picture, not a halt on the first
+/// permission fault).
+///
+/// On each successful prune the caller's `audit_log` (when supplied)
+/// receives a [`Event::QuarantineGcSwept`] entry. Audit failures log
+/// via tracing and DO NOT roll back the prune — the on-disk state IS
+/// the canonical signal.
+///
+/// # Failed-entry audit policy
+///
+/// Entries that fail to delete are surfaced via [`PruneReport::failed`]
+/// and logged via `tracing::warn!`, but they are NOT recorded as a
+/// dedicated audit-log event in v1.2.5. Adding a `failed: Option<…>`
+/// field to [`Event::QuarantineGcSwept`] would be a breaking change to
+/// the on-disk audit schema. v1.2.6 may add a dedicated event variant
+/// (e.g. `QuarantineGcSweepFailed`) once the additive-evolution path
+/// for `Event` is locked. Operators who need failure visibility today
+/// should consume the `tracing` channel.
+///
+/// Returns:
+///
+/// * `Ok(PruneReport::default())` when `<meta>/.grex/trash/` does not
+///   exist (no trash bucket → nothing to do, `Ok` per the design.md
+///   "missing trash root" edge case).
+/// * `Ok(report)` on a sweep that ran (report partitions entries into
+///   pruned / retained / failed buckets).
+/// * `Err(QuarantineError::GcFailed)` only if the trash root exists
+///   but cannot be enumerated (`read_dir` failure).
+#[allow(clippy::too_many_lines)]
+pub fn prune_quarantine(
+    meta_dir: &Path,
+    retain: RetentionConfig,
+    audit_log: Option<&Path>,
+) -> Result<PruneReport, QuarantineError> {
+    // v1.2.5 — `retain_days = 0` is a sentinel meaning "no GC". This
+    // matches the `crate::sync::SyncOptions` mapping where `None`
+    // (and zero) skip the GC sweep entirely, preserving the v1.2.1
+    // indefinite-retention default behavior. Operators who want
+    // pruning must pass a non-zero day count
+    // (e.g. `--retain-days 30`).
+    if retain.retain_days == 0 {
+        return Ok(PruneReport::default());
+    }
+    let trash_root = meta_dir.join(".grex").join("trash");
+    if !trash_root.is_dir() {
+        return Ok(PruneReport::default());
+    }
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(u64::from(retain.retain_days) * 86_400))
+        // Underflow only happens if retain_days * 86400 exceeds the
+        // current Unix time (1970-relative), which is impossible at
+        // u32 retain_days. Guard with UNIX_EPOCH so we still return
+        // a well-defined cutoff in the impossible-case.
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    let entries = std::fs::read_dir(&trash_root)
+        .map_err(|source| QuarantineError::GcFailed { trash: trash_root.clone(), source })?;
+
+    let mut report = PruneReport::default();
+    for entry in entries {
+        let Ok(entry) = entry else { continue };
+        // v1.2.5 P2-2 — skip stray non-directory entries (operator
+        // README.txt, dotfiles, etc.). The trash bucket layout is
+        // `<ts>/<basename>/` so the top level should only ever contain
+        // dirs; anything else is operator clutter and the GC sweep
+        // tolerates it rather than failing the whole pass.
+        if entry.file_type().map(|t| !t.is_dir()).unwrap_or(true) {
+            continue;
+        }
+        let path = entry.path();
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            tracing::warn!(?name, "quarantine GC: non-UTF8 entry name; skipping");
+            continue;
+        };
+        let Some(ts) = parse_iso8601_quarantine(name_str) else {
+            tracing::warn!(name = name_str, "quarantine GC: non-quarantine entry; skipping");
+            continue;
+        };
+        if ts < cutoff {
+            match std::fs::remove_dir_all(&path) {
+                Ok(()) => {
+                    let age_days = SystemTime::now()
+                        .duration_since(ts)
+                        .map(|d| d.as_secs() / 86_400)
+                        .unwrap_or(0);
+                    if let Some(log) = audit_log {
+                        let event = Event::QuarantineGcSwept {
+                            ts: Utc::now(),
+                            entry: path.display().to_string(),
+                            age_days,
+                        };
+                        if let Err(e) = append_event(log, &event) {
+                            tracing::warn!(
+                                audit_log = %log.display(),
+                                error = %e,
+                                "failed to append QuarantineGcSwept event; sweep already succeeded",
+                            );
+                        }
+                    }
+                    report.pruned.push(path);
+                }
+                Err(e) => {
+                    tracing::warn!(?path, error = %e, "quarantine GC: prune failed");
+                    report.failed.push((path, e.to_string()));
+                }
+            }
+        } else {
+            report.retained.push(path);
+        }
+    }
+    Ok(report)
+}
+
+/// v1.2.5 — restore a quarantined snapshot back to the workspace.
+///
+/// Resolves `<meta>/.grex/trash/<ts>/<basename>/`, then atomically
+/// moves it to `<meta>/<basename>` (or `<dest>` if explicitly supplied).
+/// Cross-device renames fall back to copy-then-unlink so the trash
+/// bucket can live on a separate device under Docker / CI.
+///
+/// Behaviour matrix per design.md §"Restore":
+///
+/// * `<ts>` slot missing → [`QuarantineError::SnapshotNotFound`].
+/// * `basename` not supplied AND the slot holds != 1 entry →
+///   [`QuarantineError::AmbiguousRestore`].
+/// * Dest already exists AND `force == false` →
+///   [`QuarantineError::DestExists`]. With `force == true` the dest is
+///   removed before the rename.
+/// * Successful restore appends a [`Event::QuarantineRestored`] entry
+///   to the audit log (when supplied; best-effort).
+#[allow(clippy::too_many_lines)]
+pub fn restore_quarantine(
+    meta_dir: &Path,
+    ts: &str,
+    basename: Option<&str>,
+    force: bool,
+    audit_log: Option<&Path>,
+) -> Result<RestoreReport, QuarantineError> {
+    let trash_dir = meta_dir.join(".grex").join("trash").join(ts);
+    if !trash_dir.is_dir() {
+        return Err(QuarantineError::SnapshotNotFound { ts: ts.to_owned() });
+    }
+
+    let basename_owned = match basename {
+        Some(b) => b.to_owned(),
+        None => {
+            // Single-entry slot is the unambiguous restore path; any
+            // other count requires the operator to disambiguate so we
+            // never restore the wrong basename silently.
+            let entries: Vec<_> = std::fs::read_dir(&trash_dir)
+                .map_err(|source| QuarantineError::GcFailed { trash: trash_dir.clone(), source })?
+                .filter_map(Result::ok)
+                .collect();
+            if entries.len() != 1 {
+                return Err(QuarantineError::AmbiguousRestore { count: entries.len() });
+            }
+            entries[0].file_name().to_string_lossy().into_owned()
+        }
+    };
+
+    let src = trash_dir.join(&basename_owned);
+    let dest = meta_dir.join(&basename_owned);
+
+    if dest.exists() {
+        if !force {
+            return Err(QuarantineError::DestExists { dest });
+        }
+        // v1.2.5 — symlink-secure cleanup: refuse to follow any
+        // symlink encountered while removing the existing dest. A
+        // hostile actor who plants a symlink at `dest` between the
+        // existence probe and the unlink MUST NOT be able to redirect
+        // our cleanup into an unrelated tree.
+        if let Err(e) = safe_remove_dir_all(&dest) {
+            return Err(QuarantineError::RestoreFailed {
+                src: src.clone(),
+                dest: dest.clone(),
+                source: e,
+            });
+        }
+    }
+
+    // Try a same-device rename first; fall back to copy+remove on
+    // cross-device errors. `copy_dir_recursive` already preserves
+    // symlinks and nested structure verbatim, matching the snapshot's
+    // forensic intent.
+    if let Err(rename_err) = std::fs::rename(&src, &dest) {
+        if let Err(copy_err) = copy_dir_recursive(&src, &dest) {
+            return Err(QuarantineError::RestoreFailed {
+                src: src.clone(),
+                dest: dest.clone(),
+                source: copy_err,
+            });
+        }
+        // v1.2.5 — symlink-secure unlink of the now-redundant snapshot.
+        // After a successful copy the bytes live at `dest`; the source
+        // tree is removed via `safe_remove_dir_all` so a symlink that
+        // somehow appeared inside the snapshot during the cross-device
+        // copy cannot redirect the cleanup outside the trash bucket.
+        if let Err(unlink_err) = safe_remove_dir_all(&src) {
+            // Copy succeeded but original snapshot couldn't be
+            // unlinked. Surface the unlink failure (the operator now
+            // has TWO copies of the bytes — log so they can clean up
+            // the leftover).
+            tracing::warn!(
+                ?src,
+                rename_error = %rename_err,
+                unlink_error = %unlink_err,
+                "quarantine restore: copy succeeded but snapshot unlink failed",
+            );
+        }
+    }
+
+    if let Some(log) = audit_log {
+        let event = Event::QuarantineRestored {
+            ts: Utc::now(),
+            src: src.display().to_string(),
+            dest: dest.display().to_string(),
+        };
+        if let Err(e) = append_event(log, &event) {
+            tracing::warn!(
+                audit_log = %log.display(),
+                error = %e,
+                "failed to append QuarantineRestored event; restore already succeeded",
+            );
+        }
+    }
+
+    Ok(RestoreReport { dest })
 }
 
 #[cfg(test)]

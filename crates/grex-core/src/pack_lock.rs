@@ -53,6 +53,174 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use fd_lock::{RwLock, RwLockWriteGuard};
 
+// feat-v1.2.5 A3 — pool deadlock guard (debug-only, cross-thread).
+//
+// `HELD_PACK_LOCKS` is a *process-global* set of `(canonical_pack_path,
+// thread_id)` tuples currently held. The set is consulted from rayon
+// worker threads inside `phase3_recurse` (walker.rs) at the entry of
+// every parallel-iter closure to assert the lock-acquisition order
+// documented in `.omne/cfg/concurrency.md` §"Five cooperating
+// mechanisms" — namely that a `PackLock` is never held by a thread
+// while that same thread enters a nested `pool.install` closure. The
+// v1.2.4 design used a `thread_local!` here, but rayon's work-stealing
+// scheduler routes the assertion onto worker threads whose TL would
+// always be empty (the lock was acquired on the *outer* tokio worker,
+// not on the rayon worker). The global tuple-set fixes that gap so
+// the assertion actually fires when the Coffman cycle is reproducible.
+// Release builds compile this out entirely.
+//
+// Pairs with `POOL_INSTALL_DEPTH` (per-OS-thread, owned by
+// `scheduler.rs`): each `PackLock` acquire asserts the *current
+// thread* is not inside a `pool.install` closure, so a worker thread
+// inside a `pool.install` cannot newly acquire a `PackLock` during the
+// closure body either. See feat-v1.2.5 design.md §A3.
+#[cfg(debug_assertions)]
+use std::collections::HashSet;
+#[cfg(debug_assertions)]
+use std::thread::ThreadId;
+
+// W3 (feat-v1.2.5) landed `crate::scheduler::POOL_INSTALL_DEPTH` as a
+// per-thread `RefCell<usize>` driven by `PoolInstallDepthGuard` around
+// every `pool.install` boundary in `phase3_recurse` (see scheduler.rs
+// §A3). We import it here so the deadlock assertion in
+// `register_held_lock` can verify, at every `PackLock` acquire, that
+// the current OS thread is NOT inside a rayon `pool.install` closure.
+#[cfg(debug_assertions)]
+use crate::scheduler::POOL_INSTALL_DEPTH;
+
+/// Process-global set of `(canonical_pack_path, owning_thread_id)`
+/// tuples currently held by `PackLock` acquires anywhere in the
+/// process. Inspected by rayon worker threads inside `phase3_recurse`
+/// (walker.rs) before each per-child closure body to assert the
+/// lock-acquisition order. See feat-v1.2.5 design.md §A3.
+///
+/// Storage shape: `OnceLock<Mutex<HashSet<...>>>` rather than
+/// `LazyLock<...>` because the workspace MSRV is 1.79 and `LazyLock`
+/// stabilised in 1.80. The behavior is identical — the inner
+/// `HashSet` is constructed on first `held_pack_locks_storage()`
+/// access via `OnceLock::get_or_init` and shared from then on.
+///
+/// Contract: a tuple is inserted in `register_held_lock` after the
+/// pool-install-depth-zero precondition is asserted, and removed in
+/// `unregister_held_lock` from `PackLock::Drop`. The thread-id half
+/// of the tuple identifies which thread is responsible for the
+/// outstanding hold so the assertion can target "current thread holds
+/// any pack lock" without false positives from other concurrent acquires.
+#[cfg(debug_assertions)]
+fn held_pack_locks_storage() -> &'static Mutex<HashSet<(PathBuf, ThreadId)>> {
+    static REG: OnceLock<Mutex<HashSet<(PathBuf, ThreadId)>>> = OnceLock::new();
+    REG.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Returns true iff the current OS thread is NOT inside any rayon
+/// `pool.install` boundary (i.e. `POOL_INSTALL_DEPTH == 0`). Used by
+/// `register_held_lock` to enforce the design.md §A3 lock-acquisition
+/// order: a `PackLock` may never be acquired from inside a
+/// `pool.install` closure (otherwise the worker can deadlock against
+/// itself when a nested `pool.install` re-enters the same thread).
+#[cfg(debug_assertions)]
+#[inline]
+fn pool_install_depth_is_zero() -> bool {
+    POOL_INSTALL_DEPTH.with(|d| *d.borrow() == 0)
+}
+
+/// Register the canonical pack-lock path against the current OS
+/// thread in the global `HELD_PACK_LOCKS` set. Asserts the
+/// pool-install depth invariant before insertion. Debug-only.
+#[cfg(debug_assertions)]
+fn register_held_lock(path: &Path) {
+    assert!(
+        pool_install_depth_is_zero(),
+        "pool deadlock guard: attempted to acquire PackLock({}) while \
+         inside a `pool.install` boundary — this risks the rayon \
+         re-entrancy deadlock pinned by feat-v1.2.5 design.md §A3 \
+         (see .omne/cfg/concurrency.md §\"Five cooperating mechanisms\")",
+        path.display()
+    );
+    let tid = std::thread::current().id();
+    held_pack_locks_storage()
+        .lock()
+        .expect("HELD_PACK_LOCKS poisoned — prior panic in deadlock-guard bookkeeping")
+        .insert((path.to_path_buf(), tid));
+}
+
+/// Remove the canonical pack-lock path for the current OS thread from
+/// the global held-pack-locks registry. Called from `PackLock::Drop`.
+/// Debug-only. Idempotent — extra calls (e.g. from a `PackLock` that
+/// was opened but never acquired) are no-ops.
+#[cfg(debug_assertions)]
+fn unregister_held_lock(path: &Path) {
+    let tid = std::thread::current().id();
+    if let Ok(mut held) = held_pack_locks_storage().lock() {
+        held.remove(&(path.to_path_buf(), tid));
+    }
+}
+
+/// Debug-only inspector: snapshot of pack lock paths currently held by
+/// the *current* OS thread. Used by the per-`pool.install`-closure
+/// assertion in `phase3_recurse` (walker.rs §A3) and by the
+/// deadlock-guard tests. Available under `#[cfg(debug_assertions)]`
+/// (not just `#[cfg(test)]`) because the walker production code path
+/// itself reads it inside a `debug_assert!` block.
+#[cfg(debug_assertions)]
+pub(crate) fn held_pack_locks_for_test() -> Vec<PathBuf> {
+    let tid = std::thread::current().id();
+    held_pack_locks_storage()
+        .lock()
+        .expect("HELD_PACK_LOCKS poisoned — prior panic in deadlock-guard bookkeeping")
+        .iter()
+        .filter(|(_, t)| *t == tid)
+        .map(|(p, _)| p.clone())
+        .collect()
+}
+
+/// Test-only reset: clear the held-pack-locks set entries owned by the
+/// current OS thread. Used by tests that want to start from a clean
+/// slate without constructing/dropping real `PackLock` guards. Gated on
+/// `debug_assertions` because the underlying global is itself
+/// debug-only.
+#[cfg(all(test, debug_assertions))]
+#[allow(dead_code)]
+pub(crate) fn clear_held_pack_locks_for_test() {
+    let tid = std::thread::current().id();
+    if let Ok(mut held) = held_pack_locks_storage().lock() {
+        held.retain(|(_, t)| *t != tid);
+    }
+}
+
+/// Test-only injector: simulate having acquired a `PackLock` on the
+/// given path WITHOUT going through the real lock-file machinery (so
+/// the deadlock-guard tests in `walker.rs` can stage a "lock held"
+/// precondition without touching the filesystem). The current
+/// thread's id is recorded as the owner. Bypasses the
+/// `pool_install_depth_is_zero` assertion in `register_held_lock` —
+/// callers MUST run this BEFORE entering any `pool.install` boundary.
+/// Gated on `debug_assertions` because the underlying global is
+/// itself debug-only.
+#[cfg(all(test, debug_assertions))]
+pub(crate) fn register_pack_lock_for_test(path: &Path) {
+    let tid = std::thread::current().id();
+    held_pack_locks_storage()
+        .lock()
+        .expect("HELD_PACK_LOCKS poisoned — prior panic in deadlock-guard bookkeeping")
+        .insert((path.to_path_buf(), tid));
+}
+
+/// Test-only remover: undo a `register_pack_lock_for_test` injection
+/// on the current OS thread without going through the real
+/// `PackLock::Drop` path. Used by the F1 deadlock-guard test in
+/// `walker.rs` to keep the global held-pack-locks registry clean
+/// across cargo-test thread reuse so a retry on the same OS thread
+/// starts fresh. Gated on `debug_assertions` because the underlying
+/// global is itself debug-only.
+#[cfg(all(test, debug_assertions))]
+pub(crate) fn unregister_pack_lock_for_test(path: &Path) {
+    let tid = std::thread::current().id();
+    if let Ok(mut held) = held_pack_locks_storage().lock() {
+        held.remove(&(path.to_path_buf(), tid));
+    }
+}
+
 /// Stable name of the per-pack lock file created inside every pack root.
 /// Exported so the managed-gitignore writer can hide it from `git status`.
 pub const PACK_LOCK_FILE_NAME: &str = ".grex-lock";
@@ -272,6 +440,15 @@ impl PackLock {
             }
         };
 
+        // feat-v1.2.5 A3 — debug-only deadlock guard registration.
+        // Asserts no `pool.install` is on this OS thread's stack and
+        // records the canonical pack path in `HELD_PACK_LOCKS`. The
+        // matching `unregister_held_lock` runs in `PackLock::Drop`
+        // which fires from `PackLockHold::Drop` (the boxed `_lock`
+        // field is the last to drop after the fd-lock guard releases).
+        #[cfg(debug_assertions)]
+        register_held_lock(&boxed.canonical);
+
         Ok(PackLockHold {
             _fd_guard: Some(guard_static),
             _mutex_guard: Some(mutex_guard),
@@ -389,6 +566,11 @@ impl PackLock {
             }
         };
 
+        // feat-v1.2.5 A3 — debug-only deadlock guard registration
+        // (same contract as `acquire_async`; see comment there).
+        #[cfg(debug_assertions)]
+        register_held_lock(&boxed.canonical);
+
         Ok(PackLockHold {
             _fd_guard: Some(guard_static),
             _mutex_guard: Some(mutex_guard),
@@ -422,7 +604,22 @@ impl PackLock {
         note = "use `acquire_async` for async contexts or `try_acquire` for non-blocking; sync `acquire` will be removed in v1.3.0"
     )]
     pub fn acquire(&mut self) -> Result<RwLockWriteGuard<'_, File>, PackLockError> {
-        self.inner.write().map_err(|source| PackLockError::Io { path: self.path.clone(), source })
+        let guard = self
+            .inner
+            .write()
+            .map_err(|source| PackLockError::Io { path: self.path.clone(), source })?;
+        // feat-v1.2.5 A3 — debug-only deadlock guard registration.
+        // Borrowed-guard fns (`acquire`, `try_acquire`) cannot
+        // intercept their guard's `Drop` (it's an `fd_lock` type), so
+        // the unregister hook lives in `PackLock::Drop` below. The
+        // typical usage pattern (`let mut p = PackLock::open(); let
+        // _g = p.acquire();`) drops `_g` first (releasing the OS
+        // flock) then `p` (closing the file + unregistering on this
+        // OS thread), which keeps `HELD_PACK_LOCKS` accurate for the
+        // duration the OS-level lock is held.
+        #[cfg(debug_assertions)]
+        register_held_lock(&self.canonical);
+        Ok(guard)
     }
 
     /// Non-blocking probe: return [`PackLockError::Busy`] instead of
@@ -435,7 +632,14 @@ impl PackLock {
     /// * [`PackLockError::Io`] on any other OS-level lock failure.
     pub fn try_acquire(&mut self) -> Result<RwLockWriteGuard<'_, File>, PackLockError> {
         match self.inner.try_write() {
-            Ok(g) => Ok(g),
+            Ok(g) => {
+                // feat-v1.2.5 A3 — debug-only deadlock guard
+                // registration. Same borrowed-guard caveat as
+                // `acquire`: unregister fires from `PackLock::Drop`.
+                #[cfg(debug_assertions)]
+                register_held_lock(&self.canonical);
+                Ok(g)
+            }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 Err(PackLockError::Busy { path: self.path.clone() })
             }
@@ -453,6 +657,20 @@ impl PackLock {
 impl std::fmt::Debug for PackLock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PackLock").field("path", &self.path).finish()
+    }
+}
+
+// feat-v1.2.5 A3 — debug-only deadlock guard unregistration. Fires
+// when a `PackLock` is dropped, whether directly (sync `acquire` /
+// `try_acquire` call sites that own the `PackLock` in scope) or
+// transitively from `PackLockHold::Drop` (the boxed `_lock` field
+// drops last, after the fd-lock guard releases). The unregister is
+// idempotent and safe even if the lock was never acquired (e.g. an
+// `open` that never called any `acquire*`).
+#[cfg(debug_assertions)]
+impl Drop for PackLock {
+    fn drop(&mut self) {
+        unregister_held_lock(&self.canonical);
     }
 }
 

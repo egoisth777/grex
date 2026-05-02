@@ -88,7 +88,24 @@ fn truncate_to_last_newline(file: &mut std::fs::File, len: u64) -> Result<(), Ma
 ///
 /// Returns [`ManifestError::Io`] on I/O failure or
 /// [`ManifestError::Serialize`] if the event cannot be serialized.
+///
+/// # Write-side guard for `Event::Unknown`
+///
+/// [`Event::Unknown`] is the read-side `#[serde(other)]` fallback for
+/// unknown `op` discriminants emitted by NEWER writers — it must never
+/// originate from the write side. We refuse to serialize it so a stray
+/// `Unknown` literal in caller code cannot pollute the on-disk log.
+/// Debug builds `debug_assert!` to surface the bug; release builds
+/// `tracing::error!` and no-op so production never panics on a stray
+/// caller mistake.
 pub fn append_event(path: &Path, event: &Event) -> Result<(), ManifestError> {
+    if matches!(event, Event::Unknown) {
+        debug_assert!(false, "Event::Unknown must never reach the write side");
+        tracing::error!(
+            "refusing to write Event::Unknown (forward-compat read-side fallback only)"
+        );
+        return Ok(());
+    }
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
@@ -119,6 +136,17 @@ pub fn append_event(path: &Path, event: &Event) -> Result<(), ManifestError> {
 ///
 /// We collect all raw lines up front (byte-oriented) so `is_last` can be
 /// decided by line index rather than by the presence of a trailing `\n`.
+///
+/// # Forward-compat: `Event::Unknown` is silently dropped
+///
+/// `Event::Unknown` (the `#[serde(other)]` fallback) is silently dropped
+/// regardless of position to preserve forward-compat: older readers
+/// ignore unknown ops without erroring on the rest of the log. Mid-file
+/// `Unknown` rows are mirror-treated like the legitimately torn-tail
+/// path (warn + skip), NOT promoted to `ManifestError::Corruption` —
+/// otherwise an older v1.2.x binary reading a v1.2.5+ log that contains
+/// a `QuarantineRestored` (or any future) row sandwiched between known
+/// rows would hard-error mid-stream.
 pub fn read_all(path: &Path) -> Result<Vec<Event>, ManifestError> {
     let Some(raw_lines) = slurp_raw_lines(path)? else {
         return Ok(Vec::new());
@@ -129,7 +157,30 @@ pub fn read_all(path: &Path) -> Result<Vec<Event>, ManifestError> {
         let line_num = idx + 1;
         let is_last = line_num == total;
         match decode_and_parse_line(&bytes, line_num, is_last)? {
-            LineOutcome::Event(ev) => events.push(ev),
+            LineOutcome::Event(ev) => {
+                // v1.2.5 — `Event::Unknown` is the `#[serde(other)]`
+                // forward-compat fallback so an OLDER reader can decode
+                // a NEWER writer's unknown `op` discriminants without
+                // crashing the whole `read_all`. The variant is
+                // preserved INTERNALLY for that decode path but is
+                // filtered out of the public read API so legacy
+                // schema-discard semantics survive.
+                //
+                // Position policy: ALL `Unknown` rows are silently
+                // dropped (mirroring how torn lines are skipped). This
+                // is what makes forward-compat actually forward-compat:
+                // an older reader that sees a newer log with unknown
+                // `op` rows sandwiched between known rows must keep
+                // streaming, not abort with `Corruption`.
+                if matches!(ev, Event::Unknown) {
+                    tracing::debug!(
+                        line = line_num,
+                        "dropping Event::Unknown (forward-compat: unknown op tag)"
+                    );
+                    continue;
+                }
+                events.push(ev);
+            }
             LineOutcome::Skip => continue,
             LineOutcome::StopTorn => break,
         }
@@ -275,6 +326,13 @@ fn emit_semantic_warnings(events: &[Event]) {
             Event::QuarantineStart { .. }
             | Event::QuarantineComplete { .. }
             | Event::QuarantineFailed { .. } => {}
+            // v1.2.5 — quarantine restore + GC sweep audits are also
+            // workspace-scoped (keyed on the trash entry / dest path);
+            // no live-set check applies.
+            Event::QuarantineRestored { .. } | Event::QuarantineGcSwept { .. } => {}
+            // v1.2.5 — forward-compat fallback for unknown discriminants
+            // emitted by newer writers; no payload to inspect.
+            Event::Unknown => {}
         }
     }
 }
@@ -351,6 +409,30 @@ mod tests {
         drop(f);
         append_event(&p, &sample()).unwrap();
         assert_eq!(read_all(&p).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn unknown_op_mid_file_is_silently_dropped() {
+        // Forward-compat: an older reader streaming a newer log must
+        // skip unknown `op` rows sandwiched between known rows without
+        // erroring. Layout: [valid_a, {"op":"future_op"}, valid_b].
+        let dir = tempdir().unwrap();
+        let p = dir.path().join(".grex/events.jsonl");
+        let valid_a = sample();
+        let valid_b =
+            Event::Rm { ts: Utc.with_ymd_and_hms(2026, 4, 19, 10, 0, 1).unwrap(), id: "b".into() };
+        append_event(&p, &valid_a).unwrap();
+        // Inject the unknown-op line directly so the writer-side guard
+        // doesn't suppress it.
+        let mut f = OpenOptions::new().append(true).open(&p).unwrap();
+        f.write_all(b"{\"op\":\"future_op\",\"some_field\":42}\n").unwrap();
+        drop(f);
+        append_event(&p, &valid_b).unwrap();
+
+        let got = read_all(&p).unwrap();
+        assert_eq!(got.len(), 2, "mid-file Unknown must be silently dropped, not error");
+        assert_eq!(got[0], valid_a);
+        assert_eq!(got[1], valid_b);
     }
 
     #[test]

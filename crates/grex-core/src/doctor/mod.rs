@@ -31,6 +31,12 @@ pub use scan_undeclared::{scan_undeclared, ScanError, UndeclaredRepo};
 const GITIGNORE_EXT_KEY: &str = "x-gitignore";
 
 /// Which check produced this finding.
+///
+/// Marked `#[non_exhaustive]` so future check kinds (additional
+/// quarantine ops, plugin-contributed checks, etc.) can be added in a
+/// PATCH release without breaking out-of-crate `match` consumers. Within
+/// `grex-core` every match arm is exhaustive.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckKind {
     /// Manifest JSONL schema / corruption.
@@ -47,6 +53,17 @@ pub enum CheckKind {
     /// Always reports `OK (synthetic)`; downstream JSON consumers see
     /// the `synthetic: true` flag on the finding.
     SyntheticPack,
+    /// v1.2.5 — quarantine GC status. Reports `OK` on a clean trash
+    /// bucket (no entries, or all within the retention window) and an
+    /// `Info`-severity Warning carrying the stale-entry count when the
+    /// bucket holds entries older than `--retain-days N`.
+    QuarantineGc,
+    /// v1.2.5 — quarantine restore status. Surfaced exclusively by the
+    /// `--restore-quarantine TS[:BASENAME]` op (operator-requested
+    /// snapshot rehydration). Distinct from [`CheckKind::QuarantineGc`]
+    /// so JSON consumers can branch on `restore` vs `gc` outcomes
+    /// without parsing the human-readable detail string.
+    QuarantineRestore,
 }
 
 impl CheckKind {
@@ -58,6 +75,8 @@ impl CheckKind {
             CheckKind::OnDiskDrift => "on-disk-drift",
             CheckKind::ConfigLint => "config-lint",
             CheckKind::SyntheticPack => "synthetic-pack",
+            CheckKind::QuarantineGc => "quarantine-gc",
+            CheckKind::QuarantineRestore => "quarantine-restore",
         }
     }
 }
@@ -167,6 +186,16 @@ impl DoctorReport {
 }
 
 /// Options for [`run_doctor`].
+///
+/// Marked `#[non_exhaustive]` so future opt fields (additional
+/// quarantine knobs, audit toggles, etc.) can be added in a PATCH
+/// release without breaking downstream destructuring (`let DoctorOpts
+/// { fix, .. } = opts;`). External callers cannot use struct-literal
+/// construction at all per E0639 — even the `..base` spread shorthand
+/// is rejected. Construct via `DoctorOpts::default()` and mutate fields
+/// on a `mut` binding instead. In-crate code can still struct-literal
+/// freely.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct DoctorOpts {
     /// Heal gitignore drift. Only fixes [`CheckKind::GitignoreSync`]
@@ -186,6 +215,26 @@ pub struct DoctorOpts {
     /// The walk is read-only — no clones, fetches, or filesystem
     /// mutations happen at any frame regardless of `shallow`.
     pub shallow: Option<usize>,
+    /// v1.2.5 — when `Some(N)`, run the quarantine GC sweep against
+    /// every visited meta's `<meta>/.grex/trash/` bucket using `N`-day
+    /// retention. Reports per-meta findings (`Info`/`Warning` for any
+    /// entries actually pruned) and surfaces an `OK` finding on a
+    /// clean sweep. `None` (default) skips the sweep entirely; the
+    /// default doctor walk stays read-only.
+    pub prune_quarantine: Option<u32>,
+    /// v1.2.5 — when `Some((ts, basename))`, restore the snapshot at
+    /// `<workspace>/.grex/trash/<ts>/<basename>/` back to the
+    /// workspace at `<workspace>/<basename>`. `basename = None`
+    /// requires the `<ts>/` slot to hold exactly one child entry.
+    /// Refuses to clobber an existing dest unless [`Self::force`] is
+    /// also `true`. Run-once at the root meta; not threaded into the
+    /// recursive walk.
+    pub restore_quarantine: Option<(String, Option<String>)>,
+    /// v1.2.5 — paired with [`Self::restore_quarantine`]: when `true`,
+    /// remove the existing dest before the rename. Default `false`
+    /// surfaces [`crate::tree::QuarantineError::DestExists`] instead.
+    /// Not used by other checks.
+    pub force: bool,
 }
 
 /// Errors produced during doctor orchestration that are NOT surfaced as
@@ -211,6 +260,7 @@ pub enum DoctorError {
 /// the recursion (`None` = unbounded, `Some(0)` = root-only,
 /// `Some(n)` = up to `n` nested levels). Recursion is read-only —
 /// no clones, fetches, or filesystem mutations happen at any frame.
+#[allow(clippy::too_many_lines)] // 63 lines: linear orchestration over migration → walk → quarantine GC → restore branches; splitting harms readability.
 pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, DoctorError> {
     // Auto-migrate v1.x `<ws>/grex.jsonl` → v2 `<ws>/.grex/events.jsonl`
     // before the schema check so doctor sees a consistent canonical
@@ -226,6 +276,75 @@ pub fn run_doctor(workspace: &Path, opts: &DoctorOpts) -> Result<DoctorReport, D
     if opts.lint_config {
         let cfg_result = check_config_lint(workspace);
         report.findings.extend(cfg_result.findings);
+    }
+
+    // v1.2.5 — quarantine-GC check / sweep at the root meta. The
+    // recursive `walk_meta` does not branch into per-meta GC because
+    // sweeps SHOULD only fire when explicitly requested by the
+    // operator (default doctor stays read-only). Run-once at root
+    // matches the `--prune-quarantine [--retain-days N]` design.
+    if let Some(retain_days) = opts.prune_quarantine {
+        let qc = check_quarantine_gc(workspace, retain_days, /* prune */ true);
+        report.findings.extend(qc.findings);
+    }
+
+    // v1.2.5 — operator-requested restore. Single-shot at the root
+    // meta; failures surface as an Error finding so the report still
+    // returns an exit code rather than aborting the orchestration.
+    // Findings are tagged `CheckKind::QuarantineRestore` (distinct from
+    // `QuarantineGc`) so JSON consumers can branch on the structured
+    // op rather than parsing the detail string.
+    if let Some((ts, basename)) = &opts.restore_quarantine {
+        use crate::tree::quarantine::restore_quarantine;
+        let audit_log = crate::manifest::event_log_path(workspace);
+        // Defensive: if the operator pasted an ISO-8601 timestamp with
+        // colons (`2026-05-02T10:30:00Z`) into the `TS:BASENAME`
+        // syntax, we'd see extra colons baked into `ts` (the CLI
+        // splitn(2, ':') gives `ts="2026-05-02T10"` and
+        // `basename="30:00Z"` — almost certainly NOT what the operator
+        // meant). Surface a clearer hint than a downstream
+        // "snapshot not found" lookup. The CLI itself ought to grow
+        // `--restore-quarantine TS [--basename B]` (Reviewer 1 P2-5);
+        // until then this hint catches the common foot-gun in-band.
+        let finding = if ts.contains(':') || basename.as_deref().is_some_and(|b| b.contains(':')) {
+            Finding {
+                check: CheckKind::QuarantineRestore,
+                severity: Severity::Error,
+                pack: None,
+                detail: format!(
+                    "restore failed: malformed `TS[:BASENAME]` argument (ts={ts:?}, basename={basename:?}) — the syntax splits on the FIRST colon, so an ISO-8601 timestamp like `2026-05-02T10:30:00Z` is ambiguous. Use the trash slot directory name verbatim (e.g. `2026-05-02T10-30-00Z`) followed by at most one colon + basename."
+                ),
+                auto_fixable: false,
+                synthetic: false,
+            }
+        } else {
+            let res = restore_quarantine(
+                workspace,
+                ts,
+                basename.as_deref(),
+                opts.force,
+                Some(&audit_log),
+            );
+            match res {
+                Ok(report_inner) => Finding {
+                    check: CheckKind::QuarantineRestore,
+                    severity: Severity::Ok,
+                    pack: None,
+                    detail: format!("restored snapshot to {}", report_inner.dest.display()),
+                    auto_fixable: false,
+                    synthetic: false,
+                },
+                Err(e) => Finding {
+                    check: CheckKind::QuarantineRestore,
+                    severity: Severity::Error,
+                    pack: None,
+                    detail: format!("restore failed: {e}"),
+                    auto_fixable: false,
+                    synthetic: false,
+                },
+            }
+        };
+        report.findings.push(finding);
     }
 
     if opts.fix {
@@ -331,6 +450,109 @@ fn run_meta_checks(meta_dir: &Path, report: &mut DoctorReport) {
 
     let synth = check_synthetic_packs(&lock);
     report.findings.extend(synth.findings);
+}
+
+/// v1.2.5 — quarantine-GC check. Surveys `<meta>/.grex/trash/` and
+/// reports either a clean `Ok` finding (no aged entries OR no trash
+/// bucket at all) or a `Warning` finding carrying the count of stale
+/// entries that would be swept under the supplied retention window.
+/// When `prune == true`, the check ALSO runs the actual sweep and
+/// records the pruned entries in the finding detail; otherwise the
+/// check is purely informational (matches the default doctor read-only
+/// contract).
+#[allow(clippy::too_many_lines)]
+pub fn check_quarantine_gc(meta_dir: &Path, retain_days: u32, prune: bool) -> CheckResult {
+    use crate::tree::quarantine::{parse_iso8601_quarantine, prune_quarantine, RetentionConfig};
+    use std::time::{Duration, SystemTime};
+
+    let trash_root = meta_dir.join(".grex").join("trash");
+    if !trash_root.is_dir() {
+        return CheckResult::single(Finding::ok(CheckKind::QuarantineGc));
+    }
+    let cutoff = SystemTime::now()
+        .checked_sub(Duration::from_secs(u64::from(retain_days) * 86_400))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+
+    if prune {
+        let retention = RetentionConfig { retain_days };
+        let audit_log = crate::manifest::event_log_path(meta_dir);
+        let report = match prune_quarantine(meta_dir, retention, Some(&audit_log)) {
+            Ok(r) => r,
+            Err(e) => {
+                return CheckResult::single(Finding {
+                    check: CheckKind::QuarantineGc,
+                    severity: Severity::Warning,
+                    pack: None,
+                    detail: format!("GC sweep failed: {e}"),
+                    auto_fixable: false,
+                    synthetic: false,
+                });
+            }
+        };
+        if report.pruned.is_empty() && report.failed.is_empty() {
+            return CheckResult::single(Finding::ok(CheckKind::QuarantineGc));
+        }
+        let mut detail =
+            format!("pruned {} entr{}", report.pruned.len(), pluralize(report.pruned.len()));
+        if !report.failed.is_empty() {
+            detail.push_str(&format!("; {} failed", report.failed.len()));
+        }
+        return CheckResult::single(Finding {
+            check: CheckKind::QuarantineGc,
+            severity: if report.failed.is_empty() { Severity::Warning } else { Severity::Error },
+            pack: None,
+            detail,
+            auto_fixable: false,
+            synthetic: false,
+        });
+    }
+
+    // Read-only inspection: count stale entries without deleting.
+    let entries = match std::fs::read_dir(&trash_root) {
+        Ok(e) => e,
+        Err(e) => {
+            return CheckResult::single(Finding {
+                check: CheckKind::QuarantineGc,
+                severity: Severity::Warning,
+                pack: None,
+                detail: format!("cannot read trash bucket: {e}"),
+                auto_fixable: false,
+                synthetic: false,
+            });
+        }
+    };
+    let mut stale = 0usize;
+    for ent in entries.flatten() {
+        let name = ent.file_name();
+        let Some(name_str) = name.to_str() else { continue };
+        let Some(ts) = parse_iso8601_quarantine(name_str) else { continue };
+        if ts < cutoff {
+            stale += 1;
+        }
+    }
+    if stale == 0 {
+        CheckResult::single(Finding::ok(CheckKind::QuarantineGc))
+    } else {
+        CheckResult::single(Finding {
+            check: CheckKind::QuarantineGc,
+            severity: Severity::Warning,
+            pack: None,
+            detail: format!(
+                "{stale} stale entr{} older than {retain_days}d (run `grex doctor --prune-quarantine --retain-days {retain_days}` to sweep)",
+                pluralize(stale),
+            ),
+            auto_fixable: false,
+            synthetic: false,
+        })
+    }
+}
+
+fn pluralize(n: usize) -> &'static str {
+    if n == 1 {
+        "y"
+    } else {
+        "ies"
+    }
 }
 
 /// Run fixes and rebuild the gitignore-sync rows in `report`. Only
@@ -1340,6 +1562,45 @@ mod tests {
             report.findings.iter().any(|f| f.check == CheckKind::OnDiskDrift),
             "on-disk-drift check must still run",
         );
+    }
+
+    // --- v1.2.5: --restore-quarantine TS:BASENAME input validation ---
+
+    /// Operator pasted a raw ISO-8601 timestamp containing colons into
+    /// the `--restore-quarantine TS:BASENAME` slot. The CLI splits on
+    /// the FIRST colon, so `ts` reaches doctor still carrying colons.
+    /// Doctor must short-circuit with a `QuarantineRestore` Error
+    /// finding whose detail names the foot-gun rather than dispatching
+    /// to `restore_quarantine` (which would surface a confusing
+    /// `SnapshotNotFound`).
+    #[test]
+    fn run_doctor_restore_quarantine_rejects_colon_in_timestamp() {
+        let d = tempdir().unwrap();
+        seed_pack(d.path(), "a");
+        upsert_managed_block(
+            &d.path().join(".gitignore"),
+            "a",
+            default_managed_gitignore_patterns(),
+        )
+        .unwrap();
+
+        let opts = DoctorOpts {
+            restore_quarantine: Some(("2026-05-02T10:30:00Z".into(), Some("pack-a".into()))),
+            ..DoctorOpts::default()
+        };
+        let report = run_doctor(d.path(), &opts).unwrap();
+
+        let restore_findings: Vec<_> =
+            report.findings.iter().filter(|f| f.check == CheckKind::QuarantineRestore).collect();
+        assert_eq!(restore_findings.len(), 1, "exactly one restore finding expected");
+        let f = restore_findings[0];
+        assert_eq!(f.severity, Severity::Error);
+        assert!(
+            f.detail.contains("malformed") && f.detail.contains("FIRST colon"),
+            "detail must explain the colon foot-gun: {}",
+            f.detail,
+        );
+        assert_eq!(report.exit_code(), 2, "Error severity rolls up to exit 2");
     }
 
     // --- v1.2.0 Stage 1.j: recursive ManifestTree walk + --shallow ---

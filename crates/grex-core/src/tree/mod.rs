@@ -33,7 +33,11 @@ pub use graph::{EdgeKind, PackEdge, PackGraph, PackNode};
 pub use graph_build::build_graph;
 pub use loader::{FsPackLoader, PackLoader};
 pub use ls::{build_ls_tree, LsNode, LsNodeError, LsTree};
-pub use quarantine::{snapshot_then_rm, QuarantineConfig, QuarantineError, QuarantineResult};
+pub use quarantine::{
+    parse_iso8601_quarantine, prune_quarantine, restore_quarantine, snapshot_then_rm, PruneReport,
+    QuarantineConfig, QuarantineError, QuarantineResult, RestoreReport, RetentionConfig,
+    DEFAULT_RETAIN_DAYS,
+};
 pub use walker::{
     dest_has_git_repo, sync_meta, synthesize_plain_git_manifest, SyncMetaOptions, SyncMetaReport,
     Walker,

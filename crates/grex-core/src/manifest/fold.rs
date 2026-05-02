@@ -64,6 +64,13 @@ fn apply(state: &mut HashMap<PackId, PackState>, event: Event) {
         Event::QuarantineStart { .. }
         | Event::QuarantineComplete { .. }
         | Event::QuarantineFailed { .. } => {}
+        // v1.2.5 — quarantine restore + GC-sweep audits; workspace-
+        // scoped, no pack state to mutate.
+        Event::QuarantineRestored { .. } | Event::QuarantineGcSwept { .. } => {}
+        // v1.2.5 — forward-compat fallback variant emitted when an
+        // older binary reads a newer log; nothing to fold (the actual
+        // payload was dropped on the read side by `serde(other)`).
+        Event::Unknown => {}
     }
 }
 
