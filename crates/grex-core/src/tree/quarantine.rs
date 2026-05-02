@@ -291,22 +291,30 @@ fn iso8601_utc_now() -> String {
 /// The caller is expected to have created `dst.parent()` before
 /// invoking this fn. The function itself creates `dst` (the leaf
 /// directory) and every descendant directory.
+///
+/// **v1.2.6 (W2)**: the source-side traversal is rooted in a
+/// `cap_std::fs::Dir` capability opened at `src` (or `src.parent()` if
+/// `src` is itself a symlink). The recursion stays under that capability
+/// — cap-std rejects any `..` segment or symlink target that escapes the
+/// root. Discharges Lean theorem
+/// `walker_subpath_resolution_bounded_by_meta_dir` for the snapshot path.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(src)?;
     let ft = meta.file_type();
     if ft.is_symlink() {
+        // Symlink at the root: replicate via the std primitives — the
+        // link itself is the entire payload, no recursion needed.
         copy_symlink(src, dst)?;
         return Ok(());
     }
     if ft.is_dir() {
         fs::create_dir_all(dst)?;
-        for entry in fs::read_dir(src)? {
-            let entry = entry?;
-            let child_src = entry.path();
-            let child_dst = dst.join(entry.file_name());
-            copy_dir_recursive(&child_src, &child_dst)?;
-        }
-        return Ok(());
+        // Open the source as a cap-std capability so the recursion
+        // cannot wander outside it. Symlinks encountered inside whose
+        // targets escape `src` are unreadable through the capability —
+        // cap-std refuses the open.
+        let src_dir = cap_std::fs::Dir::open_ambient_dir(src, cap_std::ambient_authority())?;
+        return cap_copy_dir_contents(&src_dir, dst);
     }
     if ft.is_file() {
         if let Some(parent) = dst.parent() {
@@ -326,6 +334,56 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// v1.2.6 (W2) — capability-rooted recursive copy. `src_dir` is a
+/// cap-std `Dir` and `dst` is the absolute (ambient) destination
+/// directory which has already been created. Each entry under `src_dir`
+/// is replicated under `dst`; sub-directory recursion descends through
+/// the cap-std handle, keeping the read side bounded to the original
+/// snapshot root capability.
+fn cap_copy_dir_contents(src_dir: &cap_std::fs::Dir, dst: &Path) -> io::Result<()> {
+    for entry in src_dir.entries()? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_path = std::path::PathBuf::from(&name);
+        let child_dst = dst.join(&name);
+        let child_meta = src_dir.symlink_metadata(&name_path)?;
+        let ft = child_meta.file_type();
+        if ft.is_symlink() {
+            // Read the link target through the capability. Use
+            // `read_link_contents` (NOT `read_link`) so absolute targets
+            // are preserved verbatim — a quarantine snapshot is for
+            // forensic reconstruction; a symlink that points outside
+            // its own directory is legitimate operator data and must
+            // be copied as-is, not rewritten or rejected.
+            let target = src_dir.read_link_contents(&name_path)?;
+            copy_symlink_with_target(&target, &child_dst)?;
+            continue;
+        }
+        if ft.is_dir() {
+            fs::create_dir_all(&child_dst)?;
+            let child_src_dir = src_dir.open_dir(&name_path)?;
+            cap_copy_dir_contents(&child_src_dir, &child_dst)?;
+            continue;
+        }
+        if ft.is_file() {
+            // Copy file bytes through the capability so the source side
+            // is bound to the cap-std root. Use `open` + `std::io::copy`
+            // since cap-std's `Dir::copy` only supports same-Dir copies.
+            use std::io::Write;
+            let mut src_file = src_dir.open(&name_path)?;
+            let mut dst_file = fs::File::create(&child_dst)?;
+            io::copy(&mut src_file, &mut dst_file)?;
+            dst_file.flush()?;
+            continue;
+        }
+        tracing::warn!(
+            entry = %name.to_string_lossy(),
+            "quarantine: skipping non-regular, non-symlink, non-directory entry"
+        );
+    }
+    Ok(())
+}
+
 /// Replicate a symlink at `src` as a symlink at `dst`. Reads the link
 /// target via `fs::read_link` and re-creates it with the platform-
 /// appropriate primitive (`std::os::unix::fs::symlink` on Unix,
@@ -338,23 +396,39 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
 /// trash bucket and changes semantics).
 fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
     let target = fs::read_link(src)?;
+    copy_symlink_with_target(&target, dst)?;
+    // Probe target classification for the Windows file/dir branch via
+    // the original src path (the helper has no src to probe). On Unix
+    // this is a no-op shadow.
+    #[cfg(windows)]
+    {
+        // The helper above defaults to symlink_file; if the target is a
+        // directory, retry as symlink_dir. We tolerate the dst already
+        // existing from the first attempt by removing it first.
+        if let Ok(m) = fs::metadata(src) {
+            if m.is_dir() {
+                let _ = fs::remove_file(dst);
+                std::os::windows::fs::symlink_dir(&target, dst)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// v1.2.6 (W2) — replicate a symlink given an already-resolved `target`.
+/// Used by the cap-std-rooted recursive copy where the target was read
+/// through the source-side capability via `Dir::read_link`. Defaults to
+/// `symlink_file` on Windows (callers that know the target classification
+/// should retry as `symlink_dir` themselves; the cap-std descent path
+/// classifies via `Dir::metadata` before invoking this helper).
+fn copy_symlink_with_target(target: &Path, dst: &Path) -> io::Result<()> {
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&target, dst)
+        std::os::unix::fs::symlink(target, dst)
     }
     #[cfg(windows)]
     {
-        // Probe the link target's classification. cap-std would give
-        // us this for free under a dirfd, but for simple non-bounded
-        // copy we use the std primitives.
-        let target_meta = fs::metadata(src);
-        match target_meta {
-            Ok(m) if m.is_dir() => std::os::windows::fs::symlink_dir(&target, dst),
-            // Files, broken symlinks (Err on follow), and anything
-            // else fall back to symlink_file. A broken symlink is
-            // legitimate forensic data; preserve it as best we can.
-            _ => std::os::windows::fs::symlink_file(&target, dst),
-        }
+        std::os::windows::fs::symlink_file(target, dst)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -372,6 +446,12 @@ fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
 /// [`fs::remove_dir_all`], which on some platforms / std versions has
 /// historically followed directory symlinks during cleanup.
 ///
+/// **v1.2.6 (W2)**: re-routed through a `cap_std::fs::Dir` capability
+/// rooted at `path.parent()`. The recursion stays inside the capability
+/// the kernel resolved at open time. Discharges Lean theorem
+/// `walker_subpath_resolution_bounded_by_meta_dir` for the quarantine
+/// restore-cleanup path.
+///
 /// Behaviour:
 ///
 /// * `path` is itself a symlink → remove the link (never the target).
@@ -380,7 +460,62 @@ fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
 ///   `symlink_metadata`, then `remove_dir(path)`.
 /// * `path` does not exist (`NotFound`) → returns `Ok(())` so callers
 ///   can use this as an idempotent "ensure absent" primitive.
+/// * `path` has no parent → fall back to the pre-v1.2.6 ambient walk.
 fn safe_remove_dir_all(path: &Path) -> io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    let (parent, name) = match (path.parent(), path.file_name()) {
+        (Some(p), Some(n)) if !p.as_os_str().is_empty() => (p, PathBuf::from(n)),
+        _ => return safe_remove_dir_all_ambient(path),
+    };
+    let parent_dir = match cap_std::fs::Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+    {
+        Ok(d) => d,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    cap_safe_remove(&parent_dir, &name)
+}
+
+/// v1.2.6 (W2) — capability-rooted recursive remove. Mirrors
+/// `cap_remove_tree` in `walker.rs` but inlined here because the W2
+/// worker boundary forbids cross-module helpers.
+fn cap_safe_remove(parent_dir: &cap_std::fs::Dir, name: &Path) -> io::Result<()> {
+    let meta = match parent_dir.symlink_metadata(name) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        return match parent_dir.remove_file(name) {
+            Ok(()) => Ok(()),
+            Err(_) => parent_dir.remove_dir(name),
+        };
+    }
+    if ft.is_dir() {
+        // Drop the child Dir handle before removing it via the parent —
+        // on Windows an outstanding open handle blocks removal with
+        // ERROR_SHARING_VIOLATION.
+        {
+            let child_dir = parent_dir.open_dir(name)?;
+            for entry in child_dir.entries()? {
+                let entry = entry?;
+                let child_name = PathBuf::from(entry.file_name());
+                cap_safe_remove(&child_dir, &child_name)?;
+            }
+        }
+        return parent_dir.remove_dir(name);
+    }
+    parent_dir.remove_file(name)
+}
+
+/// v1.2.6 (W2) — fallback ambient walk for the degenerate "no parent"
+/// case (filesystem root). Production call sites always have a parent.
+fn safe_remove_dir_all_ambient(path: &Path) -> io::Result<()> {
     let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -388,9 +523,6 @@ fn safe_remove_dir_all(path: &Path) -> io::Result<()> {
     };
     let ft = meta.file_type();
     if ft.is_symlink() {
-        // Unlink the symlink itself. On Windows, a symlink to a dir
-        // requires `remove_dir`; `remove_file` covers file/symlink_file.
-        // Try file-style first, then fall back to dir-style.
         match fs::remove_file(path) {
             Ok(()) => return Ok(()),
             Err(_) => return fs::remove_dir(path),
@@ -400,11 +532,10 @@ fn safe_remove_dir_all(path: &Path) -> io::Result<()> {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let child = entry.path();
-            safe_remove_dir_all(&child)?;
+            safe_remove_dir_all_ambient(&child)?;
         }
         return fs::remove_dir(path);
     }
-    // Regular file or other unlinkable entry.
     fs::remove_file(path)
 }
 

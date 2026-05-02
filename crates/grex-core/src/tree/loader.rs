@@ -8,11 +8,12 @@
 //!   manifest store) can slot in without touching walker logic.
 //! * Tree-walk tests stay hermetic on CI.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::pack::{parse, PackManifest};
 
-use super::error::TreeError;
+use super::error::{is_not_a_directory, TreeError};
 
 /// Strategy object for turning a path into a parsed manifest.
 ///
@@ -32,8 +33,11 @@ pub trait PackLoader: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`TreeError::ManifestNotFound`] when no manifest exists at the
-    /// resolved location, [`TreeError::ManifestRead`] for IO failures, and
+    /// Returns [`TreeError::ManifestNotFound`] when no manifest exists at
+    /// the resolved location; [`TreeError::ManifestPermissionDenied`],
+    /// [`TreeError::ManifestNotADir`], or [`TreeError::ManifestIo`] for
+    /// categorised IO failures; [`TreeError::ManifestRead`] as a
+    /// back-compat catch-all for unmatched `io::ErrorKind` cases; and
     /// [`TreeError::ManifestParse`] for structural failures.
     fn load(&self, path: &Path) -> Result<PackManifest, TreeError>;
 }
@@ -56,10 +60,27 @@ impl PackLoader for FsPackLoader {
         if !manifest_path.is_file() {
             return Err(TreeError::ManifestNotFound(manifest_path));
         }
-        let raw = std::fs::read_to_string(&manifest_path)
-            .map_err(|e| TreeError::ManifestRead(format!("{}: {e}", manifest_path.display())))?;
+        let raw = match std::fs::read_to_string(&manifest_path) {
+            Ok(s) => s,
+            Err(e) => return Err(map_manifest_read_error(manifest_path, e)),
+        };
         parse(&raw)
             .map_err(|e| TreeError::ManifestParse { path: manifest_path, detail: e.to_string() })
+    }
+}
+
+/// Route a manifest-read [`io::Error`] into the most specific
+/// [`TreeError`] variant available. Unmatched `io::ErrorKind` cases fall
+/// through to [`TreeError::ManifestRead`] for back-compat with v1.2.0+
+/// downstream consumers that may have matched it explicitly.
+fn map_manifest_read_error(manifest_path: PathBuf, e: io::Error) -> TreeError {
+    match e.kind() {
+        io::ErrorKind::NotFound => TreeError::ManifestNotFound(manifest_path),
+        io::ErrorKind::PermissionDenied => {
+            TreeError::ManifestPermissionDenied { path: manifest_path }
+        }
+        _ if is_not_a_directory(&e) => TreeError::ManifestNotADir { path: manifest_path },
+        _ => TreeError::ManifestIo { path: manifest_path, source: e },
     }
 }
 

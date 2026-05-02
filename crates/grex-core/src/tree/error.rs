@@ -5,11 +5,31 @@
 //! surface means adding a new loader backend (IPC, in-memory, http) in a
 //! future slice stays non-breaking.
 
+use std::io;
 use std::path::PathBuf;
 
 use thiserror::Error;
 
 use crate::git::GitError;
+
+/// MSRV-safe ENOTDIR detection. `io::ErrorKind::NotADirectory` stabilised
+/// in Rust 1.83 but the workspace MSRV is pinned at 1.79. Detect via the
+/// raw OS error code instead: POSIX `ENOTDIR` = 20, Windows
+/// `ERROR_DIRECTORY` = 267.
+///
+/// Used by the manifest loader to route OS-level "not a directory"
+/// failures into [`TreeError::ManifestNotADir`] without requiring a MSRV
+/// bump.
+#[must_use]
+pub fn is_not_a_directory(err: &io::Error) -> bool {
+    match err.raw_os_error() {
+        #[cfg(unix)]
+        Some(20) => true,
+        #[cfg(windows)]
+        Some(267) => true,
+        _ => false,
+    }
+}
 
 /// Errors raised during a pack-tree walk.
 ///
@@ -24,8 +44,51 @@ pub enum TreeError {
     ManifestNotFound(PathBuf),
 
     /// The manifest file existed but could not be read from disk.
+    ///
+    /// Catch-all fallback for `io::ErrorKind` cases that do not match a
+    /// categorised variant. Prefer [`TreeError::ManifestPermissionDenied`],
+    /// [`TreeError::ManifestNotADir`], or [`TreeError::ManifestIo`] when
+    /// the producer can route via `io::Error::kind()` /
+    /// [`is_not_a_directory`]. Retained for back-compat: v1.2.0+
+    /// downstream consumers may have matched this variant explicitly.
     #[error("failed to read pack manifest: {0}")]
     ManifestRead(String),
+
+    /// Manifest existed but the OS denied read access (POSIX `EACCES` /
+    /// Windows `ERROR_ACCESS_DENIED`). Operator-actionable: chmod /
+    /// icacls to grant the running user read on the file.
+    #[error("permission denied reading pack manifest at `{path}`")]
+    ManifestPermissionDenied {
+        /// On-disk location of the unreadable manifest.
+        path: PathBuf,
+    },
+
+    /// Manifest path resolved to a non-directory entry where a directory
+    /// was expected (or the parent of the manifest path is not a
+    /// directory). Distinct from [`TreeError::ManifestNotFound`] — the
+    /// path exists but has the wrong type. Surfaces as `ENOTDIR` /
+    /// `ERROR_DIRECTORY` on the producer side; detection routed through
+    /// [`is_not_a_directory`] for MSRV 1.79 compatibility.
+    #[error("manifest path `{path}` is not a directory (or has wrong type)")]
+    ManifestNotADir {
+        /// On-disk location whose type prevented manifest read.
+        path: PathBuf,
+    },
+
+    /// Generic IO failure reading a manifest, preserving the underlying
+    /// [`io::Error`] for log routing without forcing the caller to
+    /// re-open the file. The catch-all path before the loader falls
+    /// through to [`TreeError::ManifestRead`] for kinds that don't match
+    /// a categorised variant.
+    #[error("I/O error reading pack manifest at `{path}`: {source}")]
+    ManifestIo {
+        /// On-disk location of the manifest whose read failed.
+        path: PathBuf,
+        /// Underlying OS error preserved for the [`std::error::Error`]
+        /// source chain.
+        #[source]
+        source: io::Error,
+    },
 
     /// The manifest file was read but did not parse as a valid `pack.yaml`.
     #[error("failed to parse pack manifest at `{path}`: {detail}")]
@@ -285,5 +348,75 @@ mod tests {
             err.to_string(),
             "manifest path '../escape' escapes parent boundary: child path escapes parent root",
         );
+    }
+
+    #[test]
+    fn test_tree_error_manifest_permission_denied_display() {
+        let err = TreeError::ManifestPermissionDenied {
+            path: PathBuf::from("/repos/code/.grex/pack.yaml"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "permission denied reading pack manifest at `/repos/code/.grex/pack.yaml`",
+        );
+    }
+
+    #[test]
+    fn test_tree_error_manifest_not_a_dir_display() {
+        let err = TreeError::ManifestNotADir { path: PathBuf::from("/repos/code/.grex/pack.yaml") };
+        assert_eq!(
+            err.to_string(),
+            "manifest path `/repos/code/.grex/pack.yaml` is not a directory (or has wrong type)",
+        );
+    }
+
+    #[test]
+    fn test_tree_error_manifest_io_display_and_source() {
+        use std::error::Error as _;
+
+        let underlying = io::Error::other("disk on fire");
+        let err = TreeError::ManifestIo {
+            path: PathBuf::from("/repos/code/.grex/pack.yaml"),
+            source: underlying,
+        };
+        assert_eq!(
+            err.to_string(),
+            "I/O error reading pack manifest at `/repos/code/.grex/pack.yaml`: disk on fire",
+        );
+        // The `#[source]` attribute MUST preserve the underlying io::Error
+        // so consumers can walk the chain and recover the original kind.
+        let source = err.source().expect("ManifestIo carries a source");
+        let downcast = source.downcast_ref::<io::Error>().expect("source downcasts to io::Error");
+        assert_eq!(downcast.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn test_is_not_a_directory_helper_matches_platform_code() {
+        // Platform-specific raw_os_error() codes for ENOTDIR. The helper
+        // is the MSRV-1.79-safe substitute for io::ErrorKind::NotADirectory
+        // (stabilised only in 1.83).
+        #[cfg(unix)]
+        {
+            let e = io::Error::from_raw_os_error(20);
+            assert!(is_not_a_directory(&e), "POSIX ENOTDIR (20) must be detected");
+        }
+        #[cfg(windows)]
+        {
+            let e = io::Error::from_raw_os_error(267);
+            assert!(is_not_a_directory(&e), "Windows ERROR_DIRECTORY (267) must be detected");
+        }
+    }
+
+    #[test]
+    fn test_is_not_a_directory_helper_rejects_unrelated_codes() {
+        // PermissionDenied and NotFound must not be misclassified as
+        // ENOTDIR — the loader routes them to other variants.
+        let perm = io::Error::from(io::ErrorKind::PermissionDenied);
+        assert!(!is_not_a_directory(&perm));
+        let nf = io::Error::from(io::ErrorKind::NotFound);
+        assert!(!is_not_a_directory(&nf));
+        // Synthetic io::Error without any raw_os_error must be rejected.
+        let other = io::Error::other("no os code");
+        assert!(!is_not_a_directory(&other));
     }
 }
