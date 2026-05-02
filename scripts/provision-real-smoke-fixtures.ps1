@@ -102,9 +102,12 @@ $Fixtures = @(
                       'pseudo-marker-b.txt', 'LICENSE')
     },
     @{
-        Name      = 'grex-test-broken-manifest'
-        Required  = @('README.md', '.grex/pack.yaml', '.gitignore',
-                      'pseudo-ignored-dir/marker.txt', 'pseudo-data.txt')
+        Name           = 'grex-test-broken-manifest'
+        Required       = @('README.md', '.grex/pack.yaml', '.gitignore',
+                           'pseudo-ignored-dir/marker.txt', 'pseudo-data.txt')
+        # Paths that the fixture's own .gitignore would exclude from `git add -A`.
+        # We force-add these explicitly so re-provisions stay idempotent.
+        ForceAddPaths  = @('pseudo-ignored-dir/marker.txt')
     }
 )
 
@@ -189,6 +192,20 @@ function Invoke-Provision {
     if (-not (Test-Path -LiteralPath (Join-Path $seedDir '.git'))) {
         Invoke-Native -Exe 'git' -ArgList @('init', '-b', 'main') -Cwd $seedDir | Out-Null
         Invoke-Native -Exe 'git' -ArgList @('add', '-A') -Cwd $seedDir | Out-Null
+
+        # Force-add any paths the fixture's own .gitignore would have excluded.
+        # Required for fixtures like grex-test-broken-manifest, whose pack
+        # intentionally ignores a directory that still must reach the GH side.
+        if ($Fixture.ContainsKey('ForceAddPaths')) {
+            foreach ($rel in $Fixture.ForceAddPaths) {
+                $abs = Join-Path $seedDir $rel
+                if (-not (Test-Path -LiteralPath $abs)) {
+                    throw "ForceAddPath missing on disk: $rel (in $seedDir)"
+                }
+                Invoke-Native -Exe 'git' -ArgList @('add', '-f', '--', $rel) -Cwd $seedDir | Out-Null
+            }
+        }
+
         Invoke-Native -Exe 'git' -ArgList @(
             'commit', '-m', "chore: seed $name fixture for real-smoke harness"
         ) -Cwd $seedDir | Out-Null
