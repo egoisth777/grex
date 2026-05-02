@@ -1,7 +1,9 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.6 SHIPPED)` (immediately below). Active branch: `main @ b067997` (squash-merge of PR #65 `feat-v1.2.6 → main`). Tag `v1.2.6` on `origin`. All 4 crates live on crates.io at 1.2.6. v1.2.6 cycle: COMPLETE. Next up: v1.3.0 arch 4-round review BEFORE OpenSpec lock (per task #14).
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.3.0 SHIPPED MILESTONE)` (immediately below). Active branch: `main @ 52caf59` (squash-merge of PR #66 `feat-v1.3.0 → main`). Tag `v1.3.0` on `origin`. All 4 crates live on crates.io at 1.3.0. v1.3.0 milestone cycle: COMPLETE. Behavior contract FROZEN per `.omne/cfg/freeze-v1.3.0.md` (13 STABLE contracts). Deferrals to v1.4.0: `PackLock::acquire` (sync) + `Scheduler::permits` + `DEFAULT_MANAGED_GITIGNORE_PATTERNS` removals + plugin-API freeze (currently UNSTABLE per doc-comment).
+
+**v1.3.0 SHIPPED MILESTONE 2026-05-02 on `main` (squash commit `52caf59`, PR #66).** SemVer = MINOR (per maintainer rule 6 — strictly additive: new `--pack` clap alias on `sync`/`serve`/`migrate-lockfile`/`teardown`, additive JSON envelope dual-emit `workspace`+`pack`, `MCP SyncParams` gains `pack` field with `pack.or(workspace)` precedence, additive `ExecCtx<'a>::pack` field). Existing `--workspace` continues to work; usage emits one-time deprecation warning to stderr (target `grex::cli::deprecation`); removal scheduled for v2.0.0. `grex doctor --json` envelope nests inner report under `report` so the top-level can carry `workspace`+`pack` (inner shape stays byte-equal to MCP `doctor` — parity test asserts CLI[`report`] == MCP body). `grex-cli` pulls `serde_json` with feature `preserve_order` so the `serde_json::json!({...})` macro respects source-order keys, satisfying the byte-stable-order contract. Plugin-API marked UNSTABLE in `crates/grex-core/src/plugin/mod.rs` doc-comment + `grex-plugins-builtin` description suffix; freeze deferred to v1.4.0. Behavior contract freeze: 13 STABLE contracts FROZEN per `.omne/cfg/freeze-v1.3.0.md`. Lean: NONE (rule 8 simple exemption — pure CLI surface + serde shims + freeze annotations; zero new algorithmic behavior). 5 existing theorems remain on `[propext]` / no-axioms; axiom budget unchanged at 9 bridge / 4 types / 0 model. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.3.0`.
 
 **v1.2.6 SHIPPED 2026-05-02 on `main` (squash commit `b067997`, PR #65).** SemVer = PATCH. Three additive deliverables: (1) `TreeError` variant split — new variants `ManifestPermissionDenied`, `ManifestNotADir`, `ManifestIo` under `#[non_exhaustive]` replace overloaded `ManifestRead` routing in `tree/loader.rs`; (2) cap-std snapshot hardening — `tree/walker.rs`, `tree/quarantine.rs`, `tree/consent.rs` migrated to capability-rooted `Dir::open_subpath` resolution, eliminating TOCTOU + path-escape vectors at the kernel level; (3) Working-tree drift fix — `.gitignore` adds `**/.grex/` + statusline-probe patterns, new `.gitattributes` pins LF cross-platform with CRLF override for shell scripts, new one-shot `scripts/cleanup-drift.ps1`, new regression test `crates/grex-core/tests/drift_norec.rs`. Lean: 1 new theorem `walker_subpath_resolution_bounded_by_meta_dir` formalizes the capability-bounded invariant — compiles on **no axioms**. CI axiom-stability gate extended to **5 theorems** (v1.2.4 cancellation + v1.2.5 cycle/cleanup + v1.2.6 subpath/scheduler) — all `[propext]` only or no axioms. Axiom budget unchanged at **9 bridge / 4 types / 0 model**. SSOT manifest.md rewritten for v1.2.x event variants. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.6`.
 
@@ -20,6 +22,80 @@
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
 **v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-02, main — v1.3.0 SHIPPED MILESTONE)
+
+**State:** main @ `52caf59` (squash-merge of PR #66 `feat-v1.3.0 → main`). Tag `v1.3.0` on `origin`. All 4 crates live on crates.io at `1.3.0`. v1.3.0 milestone: COMPLETE. Behavior contract FROZEN per `.omne/cfg/freeze-v1.3.0.md` (13 STABLE contracts). Plugin-API remains UNSTABLE pending v1.4.0 freeze.
+
+**This session shipped (Phase A fixes + Phase B-F end-to-end):**
+
+Phase A (2 upstream gaps caught by W2e tests):
+- Gap 1 fix: `crates/grex/Cargo.toml` pulls `serde_json` with feature `preserve_order` so `serde_json::json!({...})` macro respects source-order keys. Required by the dual-emit byte-stable contract — `workspace` MUST appear before `pack` in `grex ls --json` / `grex doctor --json` output.
+- Gap 2 fix: `crates/grex/src/cli/verbs/doctor.rs::render_json` now wraps the inner report under `report` and adds top-level `workspace` + `pack` keys (identical values, workspace first). Inner `report.{exit_code,worst_severity,findings}` shape stays byte-equal to MCP `doctor::render_report_json` so existing MCP consumers unaffected. Updated module docstring at line 91-94 to reflect dual-emit-is-additive contract.
+- 5 downstream tests updated to navigate the new envelope: `crates/grex/tests/doctor_cli.rs::doctor_json_emits_report_shape`, `crates/grex/tests/json_output.rs::doctor_json_has_findings_array`, `crates/grex/tests/plain_git_children_sync.rs::doctor_after_plain_git_sync_*`, `crates/grex/tests/tracing_to_stderr.rs::doctor_json_stdout_stays_pure_when_tracing_warn_fires`, `crates/grex-mcp/tests/common/mod.rs::assert_parity_doctor_report` (parity helper now compares CLI[`report`] against MCP body).
+
+Phase B (W2e tests green): cli_alias (3/3), cli_json (2/2), sync_pack (4/4), e2e_v1_3_0_readiness_smoke (1/1).
+
+Phase C (validation gate, all green):
+| Check | Result |
+|---|---|
+| `git status --short` count | 27 modified + 4 untracked → 36 staged for commit + 5 man pages regenerated by xtask |
+| `cargo fmt --check --all` | green (exit 0 locally; CI rustfmt edition wrapped 2 long lines — fixed in follow-up commit `4a7c5aa`) |
+| `cargo build --workspace --all-targets` (debug) | green (exit 0) |
+| `cargo build --workspace --all-targets --release` | green (exit 0) |
+| `cargo clippy --workspace --all-targets -- -D warnings` | green (exit 0) |
+| `cargo test --workspace --no-fail-fast` | env-only failures: `dispatch_parallel` + `pack_type_dispatch` need UAC elevation (Windows os err 740) — known carry-forward |
+| `cargo doc --workspace --no-deps` | green (exit 0) |
+| `lake build` | green (exit 0) |
+| Axiom audit (5 theorems) | All `[propext]` only or no axioms |
+| `cargo test -p grex-cli --test cli_alias` | green (3 passed) |
+| `cargo test -p grex-cli --test cli_json` | green (2 passed) |
+| `cargo test -p grex-mcp --test sync_pack` | green (4 passed) |
+| `cargo test -p grex-cli --test sync_e2e e2e_v1_3_0_readiness_smoke` | green (1 passed) |
+
+5 theorems on the v1.3.0 axiom-stability gate (unchanged from v1.2.6):
+- `Grex.Walker.cancellation_terminates_promptly` → `[propext]`
+- `Grex.Walker.sync_meta_no_cycle_infinite_clone` → `[propext]`
+- `Grex.Walker.partial_clone_cleanup_idempotent` → no axioms
+- `Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir` → no axioms
+- `Grex.Scheduler.pool_deadlock_guard_terminates` → `[propext]`
+
+Phase D-E (commit + push + PR + merge + tag + publish):
+- Commit `1d7240e` (feat) + `4a7c5aa` (style fmt fix). Squash-merge to main as `52caf59`.
+- PR #66: https://github.com/egoisth777/grex/pull/66
+- All 8 required CI checks pass (build × 3 OSes, cargo-deny, MCP protocol conformance, man-drift, release-plan, typos). Lean4 proof gate + CodeRabbit + cargo-audit + cargo-machete + coverage + mdbook + msrv + rustdoc all pass. Non-required `code-metrics` flagged the pre-existing `cap_copy_dir_contents` cyclomatic 17 > 15 carry-forward from v1.2.6 — informational, not gating.
+- Tag `v1.3.0` annotated + pushed.
+- 4 crates published in topology order: grex-core → (grex-mcp ‖ grex-plugins-builtin) → grex-cli
+  - https://crates.io/crates/grex-core/1.3.0
+  - https://crates.io/crates/grex-mcp/1.3.0
+  - https://crates.io/crates/grex-plugins-builtin/1.3.0
+  - https://crates.io/crates/grex-cli/1.3.0
+
+**Behavior contract freeze (13 STABLE contracts per `.omne/cfg/freeze-v1.3.0.md`):**
+sync exit codes, JSON envelopes (ls + doctor), lockfile v1.2.0, manifest event log v2, `Event` enum + `Unknown` forward-compat, MCP method shapes, quarantine retention default, cancellation semantics, cap-std capability resolution, scheduler sentinels, force-prune matrix.
+
+**Deferrals to v1.4.0:**
+- `PackLock::acquire` (sync variant) removal — DEFERRED to keep v1.3.0 strictly additive
+- `Scheduler::permits()` removal — DEFERRED
+- `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const removal — DEFERRED
+- Plugin-API freeze — DEFERRED (currently UNSTABLE per `crates/grex-core/src/plugin/mod.rs` lib doc-comment + `grex-plugins-builtin` description suffix)
+
+**Next session pickup:**
+1. SSOT cfg/history.md v1.3.0 SHIPPED MILESTONE entry committed in same session (separate `.omne/` working tree)
+2. v1.4.0 scoping: dead-code purge wave (3 deferred removals) — MAJOR cut consideration vs additive deprecation phase
+3. Plugin-API freeze design pass: lock the public surface for v1.4.0
+4. Optional refactor pass: `cap_copy_dir_contents` cyclomatic ≤ 15 to clear the non-required code-metrics gate
+
+**Open at session end:**
+- main + SSOT main both clean (post this commit)
+- Tag `v1.3.0` on origin
+- Pre-existing carry-forwards: code-metrics `cap_copy_dir_contents` cyclomatic 17 > 15 (carried since v1.2.6); 2 UAC-only Windows test failures
+
+**Carry-forward beyond v1.3.0:**
+- v1.4.0 dead-code purge (3 removals deferred from v1.3.0)
+- v1.4.0 plugin-API freeze
+- Behavior contract change-management: any modification to a STABLE contract requires explicit MAJOR (v2.0.0) bump per freeze table
+- v1.3.0 readiness AC remains on every v1.x ship: sub-pack-under-meta-pack flow + basic action commands e2e smoke (currently `e2e_v1_3_0_readiness_smoke`)
 
 ## Endpoint (2026-05-02, main — v1.2.6 SHIPPED)
 
