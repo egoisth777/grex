@@ -1,7 +1,9 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.5 SHIPPED)` (immediately below). Active branch: `main @ 5aff26e` (squash-merge of PR #64 `feat-v1.2.5 → main`). Tag `v1.2.5` on `origin`. All 4 crates live on crates.io at 1.2.5. v1.2.5 cycle: COMPLETE. Next up: v1.2.6 OpenSpec draft.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.6 SHIPPED)` (immediately below). Active branch: `main @ b067997` (squash-merge of PR #65 `feat-v1.2.6 → main`). Tag `v1.2.6` on `origin`. All 4 crates live on crates.io at 1.2.6. v1.2.6 cycle: COMPLETE. Next up: v1.3.0 arch 4-round review BEFORE OpenSpec lock (per task #14).
+
+**v1.2.6 SHIPPED 2026-05-02 on `main` (squash commit `b067997`, PR #65).** SemVer = PATCH. Three additive deliverables: (1) `TreeError` variant split — new variants `ManifestPermissionDenied`, `ManifestNotADir`, `ManifestIo` under `#[non_exhaustive]` replace overloaded `ManifestRead` routing in `tree/loader.rs`; (2) cap-std snapshot hardening — `tree/walker.rs`, `tree/quarantine.rs`, `tree/consent.rs` migrated to capability-rooted `Dir::open_subpath` resolution, eliminating TOCTOU + path-escape vectors at the kernel level; (3) Working-tree drift fix — `.gitignore` adds `**/.grex/` + statusline-probe patterns, new `.gitattributes` pins LF cross-platform with CRLF override for shell scripts, new one-shot `scripts/cleanup-drift.ps1`, new regression test `crates/grex-core/tests/drift_norec.rs`. Lean: 1 new theorem `walker_subpath_resolution_bounded_by_meta_dir` formalizes the capability-bounded invariant — compiles on **no axioms**. CI axiom-stability gate extended to **5 theorems** (v1.2.4 cancellation + v1.2.5 cycle/cleanup + v1.2.6 subpath/scheduler) — all `[propext]` only or no axioms. Axiom budget unchanged at **9 bridge / 4 types / 0 model**. SSOT manifest.md rewritten for v1.2.x event variants. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.6`.
 
 **v1.2.5 SHIPPED 2026-05-02 on `main` (squash commit `5aff26e`, PR #64).** SemVer = PATCH. A2 partial-clone cleanup (`cleanup_partial_clone` helper invoked from `Skipped`/`Cancelled`/`Failed` arms — closes "half-cloned `<dest>/.git/` poisons next sync" failure mode) + A3 pool deadlock guard (debug-only `PoolInstallDepthGuard` + thread-local `HELD_PACK_LOCKS` counter; `debug_assert!` on `pool.install` re-entry while pack lock held; release builds compile out) + Quarantine GC + `restore` + retention (`prune`/`restore` fns on `grex_core::quarantine`, `RetentionConfig`, `--retain-days N` on `grex sync`, `grex quarantine restore <ts> <basename>`, `grex quarantine gc` subcommands — closes v1.2.1-deferred indefinite retention) + `Event::Unknown` forward-compat variant + `#[non_exhaustive]` retrofit + MSRV bumped to 1.79. Audit log: 2 new `Event` variants `QuarantineRestored` + `QuarantineGCSwept`. Lean: 2 new theorems on `[propext]` only — axiom budget unchanged at 9 bridge / 4 types / 0 model (CI axiom-set gate from v1.2.4 asserts unchanged counts). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.5`.
 
@@ -18,6 +20,65 @@
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
 **v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-02, main — v1.2.6 SHIPPED)
+
+**State:** main @ `b067997` (squash-merge of PR #65 `feat-v1.2.6 → main`). Tag `v1.2.6` on `origin`. All 4 crates live on crates.io at `1.2.6`. SSOT main updated with v1.2.6 SHIPPED block in cfg/history.md (status flipped SHIPPED-pending → SHIPPED, 4 crates.io URLs appended). v1.2.6 cycle complete; next session opens v1.3.0 arch 4-round review BEFORE OpenSpec lock.
+
+**This session shipped (publish + wrap-up):**
+- 4 crates published in topology order: grex-core → (grex-mcp ‖ grex-plugins-builtin) → grex-cli
+  - https://crates.io/crates/grex-core/1.2.6
+  - https://crates.io/crates/grex-mcp/1.2.6
+  - https://crates.io/crates/grex-plugins-builtin/1.2.6
+  - https://crates.io/crates/grex-cli/1.2.6
+- grex-cli published with `--allow-dirty` (runtime artifact `crates/grex/.grex/events.jsonl` in working tree; not in package contents — same pattern as v1.2.4 / v1.2.5)
+- SSOT cfg/history.md v1.2.6 entry flipped from "(PATCH, SHIPPED-pending)" to "(PATCH)" with status SHIPPED + 4 crates.io URLs
+- Tag `v1.2.6` annotated + pushed to `origin`
+- progress.md updated (this entry) on grex main
+
+**Verification (Phase 1 validation table):**
+| Check | Result |
+|---|---|
+| `cargo fmt --check --all` | green (exit 0) |
+| `cargo build --workspace --all-targets` (debug) | green (exit 0) |
+| `cargo build --workspace --all-targets --release` | green (exit 0) |
+| `cargo clippy --workspace --all-targets -- -D warnings` | green (exit 0) |
+| `cargo test --workspace --no-fail-fast` | env-only failures (git-on-PATH spawn under one shell + UAC os err 740 for symlink/spawn binaries on Windows). With git on PATH only 2 UAC carry-forwards remain. New `drift_files_remain_gitignored` test passes. |
+| `cargo doc --workspace --no-deps` | green (exit 0) |
+| `lake build` | green (exit 0) |
+| Axiom audit (5 theorems) | All `[propext]` only or no axioms |
+
+**5 theorems on the v1.2.6 axiom-stability gate:**
+- `Grex.Walker.cancellation_terminates_promptly` → `[propext]`
+- `Grex.Walker.sync_meta_no_cycle_infinite_clone` → `[propext]`
+- `Grex.Walker.partial_clone_cleanup_idempotent` → no axioms
+- `Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir` (NEW v1.2.6) → no axioms
+- `Grex.Scheduler.pool_deadlock_guard_terminates` → `[propext]`
+
+**CI summary on PR #65:** all required checks pass (build / ubuntu-latest / stable, build / windows-latest / stable, build / macos-latest / stable, cargo-deny, MCP protocol conformance (2025-06-18), man-drift (clap_mangen), release-plan (cargo-dist), typos). Non-required `code-metrics` flagged `cap_copy_dir_contents` cyclomatic 17 > 15 — informational, not gating; carry-forward to a future refactor pass. CodeRabbit + Lean4 proof gate also pass.
+
+**Working-tree drift fix landed (v1.2.6 deliverable):**
+- `.gitignore`: added `**/.grex/` + statusline-probe patterns
+- `.gitattributes`: pins LF cross-platform with CRLF override for shell scripts
+- `scripts/cleanup-drift.ps1`: one-shot post-upgrade cleanup
+- `crates/grex-core/tests/drift_norec.rs`: regression test asserting drift files stay gitignored
+
+**Next session pickup:**
+1. v1.3.0 prep: arch 4-round review BEFORE OpenSpec lock (task #14)
+2. Then v1.3.0 OpenSpec triplet (task #9): scope `--workspace` → `--pack` CLI rename + behavior contract freeze + MINOR cut + dead-code removal (`PackLock::acquire` sync variant, `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const)
+3. Rule 8 gate: identify Lean obligations for v1.3.0 BEFORE Rust code (task #11)
+4. Cycle: branch → openspec → Lean → Rust → review → PR → merge → publish (MINOR)
+
+**Open at session end:**
+- main + SSOT main both clean (post-this-commit)
+- Tag `v1.2.6` on origin
+- code-metrics carry-forward: refactor `cap_copy_dir_contents` to drop cyclomatic ≤ 15
+
+**Carry-forward beyond v1.2.6:**
+- v1.3.0 items: `--workspace` → `--pack` rename, contract freeze, MINOR cut, dead-code removal, sub-pack-under-meta-pack flow + basic action commands smoke-test guard
+- v1.3.0 readiness AC: each v1.2.x ship MUST guard sub-pack-under-meta-pack flow + basic action commands via e2e smoke (codified in v1.2.4 tasks Stage 2g — guarded across v1.2.4/5/6)
+- SSOT v2: owners.yaml, topic-reorg cfg/, lib/cfg dedup, history.md aggregator
+- code-metrics: `cap_copy_dir_contents` cyclomatic 17 → ≤ 15 refactor
 
 ## Endpoint (2026-05-02, main — v1.2.5 SHIPPED)
 
