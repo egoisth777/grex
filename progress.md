@@ -1,7 +1,9 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.4 SHIPPED)` (immediately below). Active branch: `main @ 2136bce` (squash-merge of PR #63 `feat-v1.2.4 → main`). Tag `v1.2.4` on `origin`. All 4 crates live on crates.io at 1.2.4. v1.2.4 cycle: COMPLETE. Next up: v1.2.5 OpenSpec draft.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.2.5 SHIPPED)` (immediately below). Active branch: `main @ 5aff26e` (squash-merge of PR #64 `feat-v1.2.5 → main`). Tag `v1.2.5` on `origin`. All 4 crates live on crates.io at 1.2.5. v1.2.5 cycle: COMPLETE. Next up: v1.2.6 OpenSpec draft.
+
+**v1.2.5 SHIPPED 2026-05-02 on `main` (squash commit `5aff26e`, PR #64).** SemVer = PATCH. A2 partial-clone cleanup (`cleanup_partial_clone` helper invoked from `Skipped`/`Cancelled`/`Failed` arms — closes "half-cloned `<dest>/.git/` poisons next sync" failure mode) + A3 pool deadlock guard (debug-only `PoolInstallDepthGuard` + thread-local `HELD_PACK_LOCKS` counter; `debug_assert!` on `pool.install` re-entry while pack lock held; release builds compile out) + Quarantine GC + `restore` + retention (`prune`/`restore` fns on `grex_core::quarantine`, `RetentionConfig`, `--retain-days N` on `grex sync`, `grex quarantine restore <ts> <basename>`, `grex quarantine gc` subcommands — closes v1.2.1-deferred indefinite retention) + `Event::Unknown` forward-compat variant + `#[non_exhaustive]` retrofit + MSRV bumped to 1.79. Audit log: 2 new `Event` variants `QuarantineRestored` + `QuarantineGCSwept`. Lean: 2 new theorems on `[propext]` only — axiom budget unchanged at 9 bridge / 4 types / 0 model (CI axiom-set gate from v1.2.4 asserts unchanged counts). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.5`.
 
 **v1.2.4 SHIPPED 2026-05-02 on `main` (squash commit `2136bce`, PR #63).** SemVer = PATCH. A1 rayon cooperative cancellation token (`Arc<AtomicBool>` observed at each Phase 3 child entry; first `CycleDetected` flips the flag, in-flight siblings short-circuit) + 6 polish items (`visited`→`ancestors` rename, `OwnCycleGuard`→`VisitedInsertGuard`, dead-code purge: `PackLock::acquire` sync variant, `Scheduler::permits()`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const) + 3 new tests (cancellation behavior, T1 diamond, proptest cycle generator) + CI axiom-set gate + v1.3.0-readiness e2e smoke. Lean theorem `cancellation_terminates_promptly` extends `sync_meta_inner_model` with `cancelled : Bool` param; `lake build` green, kernel deps `[propext]` only, 0 `sorry` / 0 `admit`. All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.2.4`.
 
@@ -16,6 +18,42 @@
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
 **v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-02, main — v1.2.5 SHIPPED)
+
+**State:** main @ 5aff26e. Tag `v1.2.5` on `origin`. All 4 crates live on crates.io at `1.2.5`. SSOT main updated with v1.2.5 SHIPPED block in cfg/history.md (status flipped SHIPPED-pending → SHIPPED, 4 crates.io URLs appended). v1.2.5 cycle complete; next session opens v1.2.6 OpenSpec draft.
+
+**This session shipped (publish + wrap-up):**
+- 4 crates published in topology order: grex-core → (grex-mcp ‖ grex-plugins-builtin) → grex-cli
+  - https://crates.io/crates/grex-core/1.2.5
+  - https://crates.io/crates/grex-mcp/1.2.5
+  - https://crates.io/crates/grex-plugins-builtin/1.2.5
+  - https://crates.io/crates/grex-cli/1.2.5
+- grex-cli published with `--allow-dirty` (runtime artifact `crates/grex/.grex/events.jsonl` in working tree; not in package contents — same pattern as v1.2.4)
+- SSOT cfg/history.md v1.2.5 entry flipped from "(PATCH, SHIPPED-pending)" to "(PATCH)" with status SHIPPED + 4 crates.io URLs
+
+**Verification:**
+- Lean theorems: kernel deps `[propext]` only — axiom budget unchanged (9 bridge / 4 types / 0 model); CI axiom-set gate from v1.2.4 asserts these counts
+- A2 cleanup: `cleanup_partial_clone` invoked from all three failure arms (Skipped/Cancelled/Failed)
+- A3 guard: `debug_assert!` only — release builds compile to zero overhead
+- Quarantine: `restore`/`gc` subcommands + `--retain-days` flag + 2 new audit-log Event variants
+- `Event::Unknown` + `#[non_exhaustive]`: forward-compat for future v1.2.x variant additions without breaking deserializers
+- All v1.2.x manifests/lockfiles continue to resolve unchanged (1.2.5 is additive)
+
+**Next session pickup:**
+1. Open v1.2.6 OpenSpec triplet at `openspec/changes/feat-v1.2.6-*/` (scope: TreeError variant split + cap-std snapshot hardening + stale manifest.md doc + working-tree drift root cause)
+2. Rule 8 gate: identify Lean obligations for v1.2.6 BEFORE Rust code
+3. Cycle: branch → openspec → Lean → Rust → review → PR → merge → publish
+
+**Open at session end:**
+- Working-tree drift carry-forward to v1.2.6 (statusline-probe.txt, crates/grex/.grex/) — investigate root cause then
+- main + SSOT main both clean (post-this-commit)
+
+**Carry-forward beyond v1.2.5:**
+- v1.2.6 items: TreeError split, cap-std hardening, stale manifest.md, drift root cause
+- v1.3.0 items: --workspace→--pack rename, contract freeze, MINOR cut, dead-code removal (`PackLock::acquire` sync variant, `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const)
+- v1.3.0 readiness AC: each v1.2.x ship MUST guard sub-pack-under-meta-pack flow + basic action commands via e2e smoke (codified in v1.2.4 tasks Stage 2g)
+- SSOT v2: owners.yaml, topic-reorg cfg/, lib/cfg dedup, history.md aggregator
 
 ## Endpoint (2026-05-02, main — v1.2.4 SHIPPED)
 
