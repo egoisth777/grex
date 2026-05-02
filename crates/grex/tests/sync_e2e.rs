@@ -706,3 +706,114 @@ fn e2e_force_bypasses_skip_on_hash() {
         forced_skips, r_force.steps
     );
 }
+
+// ---------------------------------------------------------------------------
+// v1.2.4 — v1.3.0 readiness smoke
+//
+// Per maintainer directive (CLAUDE.md "v1.3.0 readiness AC"): each v1.2.x
+// PATCH must guard (i) sub-pack-under-meta-pack flow + (ii) basic action
+// commands (sync, ls, doctor, migrate-lockfile). This test drives the
+// shared `build_fixture()` 3-level tree (root meta → a, b meta → c) and
+// exercises each library entry point the corresponding CLI verb routes
+// through:
+//
+//   * `grex sync`              → `grex_core::sync::run`
+//   * `grex ls`                → `grex_core::build_ls_tree`
+//   * `grex doctor`            → `grex_core::doctor::run_doctor`
+//   * `grex migrate-lockfile`  → `grex_core::lockfile::migrate_v1_1_1::migrate_v1_1_1_lockfile`
+//
+// Driving the library functions (not the binary) keeps the smoke test
+// fast (<30s) and matches the convention used by every other test in
+// this file.
+// ---------------------------------------------------------------------------
+
+/// v1.3.0 readiness smoke — exercises the four basic verbs the AC names:
+/// `sync`, `ls`, `doctor`, `migrate-lockfile`. The fixture is the shared
+/// 3-level tree (root meta → a, b meta → c), so the sub-pack-under-meta-pack
+/// flow is also covered.
+///
+/// **Deliberately out of scope** (each guarded by its own dedicated test
+/// elsewhere; do NOT broaden this smoke):
+///   * `grex add`           — covered by `add_*` integration tests.
+///   * `grex import`        — covered by `import_*` integration tests.
+///   * `grex fmt`           — covered by `fmt_*` integration tests.
+///   * `grex events purge`  — covered by `events_purge_*` tests.
+///   * `grex init`          — covered by `init_*` tests.
+///
+/// The smoke test's job is to fail loudly if the four named verbs ever
+/// regress on the canonical sub-pack-under-meta-pack workspace; it is NOT
+/// a comprehensive test for any individual verb.
+#[test]
+fn e2e_v1_3_0_readiness_smoke() {
+    use grex_core::build_ls_tree;
+    use grex_core::doctor::{run_doctor, DoctorOpts};
+    use grex_core::lockfile::migrate_v1_1_1::migrate_v1_1_1_lockfile;
+
+    let f = build_fixture();
+
+    // (1) sync — drives the meta-pack containing sub-pack `b/c` flow.
+    let opts = SyncOptions::new().with_workspace(Some(f.workspace.clone()));
+    let report = run(&f.root, &opts).expect("readiness: sync ok");
+    assert!(report.halted.is_none(), "readiness: halted {:?}", report.halted);
+
+    // Sub-pack-under-meta-pack invariants on disk: `b` is the meta
+    // sub-pack under root, and `c` is its declarative sub-pack. Both
+    // working trees must materialize, and `c`'s mkdir must have run.
+    let b_ws = f.workspace.join("b");
+    let c_ws = f.workspace.join("b").join("c");
+    assert!(b_ws.join(".grex/pack.yaml").is_file(), "readiness: sub-meta b checked out");
+    assert!(c_ws.join(".grex/pack.yaml").is_file(), "readiness: sub-pack b/c checked out");
+    assert!(f.c_target_dir.is_dir(), "readiness: sub-pack b/c declarative action ran");
+
+    // Lockfile present + valid — at minimum carries entries for the
+    // declarative leaf packs `a` and `c`.
+    let lockfile = f.root.join(".grex/grex.lock.jsonl");
+    let body = fs::read_to_string(&lockfile).expect("readiness: lockfile written");
+    assert!(body.contains("\"id\":\"a\""), "readiness: pack a in lockfile: {body}");
+    assert!(body.contains("\"id\":\"c\""), "readiness: sub-pack c in lockfile: {body}");
+
+    // (2) ls — read-only tree listing must surface the sub-pack.
+    let tree = build_ls_tree(&f.root).expect("readiness: ls ok");
+    // Locate the `b` sub-meta and confirm `c` hangs off it.
+    fn find<'a>(nodes: &'a [grex_core::LsNode], name: &str) -> Option<&'a grex_core::LsNode> {
+        nodes.iter().find(|n| n.name == name)
+    }
+    let root_node = tree.tree.first().expect("readiness: ls has root");
+    let b_node = find(&root_node.children, "b").expect("readiness: b under root");
+    let c_node = find(&b_node.children, "c").expect("readiness: c under b (sub-pack flow)");
+    assert!(c_node.error.is_none(), "readiness: c node loaded clean: {c_node:?}");
+
+    // (3) doctor — read-only health report. Must return without IO error.
+    // Exit code is content-dependent (fixture clones lack remote.origin
+    // → potential warnings); the smoke check is "did the orchestrator
+    // run end-to-end and produce a report".
+    let report = run_doctor(&f.workspace, &DoctorOpts::default()).expect("readiness: doctor ok");
+    // The orchestrator emits at least one finding per default check
+    // (manifest-schema, gitignore-sync, on-disk-drift), so a non-empty
+    // report proves doctor walked the workspace end-to-end rather than
+    // returning a stub. Note: `Severity` has only `Ok | Warning | Error`
+    // — no internal-error variant; hard I/O failures arrive via
+    // `Result::Err(DoctorError)` and would have tripped the `expect`
+    // above. So the strongest available structural assertion is
+    // exit_code ∈ {0,1,2}, which proves the severity roll-up did not
+    // produce an out-of-range value.
+    assert!(
+        !report.findings.is_empty(),
+        "readiness: doctor must produce at least one finding (info or warn) on a sub-pack-under-meta-pack workspace: {report:?}"
+    );
+    let code = report.exit_code();
+    assert!(
+        (0..=2).contains(&code),
+        "readiness: doctor exit_code must be 0/1/2 (no internal error), got {code}: {report:?}"
+    );
+
+    // (4) migrate-lockfile — idempotent on a v1.2.0 lockfile that sync
+    // just wrote. Must report `already_migrated == true` with zero
+    // rewritten entries (no-op path).
+    let mig = migrate_v1_1_1_lockfile(&f.workspace).expect("readiness: migrate ok");
+    assert!(
+        mig.already_migrated,
+        "readiness: migrate must be no-op on freshly-written v1.2.0 lockfile: {mig:?}"
+    );
+    assert_eq!(mig.migrated_entries, 0, "readiness: zero entries rewritten on no-op: {mig:?}");
+}

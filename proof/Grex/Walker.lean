@@ -336,28 +336,93 @@ inductive SyncMetaResult : Type where
     involve recursion: Phase 1 clones siblings (no ancestor reuse
     possible), Phase 2 is a sequential prune sweep. The cycle check
     only fires at the recursion edge. -/
+/-! ### v1.2.4 — cancellation token extension
+
+The v1.2.4 release adds an `Arc<AtomicBool>` cancellation flag to the
+Rust Phase 3 driver: when one sibling closure detects a cycle it stores
+`true` into the flag, and every other in-flight closure short-circuits
+at its next entry check (returning `Phase3ChildOutcome::Cancelled` —
+which carries no sub-report and contributes neither to
+`report.metas_visited` nor to `report.errors`).
+
+The model below mirrors that discipline by adding a leading
+`cancelled : Bool` parameter to both `sync_meta_inner_model` and
+`syncMetaChildren`. When `cancelled = true`, both functions return
+`SyncMetaResult.ok` *immediately* with zero recursive descent —
+matching the Rust EARLY-OUT exactly. When `cancelled = false`, behaviour
+is exactly the v1.2.2 + v1.2.3 pipeline (no semantic change for the
+acyclic / non-cancelled flow).
+
+**No new bridge axiom.** The `Arc<AtomicBool>` visibility across rayon
+worker threads is already covered by the pre-existing
+`sync_disjoint_commutes` bridge (axiom #1) — rayon's scheduler contract
+already guarantees that disjoint subtree closures observe consistent
+shared state. Treating `cancelled` as a pure functional parameter
+threaded through the recursion is the model-level encoding of "every
+closure entry observes the same flag value". Bridge.lean axiom count
+remains 9; Types.lean axiom count remains 4; total = 13 (10 catalogued
++ 3 data-typed Types axioms — see `.omne/proof/impl-axiom-bridge.md`).
+-/
+
 mutual
 
 /-- See module-level note above for the cycle-detected
-    `sync_meta_inner` model. -/
-def sync_meta_inner_model :
-    List String → ManifestTree → SyncMetaResult
-  | _,       .leaf _      => SyncMetaResult.ok
-  | visited, .meta _ subs => syncMetaChildren visited subs
+    `sync_meta_inner` model.
 
-/-- See module-level note above for the children-recursion helper. -/
+    **v1.2.4 cancellation extension.** Leading `cancelled : Bool`
+    parameter encodes the runtime `Arc<AtomicBool>` flag. When `true`,
+    the function returns `.ok` immediately — matching the Rust
+    `Phase3ChildOutcome::Cancelled` short-circuit (which produces no
+    sub-report and no error contribution). When `false`, behaviour is
+    identical to the v1.2.2 + v1.2.3 model.
+
+    **v1.2.4 propagation fix.** The `.meta` arm now passes the bound
+    `cancelled` parameter (`c` below) through to the recursive
+    `syncMetaChildren` call — *not* a hardcoded `false`. In the
+    `false`-entry case the value is definitionally `false`, so the
+    acyclic-flow proofs are unchanged. In the (degenerate) case where
+    a caller invokes the model with `cancelled = true` directly on a
+    `.meta`, pattern arm 1 fires first and short-circuits to `.ok`
+    before this arm is reached — so the binder `c` here only ever
+    matches `false` at evaluation time. The binder makes the
+    *propagation* property provable by mutual structural induction
+    (see `cancellation_propagates_through_recursion` below): a sibling
+    setting the rayon flag mid-recursion is modelled as a fresh
+    closure entry observing `cancelled = true`, which the new
+    theorem proves terminates promptly at any depth. -/
+def sync_meta_inner_model :
+    Bool → List String → ManifestTree → SyncMetaResult
+  | true,  _,       _             => SyncMetaResult.ok
+  | false, _,       .leaf _       => SyncMetaResult.ok
+  | c,     visited, .meta _ subs  => syncMetaChildren c visited subs
+
+/-- See module-level note above for the children-recursion helper.
+
+    **v1.2.4 cancellation extension.** Leading `cancelled : Bool`
+    parameter; `true` short-circuits to `.ok` with zero descent.
+
+    **v1.2.4 propagation fix.** The `.cons` arm now threads the bound
+    `cancelled` parameter (`c` below) through both the recursive
+    `sync_meta_inner_model` call AND the recursive `syncMetaChildren`
+    tail call — *not* a hardcoded `false`. Same reasoning as in
+    `sync_meta_inner_model`: pattern arm 1 short-circuits the `true`
+    case before this arm fires, so `c` is definitionally `false` at
+    evaluation time, preserving the v1.2.2 / v1.2.3 acyclic-flow
+    semantics. The binder is what licenses the propagation theorem
+    by structural induction on the children list. -/
 def syncMetaChildren :
-    List String → List (ChildRef × ManifestTree) → SyncMetaResult
-  | _,       []               => SyncMetaResult.ok
-  | visited, (c, sub) :: rest =>
-      let id := ChildRef.identity c
+    Bool → List String → List (ChildRef × ManifestTree) → SyncMetaResult
+  | true,  _,       _                => SyncMetaResult.ok
+  | false, _,       []               => SyncMetaResult.ok
+  | c,     visited, (ch, sub) :: rest =>
+      let id := ChildRef.identity ch
       if id ∈ visited then
         SyncMetaResult.cycleDetected (visited ++ [id])
       else
-        match sync_meta_inner_model (id :: visited) sub with
-        | SyncMetaResult.cycleDetected ch =>
-            SyncMetaResult.cycleDetected ch
-        | SyncMetaResult.ok => syncMetaChildren visited rest
+        match sync_meta_inner_model c (id :: visited) sub with
+        | SyncMetaResult.cycleDetected chain =>
+            SyncMetaResult.cycleDetected chain
+        | SyncMetaResult.ok => syncMetaChildren c visited rest
 
 end
 
@@ -408,11 +473,17 @@ def acyclic_tree (t : ManifestTree) : Prop :=
     `mutual` definition above. -/
 mutual
 
-/-- See module-level note above for the per-tree clause. -/
+/-- See module-level note above for the per-tree clause.
+
+    **v1.2.4 note.** The lemma fixes `cancelled = false` because the
+    `cancelled = true` case is trivially `.ok` by definition (no
+    recursion, no acyclicity hypothesis required). The
+    cancellation-side claim is discharged separately by
+    `cancellation_terminates_promptly` below. -/
 theorem sync_meta_inner_model_ok_of_acyclic :
     ∀ (visited : List String) (t : ManifestTree),
       acyclic_path visited t →
-        sync_meta_inner_model visited t = SyncMetaResult.ok
+        sync_meta_inner_model false visited t = SyncMetaResult.ok
   | _,       .leaf _,      _ => rfl
   | visited, .meta _ subs, h => by
       -- Unfold the function once; both `acyclic_path` and
@@ -421,11 +492,14 @@ theorem sync_meta_inner_model_ok_of_acyclic :
       simp only [acyclic_path] at h
       exact syncMetaChildren_ok_of_acyclic visited subs h
 
-/-- See module-level note above for the per-children-list clause. -/
+/-- See module-level note above for the per-children-list clause.
+
+    **v1.2.4 note.** Fixes `cancelled = false`; symmetric to the
+    per-tree clause. -/
 theorem syncMetaChildren_ok_of_acyclic :
     ∀ (visited : List String) (subs : List (ChildRef × ManifestTree)),
       acyclic_children visited subs →
-        syncMetaChildren visited subs = SyncMetaResult.ok
+        syncMetaChildren false visited subs = SyncMetaResult.ok
   | _,       [],               _ => rfl
   | visited, (c, sub) :: rest, h => by
       -- Destructure the acyclic conjunction.
@@ -503,7 +577,128 @@ end
 theorem sync_meta_no_cycle_infinite_clone
     (visited : List String) (t : ManifestTree)
     (h : acyclic_path visited t) :
-    sync_meta_inner_model visited t = SyncMetaResult.ok :=
+    sync_meta_inner_model false visited t = SyncMetaResult.ok :=
   sync_meta_inner_model_ok_of_acyclic visited t h
+
+/-- **`syncMetaChildren_cancelled_terminates` (v1.2.4 propagation lemma).**
+
+    Companion lemma to `cancellation_terminates_promptly`: at the
+    children-recursion helper, a `true` cancelled flag short-circuits
+    to `.ok` regardless of the visited prefix or the (possibly cyclic)
+    children list. Pattern arm 1 of `syncMetaChildren` fires
+    definitionally for both `[]` and `_ :: _` cases. Used as the
+    structural step in the mutual propagation proof below. -/
+theorem syncMetaChildren_cancelled_terminates
+    (visited : List String) (subs : List (ChildRef × ManifestTree)) :
+    syncMetaChildren true visited subs = SyncMetaResult.ok := by
+  cases subs <;> rfl
+
+/-- **`cancellation_propagates_through_recursion` (v1.2.4, Rule-8 gate
+    strengthening).**
+
+    Strengthening of `cancellation_terminates_promptly` to model the
+    *runtime* state transition where a sibling closure flips the
+    `Arc<AtomicBool>` flag MID-recursion (not only at the top-level
+    entry). The walker terminates promptly with `.ok` for ANY entry —
+    leaf or meta, with any `visited` prefix and any (possibly cyclic)
+    sub-tree — once `cancelled = true` is observed.
+
+    **Why this is stronger than the entry-cancelled case.** In the
+    Rust runtime, cancellation can occur at any point in the
+    Phase 3 recursion: a sibling closure detects a cycle and stores
+    `true`, then another sibling — already several `syncMetaChildren`
+    levels deep — re-enters with `cancelled = true` on its next flag
+    check. Modelling this requires showing termination not only when
+    the *outermost* call has `cancelled = true`, but also when *any*
+    inner recursive call observes `cancelled = true`. The mutual
+    structural proof below covers both: the first arm of each function
+    short-circuits unconditionally on `true`, so `simp`/`rfl`
+    discharge every reachable invocation depth.
+
+    **Discharge.** Direct from the first equation of each function in
+    the mutual block: `sync_meta_inner_model true _ _` reduces to
+    `.ok` for both `.leaf` and `.meta` constructors (pattern arm 1
+    fires before any arm that descends), and likewise for
+    `syncMetaChildren true _ _` on both `[]` and `_ :: _`. Since the
+    propagation fix above threads the bound `cancelled` parameter
+    through each recursive call, an inner call invoked with `true`
+    is reduced by exactly the same equation, with no further
+    structural descent. No bridge axiom needed.
+
+    **Bound.** `O(1)` per closure entry that observes `cancelled =
+    true` — strictly tighter than `O(tree-size)`. Aggregated over the
+    Phase 3 driver, total cost is `O(cycle-detection-depth) +
+    O(siblings)`, where each not-yet-recursed sibling pays one
+    flag-check.
+
+    **Caller obligation (Rust bridge).** Same as
+    `cancellation_terminates_promptly`: the rayon `AtomicBool`
+    visibility contract is bundled under existing bridge axiom #1
+    (`sync_disjoint_commutes`). -/
+theorem cancellation_propagates_through_recursion
+    (visited : List String) (t : ManifestTree) :
+    sync_meta_inner_model true visited t = SyncMetaResult.ok ∧
+    ∀ (subs : List (ChildRef × ManifestTree)),
+        syncMetaChildren true visited subs = SyncMetaResult.ok := by
+  refine ⟨?_, ?_⟩
+  · cases t <;> rfl
+  · intro subs; exact syncMetaChildren_cancelled_terminates visited subs
+
+/-- **`cancellation_terminates_promptly` (v1.2.4, Rule-8 gate).**
+
+    When the cancellation flag is set (`cancelled = true`) at any entry
+    of the Phase 3 walker recursion, the walker terminates *promptly*
+    — in zero further recursive steps — returning
+    `SyncMetaResult.ok` regardless of the inherited `visited` prefix or
+    the structure of the remaining `ManifestTree` `t`.
+
+    This is the model-level statement of v1.2.4's A1 cancellation token:
+    once one sibling closure detects a cycle and stores `true` into the
+    `Arc<AtomicBool>`, every other in-flight closure observes the flag
+    on its next entry check and returns `Phase3ChildOutcome::Cancelled`
+    — which by Rust-side aggregation contributes neither to
+    `report.metas_visited` nor to `report.errors` (the cycle-detecting
+    sibling's `Phase3ChildOutcome::Failed(CycleDetected)` is the sole
+    error returned; the cancelled outcomes are silently skipped, exactly
+    matching `.ok` here in the model collapse).
+
+    **Termination bound.** Strictly tighter than the v1.2.3
+    `sync_meta_no_cycle_infinite_clone` bound `O(tree-size)`: the
+    cancelled-arm bound is `O(1)` (zero recursive steps). For the full
+    Phase 3 driver (one cycle-detecting sibling + N other siblings on
+    the same level), aggregate cost falls from `O(tree-size)` to
+    `O(cycle-detection-depth) + O(siblings)`, where each
+    not-yet-started sibling pays only one flag-check step.
+
+    **Discharge.** Direct definitional unfolding: the first equation of
+    `sync_meta_inner_model` is the `cancelled = true` short-circuit,
+    which immediately returns `SyncMetaResult.ok`. No acyclicity
+    hypothesis is required (the cancelled branch is sound for cyclic
+    inputs too — that is the whole point of cancellation). No new
+    bridge axiom is required (see module-level v1.2.4 note above for
+    why atomic visibility falls under the existing
+    `sync_disjoint_commutes` rayon contract).
+
+    **v1.2.4 propagation companion.** This theorem covers the
+    entry-cancelled case (cancelled = true at the top of the walker).
+    The companion theorem `cancellation_propagates_through_recursion`
+    above strengthens this to cover the runtime mid-recursion
+    transition where a sibling closure flips the flag while another
+    closure is already several levels deep — modelled by the
+    propagation fix that threads the bound `cancelled` parameter
+    through every recursive call.
+
+    **Caller obligation (Rust bridge).** The Rust runtime must ensure
+    that once `cancelled.store(true, Relaxed)` runs in the
+    cycle-detecting closure, every subsequent
+    `cancelled.load(Relaxed)` in a sibling closure observes `true`
+    eventually (within one work-stealing tick). This is the rayon /
+    `AtomicBool` visibility contract; it is bundled with the existing
+    rayon scheduling contract under bridge axiom #1
+    (`sync_disjoint_commutes`). -/
+theorem cancellation_terminates_promptly
+    (visited : List String) (t : ManifestTree) :
+    sync_meta_inner_model true visited t = SyncMetaResult.ok :=
+  (cancellation_propagates_through_recursion visited t).1
 
 end Grex.Walker

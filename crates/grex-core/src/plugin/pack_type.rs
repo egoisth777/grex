@@ -50,16 +50,25 @@ use crate::fs::gitignore;
 use crate::pack::{Action, PackManifest};
 use crate::pack_lock::{PackLock, PackLockError};
 
-/// Default managed-gitignore patterns every pack contributes on top of
-/// its authored `x-gitignore` list. `feat-m6-2` adds `.grex-lock` so the
-/// per-pack lock file does not appear in `git status`.
+/// Deprecated back-compat shim for the default managed-gitignore
+/// patterns contributed by grex itself (`.grex-lock` as of feat-m6-2).
+///
+/// Prefer [`default_managed_gitignore_patterns`] — this const is kept
+/// only to preserve the v1.2.x public surface for downstream consumers
+/// and will be removed in v1.3.0.
+#[deprecated(
+    since = "1.2.4",
+    note = "use `default_managed_gitignore_patterns()` accessor; this const will be removed in v1.3.0"
+)]
 pub const DEFAULT_MANAGED_GITIGNORE_PATTERNS: &[&str] = &[crate::pack_lock::PACK_LOCK_FILE_NAME];
 
-/// Accessor used by integration tests to pin the default managed-gitignore
-/// patterns contributed by grex itself (`.grex-lock` as of feat-m6-2).
+/// Accessor used by integration tests and `doctor` checks to pin the
+/// default managed-gitignore patterns contributed by grex itself
+/// (`.grex-lock` as of feat-m6-2) on top of each pack's authored
+/// `x-gitignore` list.
 #[must_use]
 pub fn default_managed_gitignore_patterns() -> &'static [&'static str] {
-    DEFAULT_MANAGED_GITIGNORE_PATTERNS
+    &[crate::pack_lock::PACK_LOCK_FILE_NAME]
 }
 
 /// Translate a [`PackLockError`] into the [`ExecError`] taxonomy used by
@@ -78,11 +87,13 @@ pub(crate) fn map_pack_lock_err(e: PackLockError) -> ExecError {
             ExecError::FsIo { op: "pack_lock", path, detail: source.to_string() }
         }
         PackLockError::Busy { path } => {
-            // `Busy` from `PackLock::acquire` only fires on same-process
-            // re-entry (cross-process contention blocks on fd-lock and
-            // never surfaces here). A re-entry is by definition a cycle
-            // in the pack-type dispatch graph — map to the existing
-            // MetaCycle variant so callers match a single shape.
+            // `Busy` from `PackLock::acquire_async` (v1.2.4+ canonical
+            // entry point; the legacy `PackLock::acquire` is a deprecated
+            // shim) only fires on same-process re-entry (cross-process
+            // contention blocks on fd-lock and never surfaces here). A
+            // re-entry is by definition a cycle in the pack-type
+            // dispatch graph — map to the existing MetaCycle variant so
+            // callers match a single shape.
             //
             // Strip the `.grex-lock` sidecar filename so the error
             // refers to the pack root the recursion re-entered.
@@ -121,9 +132,9 @@ pub(crate) async fn acquire_scheduler_permit(
 /// tests that don't drive the outer cycle-detection set): the lock
 /// layer falls back to the blocking mutex path, which is safe for
 /// non-recursive entry.
-pub(crate) fn register_self_in_visited(ctx: &ExecCtx<'_>) -> Result<OwnCycleGuard, ExecError> {
+pub(crate) fn register_self_in_visited(ctx: &ExecCtx<'_>) -> Result<VisitedInsertGuard, ExecError> {
     let Some(visited) = ctx.visited_meta else {
-        return Ok(OwnCycleGuard {
+        return Ok(VisitedInsertGuard {
             visited: None,
             canonical: std::path::PathBuf::new(),
             owns: false,
@@ -173,23 +184,23 @@ pub(crate) fn register_self_in_visited(ctx: &ExecCtx<'_>) -> Result<OwnCycleGuar
         return Err(ExecError::MetaCycle { path: canonical });
     }
     drop(guard);
-    Ok(OwnCycleGuard { visited: Some(visited.clone()), canonical, owns: true })
+    Ok(VisitedInsertGuard { visited: Some(visited.clone()), canonical, owns: true })
 }
 
 /// RAII guard that pops the pack root from the visited set on drop.
 /// Field names use leading `_` to allow unused-variable patterns at
-/// call sites (`let _own_cycle_guard = …`) without triggering lints.
+/// call sites (`let _visited_insert_guard = …`) without triggering lints.
 ///
 /// `owns = false` means some caller (typically `recurse_one`) owns
 /// the entry and will remove it; we skip the pop to avoid racing a
 /// sibling's insert.
-pub(crate) struct OwnCycleGuard {
+pub(crate) struct VisitedInsertGuard {
     visited: Option<crate::execute::MetaVisitedSet>,
     canonical: std::path::PathBuf,
     owns: bool,
 }
 
-impl Drop for OwnCycleGuard {
+impl Drop for VisitedInsertGuard {
     fn drop(&mut self) {
         if !self.owns {
             return;
@@ -251,7 +262,7 @@ pub(crate) fn apply_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<
     // Defaults first so the generated block is stable regardless of
     // authored content; de-dup if an author explicitly lists one of the
     // defaults (e.g. `.grex-lock`) so we never double-emit.
-    let mut merged: Vec<&str> = DEFAULT_MANAGED_GITIGNORE_PATTERNS.to_vec();
+    let mut merged: Vec<&str> = vec![crate::pack_lock::PACK_LOCK_FILE_NAME];
     for p in &authored {
         if !merged.contains(&p.as_str()) {
             merged.push(p.as_str());
