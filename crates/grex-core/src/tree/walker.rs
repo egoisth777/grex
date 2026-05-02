@@ -1318,9 +1318,16 @@ fn normalize_dest_key(p: &Path) -> PathBuf {
 
 /// v1.2.5 (W1) — symlink-secure recursive removal helper.
 ///
-/// Walks `path` using [`std::fs::symlink_metadata`] at every level so a
-/// symlink encountered mid-traversal is unlinked AS a symlink rather
-/// than followed into an unrelated tree.
+/// **v1.2.6 (W2)**: re-routed through a `cap_std::fs::Dir` capability
+/// rooted at `path.parent()`. The recursion stays inside the capability
+/// the kernel resolved at open time — a `..` segment, an absolute child
+/// path, or a symlink whose target escapes the capability is rejected by
+/// cap-std with `PermissionDenied` (matches the Lean theorem
+/// `walker_subpath_resolution_bounded_by_meta_dir`).
+///
+/// Walks `path` using [`cap_std::fs::Dir::symlink_metadata`] at every
+/// level so a symlink encountered mid-traversal is unlinked AS a symlink
+/// rather than followed into an unrelated tree.
 ///
 /// Behaviour:
 /// * `path` does not exist (`NotFound`) → `Ok(())` (idempotent).
@@ -1330,8 +1337,38 @@ fn normalize_dest_key(p: &Path) -> PathBuf {
 /// * `path` is a directory → recurse into each child via
 ///   `symlink_metadata`, then `remove_dir(path)`.
 /// * `path` is a regular file → `remove_file`.
+/// * `path` has no parent (filesystem root) → fall back to the
+///   pre-v1.2.6 ambient `std::fs` walk; cap-std cannot model a rooted
+///   capability there.
 fn safe_remove_tree(path: &Path) -> std::io::Result<()> {
-    let meta = match std::fs::symlink_metadata(path) {
+    // Pre-flight existence probe so a missing path is a no-op even when
+    // the parent itself is missing (idempotent contract).
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    let (parent, name) = match (path.parent(), path.file_name()) {
+        (Some(p), Some(n)) if !p.as_os_str().is_empty() => (p, std::path::PathBuf::from(n)),
+        _ => return safe_remove_tree_ambient(path),
+    };
+    let parent_dir = match cap_std::fs::Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+    {
+        Ok(d) => d,
+        // Parent vanished or is unreadable — treat as idempotent success
+        // (mirrors the NotFound short-circuit above).
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    cap_remove_tree(&parent_dir, &name)
+}
+
+/// v1.2.6 (W2) — capability-rooted recursive remove. `parent_dir` is a
+/// `cap_std::fs::Dir` and `name` is a relative entry under it. cap-std
+/// rejects `..` traversal and symlink escape; this recursion can only
+/// touch entries provably under `parent_dir`'s root capability.
+fn cap_remove_tree(parent_dir: &cap_std::fs::Dir, name: &Path) -> std::io::Result<()> {
+    let meta = match parent_dir.symlink_metadata(name) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
@@ -1341,6 +1378,44 @@ fn safe_remove_tree(path: &Path) -> std::io::Result<()> {
         // Unlink the symlink itself. On Windows, a symlink to a dir
         // requires `remove_dir`; `remove_file` covers file/symlink_file.
         // Try file-style first, then fall back to dir-style.
+        return match parent_dir.remove_file(name) {
+            Ok(()) => Ok(()),
+            Err(_) => parent_dir.remove_dir(name),
+        };
+    }
+    if ft.is_dir() {
+        // Open the child as its own capability so the recursion stays
+        // bound to it (cap-std refuses `..` escape relative to the
+        // child handle, not just the parent). Drop the handle BEFORE
+        // calling `parent_dir.remove_dir(name)` — on Windows an
+        // outstanding open handle to a directory blocks removal with
+        // ERROR_SHARING_VIOLATION.
+        {
+            let child_dir = parent_dir.open_dir(name)?;
+            for entry in child_dir.entries()? {
+                let entry = entry?;
+                let child_name = std::path::PathBuf::from(entry.file_name());
+                cap_remove_tree(&child_dir, &child_name)?;
+            }
+        }
+        return parent_dir.remove_dir(name);
+    }
+    // Regular file or other unlinkable entry.
+    parent_dir.remove_file(name)
+}
+
+/// v1.2.6 (W2) — fallback ambient walk used when `path` has no usable
+/// parent (filesystem root). This path keeps the pre-v1.2.6 contract
+/// for the degenerate case; production call sites always have a parent
+/// (the per-meta dest is `<meta>/<basename>`).
+fn safe_remove_tree_ambient(path: &Path) -> std::io::Result<()> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let ft = meta.file_type();
+    if ft.is_symlink() {
         return match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(_) => std::fs::remove_dir(path),
@@ -1350,11 +1425,10 @@ fn safe_remove_tree(path: &Path) -> std::io::Result<()> {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let child = entry.path();
-            safe_remove_tree(&child)?;
+            safe_remove_tree_ambient(&child)?;
         }
         return std::fs::remove_dir(path);
     }
-    // Regular file or other unlinkable entry.
     std::fs::remove_file(path)
 }
 

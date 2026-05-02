@@ -267,8 +267,8 @@ jobs:
         working-directory: proof
         shell: bash
         run: |
-          # v1.2.4 + v1.2.5 Rule-8 gate (.omne/schemas/rules.md §8):
-          # the four correctness theorems below MUST depend on at most
+          # v1.2.4 + v1.2.5 + v1.2.6 Rule-8 gate (.omne/schemas/rules.md §8):
+          # the five correctness theorems below MUST depend on at most
           # `propext` — no bridge axiom, no model placeholder, no
           # Classical.choice. Any drift means a downstream proof leaked
           # a hypothesis-level dependency and the Lean model no longer
@@ -278,6 +278,7 @@ jobs:
           # v1.2.4: Grex.Walker.sync_meta_no_cycle_infinite_clone
           # v1.2.5: Grex.Walker.partial_clone_cleanup_idempotent
           # v1.2.5: Grex.Scheduler.pool_deadlock_guard_terminates
+          # v1.2.6: Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir
           #
           # Mechanism: write a probe file that imports the proof library
           # and emits `#print axioms` for each theorem, run it through
@@ -296,6 +297,7 @@ jobs:
           #print axioms Grex.Walker.cancellation_terminates_promptly
           #print axioms Grex.Walker.sync_meta_no_cycle_infinite_clone
           #print axioms Grex.Walker.partial_clone_cleanup_idempotent
+          #print axioms Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir
           #print axioms Grex.Scheduler.pool_deadlock_guard_terminates
           EOF
           # Run the probe via `lake env lean --run` semantics: plain
@@ -310,6 +312,7 @@ jobs:
             "Grex.Walker.cancellation_terminates_promptly"
             "Grex.Walker.sync_meta_no_cycle_infinite_clone"
             "Grex.Walker.partial_clone_cleanup_idempotent"
+            "Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir"
             "Grex.Scheduler.pool_deadlock_guard_terminates"
           )
           fail=0

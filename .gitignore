@@ -9,6 +9,10 @@ Cargo.lock.bak
 grex.jsonl
 **/grex.jsonl
 
+# grex runtime state directory (per-workspace .grex/ — events.jsonl etc.)
+.grex/
+**/.grex/
+
 # editors
 .vscode/
 .idea/
@@ -26,3 +30,7 @@ proof/lake-packages/
 
 # mdBook site output (grex-doc/ — built artefact, deployed by doc-site.yml)
 grex-doc/book/
+
+# CWD-fossil files dropped by external tooling (cc-cfg statusline probes, etc.)
+claude-statusline-probe.txt
+*statusline-probe*.txt

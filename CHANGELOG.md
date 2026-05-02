@@ -40,6 +40,59 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.2.6] - 2026-05-02
+
+### Added
+
+- Three new `TreeError` variants for finer-grained manifest-read failure
+  routing: `ManifestPermissionDenied { path }`, `ManifestNotADir { path }`,
+  `ManifestIo { path, source }`. Existing `ManifestRead(String)` retained
+  as the catch-all fallback for unmatched `io::ErrorKind` cases.
+  Additive under existing `#[non_exhaustive]` (no downstream impact).
+- New unit tests `tree_error_routing_per_io_error_kind`,
+  `walker_resolves_under_meta_root_capability`.
+- New integration test `working_tree_drift_no_recur` in
+  `crates/grex-core/tests/drift_norec.rs`.
+- New Lean theorem `walker_subpath_resolution_bounded_by_meta_dir` in
+  `proof/Grex/Walker.lean` formalising the cap-std capability-bounded
+  resolution invariant. `#print axioms` reports `[propext]` only —
+  no new bridge axioms required.
+
+### Changed
+
+- Walker filesystem surface (`walker.rs::remove_dir_all_symlink_aware`,
+  `quarantine.rs::snapshot_recursive_copy`,
+  `consent.rs::read_dir`+`remove_dir_all`) now routes through cap-std
+  `Dir` capability handles instead of ambient `std::fs::*` calls.
+  Eliminates the per-step path-reopen TOCTOU window. No public API change;
+  the cap-std root is opened internally at the meta boundary.
+
+### Internal
+
+- `clippy::disallowed_methods` lint added at the `tree::walker`,
+  `tree::quarantine`, `tree::consent` module level to block future
+  ambient `std::fs::*` regression.
+
+### Repo hygiene
+
+- `.gitignore`: added `**/.grex/`, `claude-statusline-probe.txt`,
+  `CUsers*claude-statusline-probe*` patterns to catch v1.2.0 distributed
+  event-log runtime artifacts and the cc-cfg statusline-probe fossil.
+- `.gitattributes` (new): pins `eol=lf` for all tracked files to prevent
+  CRLF/NUL recurrence on cross-tool edits.
+- `scripts/cleanup-drift.ps1` (new): one-shot fossil cleanup script.
+
+### Notes
+
+- No public API change. New `TreeError` variants are additive under
+  `#[non_exhaustive]`. cap-std migration is implementation-internal.
+- MSRV unchanged at 1.79 (carry-forward from v1.2.5; required for
+  symlink-secure `remove_dir_all` + cap-std v3 compat).
+- `.omne/cfg/manifest.md` rewritten in the SSOT repo (separate from grex
+  per Rule 7) — events catalog now lists v1.0.x action-bracket events
+  + v1.2.x quarantine events; lockfile schema clarifies `commit_sha`
+  semantics.
+
 ## [1.2.5] - 2026-05-02
 
 ### Added

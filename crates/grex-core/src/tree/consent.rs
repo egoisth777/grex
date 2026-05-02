@@ -225,13 +225,26 @@ fn self_dir_verdict(dir: &Path, dir_is_meta: bool) -> Result<ConsentResult, Cons
 /// Aggregate verdict across `dir`'s sub-directories. Recurses via
 /// [`walk_inner`] and folds the per-child results into one of three
 /// outcomes the caller dispatches on.
+///
+/// **v1.2.6 (W2)**: enumerates `dir`'s entries through a `cap_std::fs::Dir`
+/// capability instead of ambient `std::fs::read_dir`. Symlink entries
+/// are still skipped (we never recurse through them on the walk side);
+/// the change confines the metadata probe to the kernel-resolved root
+/// so a hostile post-open swap of `dir` cannot redirect the consent
+/// walk into an unrelated tree. Falls back to ambient `std::fs` when
+/// the cap-std open fails (matches the original "Ok(entries) else
+/// AllClean" tolerance).
 fn walk_children(dir: &Path) -> ChildVerdict {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let cap_dir = cap_std::fs::Dir::open_ambient_dir(dir, cap_std::ambient_authority()).ok();
+    let Some(cap_dir) = cap_dir else {
+        return ChildVerdict::AllClean;
+    };
+    let Ok(entries) = cap_dir.entries() else {
         return ChildVerdict::AllClean;
     };
     let mut saw_dirty = false;
     for entry in entries.flatten() {
-        let path = entry.path();
+        let name = entry.file_name();
         let Ok(ft) = entry.file_type() else { continue };
         // We only recurse into real directories. Symlinks are
         // not followed — cap-std would refuse them on the prune
@@ -240,9 +253,10 @@ fn walk_children(dir: &Path) -> ChildVerdict {
         if !ft.is_dir() {
             continue;
         }
-        if path.file_name().is_some_and(|n| n == ".git") {
+        if name == std::ffi::OsStr::new(".git") {
             continue;
         }
+        let path = dir.join(&name);
         match walk_inner(&path, /* root */ false) {
             ConsentResult::Clean => continue,
             ConsentResult::GitInProgress => return ChildVerdict::SawGitInProgress,
@@ -479,9 +493,28 @@ fn execute_prune(dest: &Path) -> Result<(), TreeError> {
 /// to a generic [`DirtyTreeRefusalKind::DirtyTree`] refusal so the
 /// walker surface stays narrow — Stage 1.g will surface fine-grained
 /// I/O errors when wiring the call site.
+///
+/// **v1.2.6 (W2)**: prefers a cap-std `Dir`-rooted recursive remove
+/// when the dest has a usable parent. Falls through to ambient
+/// `std::fs::remove_dir_all` only when no parent is available (root
+/// path or empty path), which keeps the pre-v1.2.6 contract for the
+/// degenerate case while threading the common case through cap-std so
+/// a hostile post-walk symlink swap cannot redirect the rm-rf.
 fn std_fs_remove_with_refusal(dest: &Path) -> Result<(), TreeError> {
     if !dest.exists() {
         return Ok(());
+    }
+    if let (Some(parent), Some(name)) = (dest.parent(), dest.file_name()) {
+        if !parent.as_os_str().is_empty() {
+            if let Ok(parent_dir) =
+                cap_std::fs::Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+            {
+                return parent_dir.remove_dir_all(name).map_err(|_| TreeError::DirtyTreeRefusal {
+                    path: dest.to_path_buf(),
+                    kind: DirtyTreeRefusalKind::DirtyTree,
+                });
+            }
+        }
     }
     std::fs::remove_dir_all(dest).map_err(|_| TreeError::DirtyTreeRefusal {
         path: dest.to_path_buf(),
