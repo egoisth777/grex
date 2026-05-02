@@ -647,7 +647,11 @@ pub fn sync_meta(
     opts: &SyncMetaOptions,
     prune_candidates: &[PathBuf],
 ) -> Result<SyncMetaReport, TreeError> {
-    sync_meta_inner(meta_dir, backend, loader, opts, prune_candidates, /* depth */ 0)
+    // v1.2.2 cycle detection — the root frame starts with an empty
+    // ancestor chain. `sync_meta_inner` extends it per recursion edge
+    // (Phase 3) using clone-per-child so disjoint sibling branches do
+    // not pollute each other's ancestor view.
+    sync_meta_inner(meta_dir, backend, loader, opts, prune_candidates, /* depth */ 0, &[])
 }
 
 fn sync_meta_inner(
@@ -657,6 +661,7 @@ fn sync_meta_inner(
     opts: &SyncMetaOptions,
     prune_candidates: &[PathBuf],
     depth: usize,
+    visited: &[String],
 ) -> Result<SyncMetaReport, TreeError> {
     let manifest = loader.load(meta_dir)?;
     // v1.2.0 Stage 1.c gate — every recursion frame re-runs the
@@ -678,7 +683,11 @@ fn sync_meta_inner(
 
     phase1_sync_children(&pool, meta_dir, &manifest, backend, opts, &mut report);
     phase2_prune_orphans(meta_dir, prune_candidates, opts, &mut report);
-    phase3_recurse(&pool, meta_dir, &manifest, backend, loader, opts, depth, &mut report);
+    // v1.2.2 — cycle detection short-circuits the recursion edge with
+    // an `Err` return so the caller sees `Err(CycleDetected)` directly
+    // rather than burying it in `report.errors`. Cycles are catastrophic
+    // (would otherwise clone forever); fail-loud here, NOT fold-into-report.
+    phase3_recurse(&pool, meta_dir, &manifest, backend, loader, opts, depth, visited, &mut report)?;
 
     Ok(report)
 }
@@ -961,6 +970,61 @@ enum Phase3ChildOutcome {
 // would just shuffle the wiring without removing it. Localised allow
 // instead — the call-site is private to this module and threads
 // ownership of `pool` cleanly.
+/// Per-child Phase 3 dispatch — runs inside the rayon pool. Mirrors
+/// the `phase1_handle_child` / `sync_disjoint_commutes` discipline
+/// (one discoverable Rust contract anchor per sibling unit of work)
+/// and keeps `phase3_recurse` itself under the clippy line cap.
+///
+/// v1.2.2 — cycle detection lives here. `visited` is the ancestor
+/// identity chain from root down to (but excluding) this child. If
+/// the child's identity (`pack_identity_for_child`) is already in
+/// the chain we surface `TreeError::CycleDetected` with the chain
+/// extended by the recurring identity. Otherwise the child's
+/// identity is appended (clone-per-child, A.1) so disjoint sibling
+/// branches do not pollute each other's view.
+fn phase3_handle_child(
+    meta_dir: &Path,
+    child: &ChildRef,
+    backend: &dyn GitBackend,
+    loader: &dyn PackLoader,
+    opts: &SyncMetaOptions,
+    next_depth: usize,
+    visited: &[String],
+) -> Phase3ChildOutcome {
+    let dest = meta_dir.join(child.effective_path());
+    if !dest.join(".grex").join("pack.yaml").is_file() {
+        return Phase3ChildOutcome::Skipped;
+    }
+    // v1.2.2 cycle detection — discharges the
+    // `sync_meta_no_cycle_infinite_clone` Lean theorem in
+    // `proof/Grex/Walker.lean`. Identity is `url@ref` so the same
+    // repo at two different refs is two distinct packs (intentional:
+    // matches `pack_identity_for_child` and the build_graph cycle
+    // detector at `graph_build.rs:174`). A single `Vec<String>`
+    // doubles as O(depth) contains-check AND deterministic chain for
+    // error display — depth is bounded ~5-10 in practice so linear
+    // scan beats hashing here.
+    let id = pack_identity_for_child(child);
+    if visited.iter().any(|v| v == &id) {
+        let mut chain = visited.to_vec();
+        chain.push(id);
+        return Phase3ChildOutcome::Failed(TreeError::CycleDetected { chain });
+    }
+    // Clone-per-child (A.1): each rayon iteration owns its own
+    // ancestor view, so disjoint sibling branches do not see each
+    // other on the path. A diamond where two siblings legitimately
+    // depend on the same descendant is therefore not a cycle.
+    let mut child_visited = visited.to_vec();
+    child_visited.push(id);
+    // Empty `prune_candidates` for the sub-meta — 1.h supplies the
+    // sub-meta's distributed lockfile read via the same caller
+    // pathway when it lands.
+    match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth, &child_visited) {
+        Ok(sub) => Phase3ChildOutcome::Recursed(sub),
+        Err(e) => Phase3ChildOutcome::Failed(e),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn phase3_recurse(
     pool: &rayon::ThreadPool,
@@ -970,15 +1034,16 @@ fn phase3_recurse(
     loader: &dyn PackLoader,
     opts: &SyncMetaOptions,
     depth: usize,
+    visited: &[String],
     report: &mut SyncMetaReport,
-) {
+) -> Result<(), TreeError> {
     if !opts.recurse {
-        return;
+        return Ok(());
     }
     let next_depth = depth + 1;
     if let Some(cap) = opts.max_depth {
         if next_depth > cap {
-            return;
+            return Ok(());
         }
     }
     let outcomes: Vec<Phase3ChildOutcome> = pool.install(|| {
@@ -986,27 +1051,39 @@ fn phase3_recurse(
             .children
             .par_iter()
             .map(|child| {
-                let dest = meta_dir.join(child.effective_path());
-                if !dest.join(".grex").join("pack.yaml").is_file() {
-                    return Phase3ChildOutcome::Skipped;
-                }
-                // Empty `prune_candidates` for the sub-meta — 1.h
-                // supplies the sub-meta's distributed lockfile read
-                // via the same caller pathway when it lands.
-                match sync_meta_inner(&dest, backend, loader, opts, &[], next_depth) {
-                    Ok(sub) => Phase3ChildOutcome::Recursed(sub),
-                    Err(e) => Phase3ChildOutcome::Failed(e),
-                }
+                phase3_handle_child(meta_dir, child, backend, loader, opts, next_depth, visited)
             })
             .collect()
     });
+    // Cycle errors short-circuit (catastrophic — clone-storm risk);
+    // every other outcome folds into the report per the existing
+    // fail-loud-but-continue policy.
+    let mut first_cycle_idx: Option<usize> = None;
     for outcome in outcomes {
         match outcome {
             Phase3ChildOutcome::Skipped => {}
             Phase3ChildOutcome::Recursed(sub) => report.merge(sub),
-            Phase3ChildOutcome::Failed(e) => report.errors.push(e),
+            Phase3ChildOutcome::Failed(e) => {
+                // v1.2.2 fix: surface all sibling cycles in
+                // report.errors; first cycle returned as short-circuit
+                // Err per fail-loud policy.
+                if matches!(e, TreeError::CycleDetected { .. }) && first_cycle_idx.is_none() {
+                    first_cycle_idx = Some(report.errors.len());
+                }
+                report.errors.push(e);
+            }
         }
     }
+    if let Some(idx) = first_cycle_idx {
+        // Clone the cycle to return as the short-circuit Err while
+        // leaving the original entry (and any sibling cycles) recorded
+        // in report.errors for the caller to log/print.
+        let TreeError::CycleDetected { chain } = &report.errors[idx] else {
+            unreachable!("first_cycle_idx points at a CycleDetected variant by construction");
+        };
+        return Err(TreeError::CycleDetected { chain: chain.clone() });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1499,5 +1576,194 @@ mod tests {
         // Spot-check the chain: root sees `tools`, tools sees `foo`.
         assert_eq!(destinations_under(&report, &root_dir), vec![tools_dir.clone()]);
         assert_eq!(destinations_under(&report, &tools_dir), vec![foo_dir.clone()]);
+    }
+
+    // -----------------------------------------------------------------
+    // v1.2.2 — `sync_meta` cycle detection (Phase 3 recursion edge).
+    //
+    // Discharges `sync_meta_no_cycle_infinite_clone` in
+    // `proof/Grex/Walker.lean`. Identity scheme is `url@ref` so the
+    // same repo at two different refs is NOT a cycle (covered by the
+    // positive case below).
+    // -----------------------------------------------------------------
+
+    /// `child_with_ref` mirrors `child()` but lets the caller pin a
+    /// specific ref so two children of the same URL get distinct
+    /// `pack_identity_for_child` strings (`url@ref`).
+    fn child_with_ref(url: &str, path: &str, r#ref: &str) -> ChildRef {
+        ChildRef {
+            url: url.to_string(),
+            path: Some(path.to_string()),
+            r#ref: Some(r#ref.to_string()),
+        }
+    }
+
+    /// Self-loop: pack A declares itself (same URL, no ref) as a child.
+    /// The walker must abort with `CycleDetected` rather than recurse
+    /// infinitely. The chain reports the recurring identity.
+    #[test]
+    fn cycle_self_loop_aborts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Lay out a self-pointing pack: `<root>/a` is a sub-meta whose
+        // own manifest declares a child with the SAME URL/ref pointing
+        // back at itself (placed at a fresh path so on-disk dest is
+        // distinct, but pack identity collides).
+        let a_dir = root_dir.join("a");
+        let a_self_dir = a_dir.join("a");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&a_self_dir, "a");
+        let url_a = "https://example.com/a.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            // `a` declares itself — same url, same (empty) ref → same identity.
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_a, "a")]))
+            .with(a_self_dir.clone(), meta_manifest_with("a", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let err =
+            sync_meta(&root_dir, &backend, &loader, &opts, &[]).expect_err("self-loop must abort");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                // Chain must end in the recurring identity. The
+                // outermost frame is the root (no entry — root carries
+                // no `url` identity in this scheme), so chain length
+                // is 2: `[a@, a@]` — first push when entering `a` from
+                // root, second push when `a` tries to enter itself.
+                assert!(
+                    chain.iter().any(|s| s == &format!("url:{url_a}@")),
+                    "chain must mention the cyclic url, got {chain:?}"
+                );
+                assert!(chain.len() >= 2, "self-loop chain has at least 2 entries: {chain:?}");
+                let last = chain.last().unwrap();
+                let first_match = chain.iter().position(|s| s == last).unwrap();
+                assert!(
+                    first_match < chain.len() - 1,
+                    "the recurring identity must appear earlier in the chain: {chain:?}"
+                );
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    /// Three-node cycle: A → B → C → A. The walker must abort with
+    /// `CycleDetected` and the chain must list all three identities
+    /// in the order they were entered, ending with the recurring A.
+    #[test]
+    fn cycle_three_node_aborts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        // Disk layout: root → a → b → c → a (the second `a` lives at
+        // a fresh on-disk slot so classification succeeds; identity
+        // collision is what trips the cycle detector, not the path).
+        let a_dir = root_dir.join("a");
+        let b_dir = a_dir.join("b");
+        let c_dir = b_dir.join("c");
+        let a2_dir = c_dir.join("a");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        make_sub_meta_on_disk(&c_dir, "c");
+        make_sub_meta_on_disk(&a2_dir, "a");
+        let url_a = "https://example.com/a.git";
+        let url_b = "https://example.com/b.git";
+        let url_c = "https://example.com/c.git";
+        let loader = InMemLoader::new()
+            .with(root_dir.clone(), meta_manifest_with("root", vec![child(url_a, "a")]))
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child(url_b, "b")]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![child(url_c, "c")]))
+            // c re-declares a → cycle.
+            .with(c_dir.clone(), meta_manifest_with("c", vec![child(url_a, "a")]))
+            .with(a2_dir.clone(), meta_manifest_with("a", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let err = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect_err("three-node cycle must abort");
+        match err {
+            TreeError::CycleDetected { chain } => {
+                // Chain order: a, b, c, a (in entry order, with the
+                // recurring `a` appended at the cycle-detection point).
+                let id_a = format!("url:{url_a}@");
+                let id_b = format!("url:{url_b}@");
+                let id_c = format!("url:{url_c}@");
+                assert_eq!(chain, vec![id_a.clone(), id_b, id_c, id_a]);
+            }
+            other => panic!("expected CycleDetected, got {other:?}"),
+        }
+    }
+
+    /// Same repo, two refs — NOT a cycle. Pack A declares two children
+    /// pointing at the SAME URL but pinned to different refs (`main`
+    /// vs `dev`). Identity scheme is `url@ref` so the two siblings
+    /// have distinct identities and the walker must succeed.
+    #[test]
+    fn same_repo_two_refs_no_cycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let main_dir = root_dir.join("b-main");
+        let dev_dir = root_dir.join("b-dev");
+        make_sub_meta_on_disk(&main_dir, "b-main");
+        make_sub_meta_on_disk(&dev_dir, "b-dev");
+        let url_b = "https://example.com/b.git";
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with(
+                    "root",
+                    vec![
+                        child_with_ref(url_b, "b-main", "main"),
+                        child_with_ref(url_b, "b-dev", "dev"),
+                    ],
+                ),
+            )
+            .with(main_dir.clone(), meta_manifest_with("b-main", vec![]))
+            .with(dev_dir.clone(), meta_manifest_with("b-dev", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect("same url at distinct refs is NOT a cycle");
+        // Three metas visited: root + b@main + b@dev.
+        assert_eq!(report.metas_visited, 3);
+        assert!(
+            report.errors.is_empty(),
+            "no errors expected when the two children differ only by ref: {:?}",
+            report.errors
+        );
+    }
+
+    /// Same repo, two refs — NESTED (ancestor-stack) variant. Pack A
+    /// (URL=foo, ref=main) declares pack B (URL=foo, ref=dev) as its
+    /// child. Identity scheme is `url@ref`, so A's identity
+    /// (`url:foo@main`) and B's identity (`url:foo@dev`) differ. The
+    /// cycle detector must NOT trip even though B's URL collides with
+    /// an ancestor on the stack — exercises the path the sibling
+    /// variant above doesn't reach.
+    #[test]
+    fn same_repo_two_refs_nested_no_cycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root_dir = tmp.path().to_path_buf();
+        let a_dir = root_dir.join("a");
+        let b_dir = a_dir.join("b");
+        make_sub_meta_on_disk(&a_dir, "a");
+        make_sub_meta_on_disk(&b_dir, "b");
+        let url_foo = "https://example.com/foo.git";
+        let loader = InMemLoader::new()
+            .with(
+                root_dir.clone(),
+                meta_manifest_with("root", vec![child_with_ref(url_foo, "a", "main")]),
+            )
+            // a (foo@main) declares b (foo@dev) — same URL, different ref.
+            .with(a_dir.clone(), meta_manifest_with("a", vec![child_with_ref(url_foo, "b", "dev")]))
+            .with(b_dir.clone(), meta_manifest_with("b", vec![]));
+        let backend = InMemGit::new();
+        let opts = SyncMetaOptions::default();
+        let report = sync_meta(&root_dir, &backend, &loader, &opts, &[])
+            .expect("nested same-url at distinct refs is NOT a cycle");
+        // Walker must reach depth 2: root → a → b (3 metas).
+        assert_eq!(report.metas_visited, 3, "walker must recurse to depth 2");
+        assert!(
+            report.errors.is_empty(),
+            "no errors expected when ancestor and descendant differ only by ref: {:?}",
+            report.errors
+        );
     }
 }

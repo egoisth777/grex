@@ -43,7 +43,7 @@ pub enum TreeError {
 
     /// A cycle was detected during the walk. `chain` lists the pack URLs (or
     /// paths for the root) from the outermost pack down to the recurrence.
-    #[error("cycle detected in pack graph: {chain:?}")]
+    #[error("{}", display_cycle_detected(chain))]
     CycleDetected {
         /// Ordered chain of pack identities that forms the cycle.
         chain: Vec<String>,
@@ -157,6 +157,17 @@ pub enum DirtyTreeRefusalKind {
     /// recursive consent walk found at least one of its descendants is
     /// dirty. Operator must clean the descendant first.
     SubMetaWithDirtyChildren,
+}
+
+/// Format a [`TreeError::CycleDetected`] message. Renders the chain
+/// arrow-joined for operator legibility (`a → b → c → a`) instead of
+/// the debug-vec rendering. Defensive on empty chains so a malformed
+/// caller cannot panic the error path.
+fn display_cycle_detected(chain: &[String]) -> String {
+    if chain.is_empty() {
+        return "cycle detected in pack graph (empty chain)".to_string();
+    }
+    format!("cycle detected in pack graph: {}", chain.join(" → "))
 }
 
 /// Format a [`TreeError::DirtyTreeRefusal`] message. Extracted so the
