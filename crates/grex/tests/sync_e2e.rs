@@ -308,6 +308,15 @@ fn e2e_cycle_aborts() {
                 chain[..chain.len() - 1].contains(last) || first == last,
                 "last element must repeat earlier in chain (got chain={chain:?})"
             );
+            assert!(
+                chain[0].starts_with("path:"),
+                "B4: chain must start with root path: prefix, got {:?}",
+                chain[0]
+            );
+            assert!(
+                !chain.iter().any(|s| s.ends_with('@')),
+                "B2: no identity should end with trailing @, got {chain:?}"
+            );
         }
         other => panic!("expected SyncError::Tree(TreeError::CycleDetected), got {other:?}"),
     }

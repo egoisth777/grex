@@ -40,7 +40,41 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
-## [1.2.2] - pending
+## [1.2.3] - pending
+
+### Fixed
+
+- `sync_meta` cycle check now fires BEFORE depth-cap early-return in
+  Walker Phase 3. Previously, a cyclic manifest with cycle length
+  exceeding `max_depth` would silently truncate without surfacing
+  `CycleDetected`. Closes B1.
+- `pack_identity_for_child` no longer emits trailing `@` when ref is
+  empty/None. Identities like `url:https://x.git@` are now
+  `url:https://x.git`. Lean model `ChildRef.identity` updated to match.
+  Closes B2.
+- Cycle chain now includes root pack identity (`path:<root_dir>`).
+  Operators see where in the on-disk tree a cycle started, not just
+  child→child→child. Closes B4.
+
+### Added
+
+- 3 new unit tests covering diamond (shared descendant, no cycle),
+  4-node cycle (`A→B→C→D→A`), and nested-prefix cycle (cycle inside
+  acyclic outer arm).
+
+### Migration note (v1.2.2 → v1.2.3)
+
+**If you pattern-match on `TreeError::CycleDetected { chain }`:**
+
+- v1.2.2 chain shape: `["url:<a>@<ref_a>", "url:<b>@<ref_b>", "url:<a>@<ref_a>"]` (children only).
+- v1.2.3 chain shape: `["path:<root_dir>", "url:<a>@<ref_a>", "url:<b>", "url:<a>@<ref_a>"]` (root prefixed; trailing `@` omitted on empty/None ref per B2).
+
+If your code parses chain elements:
+
+- Skip the first element if it starts with `"path:"` (root identity).
+- Do not assume `"@"` separator is always present in `"url:<url>"` elements.
+
+## [1.2.2] - 2026-05-02
 
 ### Fixed
 
@@ -453,7 +487,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/egoisth777/grex/releases/tag/v1.2.3
 [1.2.2]: https://github.com/egoisth777/grex/releases/tag/v1.2.2
 [1.2.0]: https://github.com/egoisth777/grex/releases/tag/v1.2.0
 [1.1.1]: https://github.com/egoisth777/grex/releases/tag/v1.1.1

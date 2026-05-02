@@ -202,6 +202,50 @@ inserted (option A.1 from the design's senior-review). See
 `openspec/changes/feat-v1.2.2-sync-meta-cycle-detection/design.md`
 for the full design rationale.
 
+### v1.2.3 — B1 (depth-cap mask) + B4 (root-identity seeding)
+
+The v1.2.3 release fixes two latent bugs in the v1.2.2 cycle pipeline:
+
+* **B1 — depth-cap mask.** The Rust impl previously checked the
+  configurable `max_depth` limit *before* the cycle check at the recurse
+  edge. On a cyclic input that also exceeded `max_depth`, the recursion
+  would early-return at the depth gate and never report the cycle —
+  masking a real defect with a stop-condition. The fix moves the cycle
+  check to fire FIRST at the recurse edge, before the depth-cap gate.
+
+  *Lean impact: NONE.* The model in this file has no notion of a depth
+  cap — recursion bottoms out structurally at `.leaf _` only. The
+  termination proof is by structural recursion on `ManifestTree`, which
+  is independent of any runtime depth bound. Adding a runtime cap to
+  the Rust impl is a *prefix* of unbounded recursion: if unbounded
+  recursion terminates with `.ok` under the acyclic precondition, then
+  any bounded prefix also terminates (with `.ok` or with a depth-cap
+  early-return that is distinct from `.cycleDetected`). The B1 fix is
+  about *ordering* the two stop-conditions, which the Lean model
+  already enforces by construction: `syncMetaChildren` performs the
+  `if id ∈ visited` check *before* any other recursion-edge action.
+  Therefore the existing theorem covers the v1.2.3 ordering: termination
+  holds for ANY runtime `max_depth` (including bounded), not just
+  unbounded.
+
+* **B4 — root-identity seeding.** The Rust impl previously seeded the
+  Phase 3 cycle check with an empty `visited` set, then inserted each
+  child's identity at the recurse edge. This missed the case where the
+  meta repository's own URL@ref appeared as a transitive child (the
+  root would then be cloned a second time). The fix seeds the initial
+  `visited` with `pack_identity_for_root(root)` so the root's own
+  identity collides on first re-entry.
+
+  *Lean impact: theorem signature generalised.* The v1.2.2 statement
+  fixed `visited = []` at sync_meta entry. The v1.2.3 statement is
+  parametrised over the initial `visited` prefix — it asserts
+  termination under `acyclic_path visited t` for ANY `visited`,
+  which covers both `[]` (v1.2.2) and `[root_id]` (v1.2.3) as
+  instances. The existing safety lemma
+  `sync_meta_inner_model_ok_of_acyclic` is already universally
+  quantified over `visited`, so the generalised theorem discharges
+  with the same one-liner.
+
 The Lean model below mirrors that pipeline at the abstract level:
 
 * `ChildRef.identity` — the URL+ref-keyed identity used by Phase 3's
@@ -227,22 +271,34 @@ precondition is what licenses the conclusion that the result is
 `.ok` (rather than `.cycleDetected`).
 -/
 
-/-- **Identity contract.** `ChildRef.identity` is the v1.2.2 model
-    analogue of the Rust `pack_identity_for_child`:
+/-- **Identity contract.** `ChildRef.identity` is the v1.2.2 / v1.2.3
+    model analogue of the Rust `pack_identity_for_child`:
 
     ```rust
     fn pack_identity_for_child(child: &ChildRef) -> String {
-        let rref = child.r#ref.as_deref().unwrap_or("");
-        format!("url:{}@{}", child.url, rref)
+        match child.r#ref.as_deref() {
+            Some(r) if !r.is_empty() => format!("url:{}@{}", child.url, r),
+            _                        => format!("url:{}", child.url),
+        }
     }
     ```
+
+    **B2 fix (v1.2.3).** When the ref is `None` or the empty string, the
+    trailing `@` is OMITTED. The pre-B2 format always emitted a trailing
+    `@`, which created two distinct identity strings (`url:U@` vs
+    `url:U`) for the same logical pack — defeating the cycle check on
+    manifests that mix explicit-empty and absent refs. The model
+    matches the Rust format exactly so that the two-pack-identity
+    bridge stays a syntactic equality.
 
     Pure definition over `String`s already in scope — no axiom. The
     `url:` prefix is syntactically disjoint from the `path:` prefix
     used by `pack_identity_for_root`, so a hostile manifest cannot
     collide a child URL with the root path. -/
 def ChildRef.identity (c : ChildRef) : String :=
-  "url:" ++ c.url ++ "@" ++ (c.«ref».getD "")
+  match c.«ref» with
+  | some r => if r = "" then "url:" ++ c.url else "url:" ++ c.url ++ "@" ++ r
+  | none   => "url:" ++ c.url
 
 /-- Result of running the cycle-detected `sync_meta_inner` model. The
     Rust counterpart is `Result<SyncMetaReport, TreeError>` where
@@ -389,34 +445,65 @@ theorem syncMetaChildren_ok_of_acyclic :
 
 end
 
-/-- **`sync_meta_no_cycle_infinite_clone` (v1.2.2, Rule-8 gate).**
+/-- **`sync_meta_no_cycle_infinite_clone` (v1.2.2 + v1.2.3, Rule-8 gate).**
 
     Under the precondition that the manifest forest reachable from
-    the input tree is acyclic — every URL@ref identity appears at
-    most once on any root-to-leaf path — the cycle-detected
-    `sync_meta_inner_model` terminates and returns
-    `SyncMetaResult.ok`.
+    the input tree is acyclic w.r.t. an initial `visited` prefix —
+    every URL@ref identity appears at most once on any root-to-leaf
+    path AND none of the identities in `visited` reappears as a
+    descendant — the cycle-detected `sync_meta_inner_model`
+    terminates and returns `SyncMetaResult.ok`.
+
+    **Generalised in v1.2.3 to take an explicit `visited` parameter.**
+    The v1.2.2 statement fixed `visited = []` at sync_meta entry; the
+    v1.2.3 Rust impl seeds `visited` with
+    `pack_identity_for_root(root)` (B4 fix) so the root's own identity
+    collides on first re-entry. Both cases are now instances of a
+    single theorem:
+
+    * `visited = []` (v1.2.2 / pre-B4 callers): `acyclic_path [] t`
+      is the user-facing `acyclic_tree t`, recovering the original
+      statement.
+    * `visited = [pack_identity_for_root(root)]` (v1.2.3 / post-B4
+      callers): asserts termination when the root's identity is
+      seeded, which the Rust impl now does at sync_meta entry.
 
     Termination is automatic from Lean's structural recursion on
     `ManifestTree` plus `List` (the kernel verifies it at definition
     time of the `mutual` block above, same mechanism as `syncTree`'s
     W3 termination). The acyclic precondition is what discharges the
-    `.cycleDetected` branch as unreachable.
+    `.cycleDetected` branch as unreachable. Termination holds for ANY
+    runtime `max_depth` cap (B1 fix interaction): the Rust impl checks
+    the cycle condition *before* the depth-cap early-return, so a
+    bounded recursion is a prefix of the unbounded structural recursion
+    proved here — the proof's conclusion (`.ok` on acyclic input)
+    transfers to any depth-bounded run.
 
-    Equivalently: if the manifest forest is acyclic, the Phase 3
-    cycle check at the recurse edge never fires spuriously, AND the
-    recursion bottoms out in finitely many steps. The combined
-    statement matches the v1.2.2 safety contract: no infinite clone
-    on cyclic input (caught at the recurse edge before the second
-    clone of any identity, by construction of the `if id ∈ visited`
-    branch in `syncMetaChildren`), and no spurious abort on acyclic
-    input.
+    Equivalently: if the manifest forest is acyclic w.r.t. the seeded
+    visited set, the Phase 3 cycle check at the recurse edge never
+    fires spuriously, AND the recursion bottoms out in finitely many
+    steps. The combined statement matches the v1.2.2 + v1.2.3 safety
+    contract: no infinite clone on cyclic input (caught at the recurse
+    edge before the second clone of any identity, by construction of
+    the `if id ∈ visited` branch in `syncMetaChildren`), and no
+    spurious abort on acyclic input.
 
     The discharge is a one-liner against the mutual-recursion lemma
-    `sync_meta_inner_model_ok_of_acyclic`. -/
+    `sync_meta_inner_model_ok_of_acyclic`.
+
+    **Caller obligation (Rust bridge).**
+    The `visited` parameter must contain only identities that do NOT
+    appear as descendants of `t` in the manifest tree. The Rust runtime
+    satisfies this by construction: root identity uses `path:<root_dir>`
+    prefix; child identities use `url:<url>` (with optional `@<ref>`
+    suffix) prefix. Disjoint prefixes guarantee root identity never
+    appears among child identities. Therefore seeding
+    `visited = [root_id]` at sync_meta entry preserves
+    `acyclic_path visited t` whenever `acyclic_tree t`. -/
 theorem sync_meta_no_cycle_infinite_clone
-    (t : ManifestTree) (h : acyclic_tree t) :
-    sync_meta_inner_model [] t = SyncMetaResult.ok :=
-  sync_meta_inner_model_ok_of_acyclic [] t h
+    (visited : List String) (t : ManifestTree)
+    (h : acyclic_path visited t) :
+    sync_meta_inner_model visited t = SyncMetaResult.ok :=
+  sync_meta_inner_model_ok_of_acyclic visited t h
 
 end Grex.Walker

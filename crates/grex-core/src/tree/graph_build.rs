@@ -256,8 +256,15 @@ fn pack_identity_for_root(path: &Path) -> String {
 }
 
 fn pack_identity_for_child(child: &ChildRef) -> String {
-    let rref = child.r#ref.as_deref().unwrap_or("");
-    format!("url:{}@{}", child.url, rref)
+    // v1.2.3 (B2): mirror `walker.rs::pack_identity_for_child` — drop
+    // the trailing `@` on empty/missing ref so the build_graph cycle
+    // detector and the sync_meta cycle detector produce identical
+    // identity strings (otherwise a manifest authored against one
+    // surface could trip a cycle the other surface fails to see).
+    match child.r#ref.as_deref() {
+        Some(r) if !r.is_empty() => format!("url:{}@{}", child.url, r),
+        _ => format!("url:{}", child.url),
+    }
 }
 
 fn verify_child_name(got: &str, child: &ChildRef, dest: &Path) -> Result<(), TreeError> {
