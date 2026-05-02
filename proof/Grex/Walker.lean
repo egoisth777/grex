@@ -191,4 +191,232 @@ theorem fold_tree_lockfile_partition
       m.children.map (fun c => ⟨c.segments, c.url⟩) :=
   sync_lock_partition parent m w h
 
+/-! ### v1.2.2 — cycle detection (no new axioms)
+
+The v1.2.2 release re-introduces the legacy v1.1.x cycle-detection
+mechanism into the v1.2.1-split mutating pipeline. The check fires at
+the **Phase 3 recurse edge** (just before the recursive
+`sync_meta_inner` call), and ancestor identities propagate via a
+**per-child owned `HashSet<String>` clone** with the child's identity
+inserted (option A.1 from the design's senior-review). See
+`openspec/changes/feat-v1.2.2-sync-meta-cycle-detection/design.md`
+for the full design rationale.
+
+The Lean model below mirrors that pipeline at the abstract level:
+
+* `ChildRef.identity` — the URL+ref-keyed identity used by Phase 3's
+  per-child check (matches the Rust `pack_identity_for_child`).
+* `sync_meta_inner_model` — pure recursion over `ManifestTree` that
+  threads a `visited : List String` parameter through the recurse
+  edge, returning `SyncMetaResult.ok` on success and
+  `SyncMetaResult.cycleDetected` if a child's identity is already
+  in the inherited visited list.
+* `acyclic_path` — predicate stating that no root-to-leaf path
+  through the tree repeats an identity (i.e. the manifest forest is
+  cycle-free w.r.t. URL+ref keys).
+* `sync_meta_no_cycle_infinite_clone` — the Rule-8 gate theorem:
+  under the `acyclic_path` precondition, `sync_meta_inner_model`
+  terminates and returns `.ok` (cycle detection never spuriously
+  fires, AND the recursion is finite because `ManifestTree` is a
+  Lean-kernel-accepted inductive type).
+
+No new axioms: every definition below is a pure-model `def` over
+existing primitives in `Grex.Types`. Termination is automatic from
+structural recursion on `ManifestTree`; the `acyclic_path`
+precondition is what licenses the conclusion that the result is
+`.ok` (rather than `.cycleDetected`).
+-/
+
+/-- **Identity contract.** `ChildRef.identity` is the v1.2.2 model
+    analogue of the Rust `pack_identity_for_child`:
+
+    ```rust
+    fn pack_identity_for_child(child: &ChildRef) -> String {
+        let rref = child.r#ref.as_deref().unwrap_or("");
+        format!("url:{}@{}", child.url, rref)
+    }
+    ```
+
+    Pure definition over `String`s already in scope — no axiom. The
+    `url:` prefix is syntactically disjoint from the `path:` prefix
+    used by `pack_identity_for_root`, so a hostile manifest cannot
+    collide a child URL with the root path. -/
+def ChildRef.identity (c : ChildRef) : String :=
+  "url:" ++ c.url ++ "@" ++ (c.«ref».getD "")
+
+/-- Result of running the cycle-detected `sync_meta_inner` model. The
+    Rust counterpart is `Result<SyncMetaReport, TreeError>` where
+    `TreeError::CycleDetected { chain }` is the abort path; the model
+    collapses the success report to a single `.ok` constructor because
+    the safety property under proof is purely about whether the
+    pipeline halts, not about which `World` it produces. -/
+inductive SyncMetaResult : Type where
+  /-- Pipeline completed; no cycle was found on any root-to-leaf path. -/
+  | ok
+  /-- Cycle detected at the Phase 3 recurse edge. `chain` records the
+      identities along the path-from-root that revealed the loop —
+      `visited ++ [duplicated_id]`, matching the Rust `chain` field. -/
+  | cycleDetected (chain : List String)
+  deriving DecidableEq, Repr
+
+/-! The pure-model cycle-detected `sync_meta_inner` and its mutual
+    helper `syncMetaChildren`. Recurses on the `ManifestTree` value
+    (structurally accepted by Lean's kernel) and threads a
+    `visited : List String` parameter through the Phase 3 recurse
+    edge. The check fires *before* the recursive call (Q6 locked
+    design): if the child's identity is already in the parent's
+    `visited`, the recursion is short-circuited with
+    `.cycleDetected`. Otherwise the child's identity is prepended to
+    the visited list and recursion proceeds — mirroring the per-child
+    owned `HashSet<String>` clone of Q7 / Option A.1.
+
+    `syncMetaChildren` is defined mutually with the main function so
+    that termination is structural on the `ManifestTree` + `List`
+    pair: each recursive call descends into either a structurally
+    smaller subtree (`sub`) or a structurally smaller sibling list
+    (`rest`).
+
+    Phases 1 and 2 are absent from this model because they do not
+    involve recursion: Phase 1 clones siblings (no ancestor reuse
+    possible), Phase 2 is a sequential prune sweep. The cycle check
+    only fires at the recursion edge. -/
+mutual
+
+/-- See module-level note above for the cycle-detected
+    `sync_meta_inner` model. -/
+def sync_meta_inner_model :
+    List String → ManifestTree → SyncMetaResult
+  | _,       .leaf _      => SyncMetaResult.ok
+  | visited, .meta _ subs => syncMetaChildren visited subs
+
+/-- See module-level note above for the children-recursion helper. -/
+def syncMetaChildren :
+    List String → List (ChildRef × ManifestTree) → SyncMetaResult
+  | _,       []               => SyncMetaResult.ok
+  | visited, (c, sub) :: rest =>
+      let id := ChildRef.identity c
+      if id ∈ visited then
+        SyncMetaResult.cycleDetected (visited ++ [id])
+      else
+        match sync_meta_inner_model (id :: visited) sub with
+        | SyncMetaResult.cycleDetected ch =>
+            SyncMetaResult.cycleDetected ch
+        | SyncMetaResult.ok => syncMetaChildren visited rest
+
+end
+
+/-! **Acyclicity precondition** for a `ManifestTree` against a given
+    `visited` prefix. Holds iff every direct child's identity is
+    fresh (not in `visited`) AND the subtree below that child is
+    itself acyclic against the extended visited list. Equivalent to:
+    "no identity along any root-to-leaf path repeats."
+
+    The accumulator-style definition matches the structure of
+    `sync_meta_inner_model`, which makes the proof of the main
+    theorem a clean mutual-structural recursion. -/
+mutual
+
+/-- See module-level note above for the acyclicity predicate. -/
+def acyclic_path : List String → ManifestTree → Prop
+  | _,       .leaf _      => True
+  | visited, .meta _ subs => acyclic_children visited subs
+
+/-- See module-level note above for the acyclic-children helper. -/
+def acyclic_children :
+    List String → List (ChildRef × ManifestTree) → Prop
+  | _,       []               => True
+  | visited, (c, sub) :: rest =>
+      ChildRef.identity c ∉ visited ∧
+      acyclic_path (ChildRef.identity c :: visited) sub ∧
+      acyclic_children visited rest
+
+end
+
+/-- **Acyclicity (initial)** of a tree: no identity repeats on any
+    root-to-leaf path, with no inherited prefix. This is the
+    user-facing precondition for the v1.2.2 safety theorem. -/
+def acyclic_tree (t : ManifestTree) : Prop :=
+  acyclic_path [] t
+
+/-! Mutual-recursion safety lemma — the body of the v1.2.2 cycle
+    theorem.
+
+    Two mutually-recursive claims, packaged so that the kernel accepts
+    structural termination:
+    (a) `acyclic_path visited t → sync_meta_inner_model visited t = .ok`
+    (b) `acyclic_children visited subs → syncMetaChildren visited subs = .ok`
+
+    Each clause recurses by pattern-matching on its tree / list
+    argument, calling the other clause on a structurally smaller
+    component. This is the proof analogue of the function pair's
+    `mutual` definition above. -/
+mutual
+
+/-- See module-level note above for the per-tree clause. -/
+theorem sync_meta_inner_model_ok_of_acyclic :
+    ∀ (visited : List String) (t : ManifestTree),
+      acyclic_path visited t →
+        sync_meta_inner_model visited t = SyncMetaResult.ok
+  | _,       .leaf _,      _ => rfl
+  | visited, .meta _ subs, h => by
+      -- Unfold the function once; both `acyclic_path` and
+      -- `sync_meta_inner_model` reduce to their *_children helpers.
+      simp only [sync_meta_inner_model]
+      simp only [acyclic_path] at h
+      exact syncMetaChildren_ok_of_acyclic visited subs h
+
+/-- See module-level note above for the per-children-list clause. -/
+theorem syncMetaChildren_ok_of_acyclic :
+    ∀ (visited : List String) (subs : List (ChildRef × ManifestTree)),
+      acyclic_children visited subs →
+        syncMetaChildren visited subs = SyncMetaResult.ok
+  | _,       [],               _ => rfl
+  | visited, (c, sub) :: rest, h => by
+      -- Destructure the acyclic conjunction.
+      simp only [acyclic_children] at h
+      obtain ⟨hfresh, hsub, hrest⟩ := h
+      -- Unfold `syncMetaChildren` one step.
+      simp only [syncMetaChildren]
+      -- The `if` collapses to the else-branch because `hfresh`
+      -- says the child's identity is NOT in `visited`.
+      rw [if_neg hfresh]
+      -- The recursive call on `sub` returns `.ok` by the mutual IH.
+      rw [sync_meta_inner_model_ok_of_acyclic
+            (ChildRef.identity c :: visited) sub hsub]
+      -- The remaining pattern-match `.ok => syncMetaChildren visited rest`
+      -- reduces to the recursive call on `rest`, which is `.ok` by IH.
+      exact syncMetaChildren_ok_of_acyclic visited rest hrest
+
+end
+
+/-- **`sync_meta_no_cycle_infinite_clone` (v1.2.2, Rule-8 gate).**
+
+    Under the precondition that the manifest forest reachable from
+    the input tree is acyclic — every URL@ref identity appears at
+    most once on any root-to-leaf path — the cycle-detected
+    `sync_meta_inner_model` terminates and returns
+    `SyncMetaResult.ok`.
+
+    Termination is automatic from Lean's structural recursion on
+    `ManifestTree` plus `List` (the kernel verifies it at definition
+    time of the `mutual` block above, same mechanism as `syncTree`'s
+    W3 termination). The acyclic precondition is what discharges the
+    `.cycleDetected` branch as unreachable.
+
+    Equivalently: if the manifest forest is acyclic, the Phase 3
+    cycle check at the recurse edge never fires spuriously, AND the
+    recursion bottoms out in finitely many steps. The combined
+    statement matches the v1.2.2 safety contract: no infinite clone
+    on cyclic input (caught at the recurse edge before the second
+    clone of any identity, by construction of the `if id ∈ visited`
+    branch in `syncMetaChildren`), and no spurious abort on acyclic
+    input.
+
+    The discharge is a one-liner against the mutual-recursion lemma
+    `sync_meta_inner_model_ok_of_acyclic`. -/
+theorem sync_meta_no_cycle_infinite_clone
+    (t : ManifestTree) (h : acyclic_tree t) :
+    sync_meta_inner_model [] t = SyncMetaResult.ok :=
+  sync_meta_inner_model_ok_of_acyclic [] t h
+
 end Grex.Walker

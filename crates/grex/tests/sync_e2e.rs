@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 use grex_core::git::gix_backend::file_url_from_path;
 use grex_core::manifest;
 use grex_core::sync::{self, SyncError, SyncOptions};
+use grex_core::tree::error::TreeError;
 use tokio_util::sync::CancellationToken;
 
 /// feat-m7-1 stage 2: never-cancelled sentinel wrapper so the existing
@@ -246,16 +247,7 @@ fn e2e_wet_run_3_level_tree() {
     assert!(sym_src_ok, "fixture sym src should exist");
 }
 
-// v1.2.1 path (iii) NOTE: under the new prod path (`sync_meta` then
-// `build_graph`), `sync_meta` does NOT carry cycle detection; the legacy
-// `Walker::walk` did. A self-referential URL therefore clones forever in
-// `sync_meta` Phase 1+3 BEFORE `build_graph`'s cycle detection ever runs.
-// Cycle detection in the sync_meta layer is a v1.2.0 follow-up — covered
-// at the build_graph layer via the existing `pack_identity_for_child`
-// stack check, but not at the mutating layer. This test exercises the
-// build_graph-side detection; the sync_meta-side gap is tracked
-// separately.
-#[ignore = "v1.2.0 sync_meta lacks cycle detection — would clone forever; build_graph cycle detection is unit-tested separately"]
+// v1.2.2: cycle detection in sync_meta now active (Walker Phase 3 recurse edge).
 #[test]
 fn e2e_cycle_aborts() {
     // Build a pack whose children reference a graph cycle. We do this at
@@ -306,8 +298,18 @@ fn e2e_cycle_aborts() {
 
     let err = run(&root_dir, &options(false, workspace)).unwrap_err();
     match err {
-        SyncError::Tree(_) => {}
-        other => panic!("expected TreeError cycle, got {other:?}"),
+        SyncError::Tree(TreeError::CycleDetected { chain }) => {
+            assert!(!chain.is_empty(), "cycle chain must be non-empty");
+            // chain[0] should be the entry, chain[last] should equal
+            // the repeated identity earlier in chain.
+            let first = chain.first().expect("chain non-empty");
+            let last = chain.last().expect("chain non-empty");
+            assert!(
+                chain[..chain.len() - 1].contains(last) || first == last,
+                "last element must repeat earlier in chain (got chain={chain:?})"
+            );
+        }
+        other => panic!("expected SyncError::Tree(TreeError::CycleDetected), got {other:?}"),
     }
 }
 
