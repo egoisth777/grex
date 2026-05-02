@@ -26,13 +26,14 @@ use tokio_util::sync::CancellationToken;
 // cancellation is handled by rmcp's internal local_ct_pool (see grex-mcp Stage 7
 // commit and lib.rs comment block above serve()).
 pub fn run(args: ServeArgs, _global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
-    let workspace = match args.workspace {
+    crate::cli::deprecation::warn_workspace_alias_used();
+    let workspace = match args.pack {
         Some(p) => p,
         None => {
-            let cwd = std::env::current_dir().context("resolve cwd for --workspace default")?;
-            // Walk up from cwd to find a workspace marker — fixes the
+            let cwd = std::env::current_dir().context("resolve cwd for --pack default")?;
+            // Walk up from cwd to find a pack-root marker — fixes the
             // v1.x cwd-relative bug for `grex serve` invoked from a
-            // subdir of the workspace.
+            // subdir of the pack root.
             find_workspace_root(&cwd)
         }
     };

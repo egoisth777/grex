@@ -40,6 +40,48 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ### Security
 
+## [1.3.0] - 2026-05-02
+
+### Added
+
+- `--pack` flag as primary alias for `--workspace` on sync, serve,
+  migrate-lockfile, teardown verbs (clap alias).
+- `pack` JSON envelope key on ls + doctor output (additive sibling of
+  `workspace`).
+- `pack` field on MCP `sync` tool SyncParams (precedence
+  `pack.or(workspace)`).
+- `pack: &'a Path` additive field on `ExecCtx<'a>` (mirrors `workspace`).
+- Plugin-API UNSTABLE marker in plugin/mod.rs lib doc-comment.
+- Behavior contract freeze table at `.omne/cfg/freeze-v1.3.0.md`
+  (13 STABLE contracts).
+- Operator + Rust-consumer migration guide at
+  `.omne/cfg/migration-v1.3.0.md`.
+- Deprecation warn-once helper
+  `crate::cli::deprecation::warn_workspace_alias_used()` (tracing target
+  `grex::cli::deprecation`).
+- Tests: cli_alias deprecation warn, cli_json dual-emit, MCP sync pack
+  precedence, e2e_v1_3_0_readiness_smoke extended with warn-once +
+  dual-emit asserts.
+
+### Changed
+
+- CLI doc-noun rewrite: `<workspace>` → `<pack>` in doc-strings +
+  manpages.
+- Manpages regenerated via `cargo xtask gen-man`.
+
+### Deprecated (carry-forward; deferral note)
+
+- `--workspace` flag on CLI: deprecated since v1.3.0; warn-once via
+  tracing on stderr; removal scheduled for v2.0.0.
+- `workspace` JSON envelope key on ls/doctor: deprecated since v1.3.0;
+  removal v2.0.0.
+- `SyncParams::workspace` MCP field: deprecated since v1.3.0; removal
+  v2.0.0.
+- `PackLock::acquire` (sync), `Scheduler::permits`,
+  `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const: previously planned for
+  v1.3.0 removal per CHANGELOG entries v1.2.4/v1.2.5/v1.2.6 — DEFERRED
+  to v1.4.0 to keep v1.3.0 strictly additive (CLI rename + freeze only).
+
 ## [1.2.6] - 2026-05-02
 
 ### Added
@@ -647,7 +689,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.2.5...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/egoisth777/grex/releases/tag/v1.3.0
 [1.2.5]: https://github.com/egoisth777/grex/releases/tag/v1.2.5
 [1.2.4]: https://github.com/egoisth777/grex/releases/tag/v1.2.4
 [1.2.3]: https://github.com/egoisth777/grex/releases/tag/v1.2.3

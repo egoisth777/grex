@@ -67,7 +67,10 @@ fn doctor_json_stdout_stays_pure_when_tracing_warn_fires() {
             String::from_utf8_lossy(&out.stderr),
         )
     });
-    assert!(parsed.get("findings").is_some(), "doctor --json must emit a `findings` array");
+    // v1.3.0: top-level envelope is `{workspace, pack, report: {findings, exit_code, ...}}`.
+    let report =
+        parsed.get("report").expect("v1.3.0: doctor --json must wrap inner shape under `report`");
+    assert!(report.get("findings").is_some(), "doctor --json must emit a `report.findings` array");
 
     // Sanity: the warn DID fire — it must show up on stderr (proving
     // the test actually exercised the tracing path it claims to).

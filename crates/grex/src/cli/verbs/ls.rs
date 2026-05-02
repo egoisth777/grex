@@ -102,7 +102,17 @@ fn node_label(node: &LsNode) -> String {
 // --- JSON ------------------------------------------------------------------
 
 fn emit_json(tree: &LsTree) {
-    if let Ok(s) = serde_json::to_string_pretty(tree) {
+    // v1.3.0: dual-emit "workspace" + "pack". v1.4.0 drops "workspace".
+    // `LsTree` lives in `grex-core` and keeps its `workspace` field; the
+    // CLI envelope wraps it here so the additive `pack` key lands without
+    // perturbing the shared backend struct. Order is `workspace` first,
+    // `pack` second (byte-stable for diff-friendly consumers).
+    let doc = serde_json::json!({
+        "workspace": tree.workspace,
+        "pack": tree.workspace,
+        "tree": tree.tree,
+    });
+    if let Ok(s) = serde_json::to_string_pretty(&doc) {
         println!("{s}");
     }
 }

@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 /// output; exit codes are set via `std::process::exit` on halt paths
 /// (same pattern as `sync` since `anyhow::Error` does not carry them).
 pub fn run(args: TeardownArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
+    crate::cli::deprecation::warn_workspace_alias_used();
     let Some(pack_root) = args.pack_root.clone() else {
         // Missing required positional → usage error. Mirrors `sync`'s
         // fall-through (see that verb for the rationale).
@@ -41,7 +42,7 @@ pub fn run(args: TeardownArgs, global: &GlobalFlags, cancel: &CancellationToken)
     let opts = SyncOptions::new()
         .with_dry_run(global.dry_run)
         .with_validate(!args.no_validate)
-        .with_workspace(args.workspace.clone());
+        .with_workspace(args.pack.clone());
     match run_impl(&pack_root, &opts, args.quiet, global.json, cancel) {
         RunOutcome::Ok => Ok(()),
         RunOutcome::Validation => std::process::exit(1),

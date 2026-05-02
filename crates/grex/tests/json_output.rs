@@ -133,8 +133,11 @@ fn doctor_json_has_findings_array() {
     let out =
         bin().current_dir(dir.path()).args(["doctor", "--json"]).assert().get_output().clone();
     let v: Value = serde_json::from_slice(&out.stdout).expect("doctor --json is valid JSON");
-    assert!(v.get("findings").is_some(), "doctor JSON must have a `findings` array");
-    assert!(v.get("exit_code").is_some(), "doctor JSON must have an `exit_code`");
+    // v1.3.0: top-level envelope is `{workspace, pack, report}`; the
+    // findings + exit_code now live one level deep under `report`.
+    let report = v.get("report").expect("v1.3.0: doctor JSON must nest report under `report` key");
+    assert!(report.get("findings").is_some(), "doctor JSON must have a `report.findings` array");
+    assert!(report.get("exit_code").is_some(), "doctor JSON must have a `report.exit_code`");
 }
 
 #[test]

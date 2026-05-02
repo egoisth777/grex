@@ -111,14 +111,17 @@ pub struct SyncArgs {
     /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the pack root directory
-    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
-    /// canonical meta directory: children resolve parent-relatively as
-    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
-    /// resolved to their canonical inode (logged as `workspace: <input>
-    /// → <canonical>` when it differs).
-    #[arg(long)]
-    pub workspace: Option<std::path::PathBuf>,
+    /// Path to the pack root (formerly `--workspace`). Defaults to the
+    /// pack root directory (where `.grex/pack.yaml` lives). When set,
+    /// this path becomes the canonical meta directory: children resolve
+    /// parent-relatively as `<pack>/<child.path>`. The path MUST exist;
+    /// symlinks are resolved to their canonical inode (logged as
+    /// `pack: <input> → <canonical>` when it differs). The legacy
+    /// `--workspace` spelling is preserved as a deprecated alias and
+    /// emits a one-time warning per process; removal scheduled for
+    /// v2.0.0.
+    #[arg(long = "pack", alias = "workspace")]
+    pub pack: Option<std::path::PathBuf>,
 
     /// Plan actions without touching the filesystem.
     #[arg(long, short = 'n')]
@@ -314,10 +317,13 @@ pub struct ServeArgs {
     #[arg(long, value_name = "PATH")]
     pub manifest: Option<std::path::PathBuf>,
 
-    /// Workspace root the MCP server resolves relative paths against.
-    /// Defaults to the current working directory when omitted.
-    #[arg(long, value_name = "PATH")]
-    pub workspace: Option<std::path::PathBuf>,
+    /// Path to the pack root (formerly `--workspace`) the MCP server
+    /// resolves relative paths against. Defaults to the current working
+    /// directory when omitted. The legacy `--workspace` spelling is
+    /// preserved as a deprecated alias and emits a one-time warning per
+    /// process; removal scheduled for v2.0.0.
+    #[arg(long = "pack", alias = "workspace", value_name = "PATH")]
+    pub pack: Option<std::path::PathBuf>,
 
     /// Harness-level worker cap inherited by the MCP server's
     /// `Scheduler` (feat-m7-1 stage 8.3). `1` = serial; range `1..=1024`.
@@ -363,10 +369,13 @@ pub struct ExecArgs {
 
 #[derive(Args, Debug)]
 pub struct MigrateLockfileArgs {
-    /// Workspace root (the meta whose `.grex/grex.lock.jsonl` to
-    /// migrate). Defaults to the current working directory.
-    #[arg(long, value_name = "PATH")]
-    pub workspace: Option<std::path::PathBuf>,
+    /// Path to the pack root (formerly `--workspace`) — the meta whose
+    /// `.grex/grex.lock.jsonl` is migrated. Defaults to the current
+    /// working directory. The legacy `--workspace` spelling is preserved
+    /// as a deprecated alias and emits a one-time warning per process;
+    /// removal scheduled for v2.0.0.
+    #[arg(long = "pack", alias = "workspace", value_name = "PATH")]
+    pub pack: Option<std::path::PathBuf>,
 
     /// Inspect-only: detect schema version and report what would happen
     /// without writing. Lockfile bytes are unchanged.
@@ -380,14 +389,17 @@ pub struct TeardownArgs {
     /// itself. When omitted, `teardown` prints a usage stub and exits 0.
     pub pack_root: Option<std::path::PathBuf>,
 
-    /// Override the workspace root. Defaults to the pack root directory
-    /// (where `.grex/pack.yaml` lives). When set, this path becomes the
-    /// canonical meta directory: children resolve parent-relatively as
-    /// `<workspace>/<child.path>`. The path MUST exist; symlinks are
-    /// resolved to their canonical inode (logged as `workspace: <input>
-    /// → <canonical>` when it differs).
-    #[arg(long)]
-    pub workspace: Option<std::path::PathBuf>,
+    /// Path to the pack root (formerly `--workspace`). Defaults to the
+    /// pack root directory (where `.grex/pack.yaml` lives). When set,
+    /// this path becomes the canonical meta directory: children resolve
+    /// parent-relatively as `<pack>/<child.path>`. The path MUST exist;
+    /// symlinks are resolved to their canonical inode (logged as
+    /// `pack: <input> → <canonical>` when it differs). The legacy
+    /// `--workspace` spelling is preserved as a deprecated alias and
+    /// emits a one-time warning per process; removal scheduled for
+    /// v2.0.0.
+    #[arg(long = "pack", alias = "workspace")]
+    pub pack: Option<std::path::PathBuf>,
 
     /// Suppress per-action log lines.
     #[arg(long, short = 'q')]

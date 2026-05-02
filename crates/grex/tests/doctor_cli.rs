@@ -212,5 +212,9 @@ fn doctor_json_emits_report_shape() {
     let out = bin().current_dir(dir.path()).args(["doctor", "--json"]).assert().success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
-    assert!(parsed.get("findings").is_some(), "json must have findings array");
+    // v1.3.0: doctor --json envelope nests the report under `report` and
+    // dual-emits `workspace` + `pack` at the top level.
+    let report =
+        parsed.get("report").expect("v1.3.0: doctor json must wrap inner shape under `report`");
+    assert!(report.get("findings").is_some(), "json must have report.findings array");
 }

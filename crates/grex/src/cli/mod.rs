@@ -1,4 +1,5 @@
 pub mod args;
+pub mod deprecation;
 pub mod verbs;
 
 use anyhow::Result;

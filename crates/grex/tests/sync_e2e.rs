@@ -816,4 +816,74 @@ fn e2e_v1_3_0_readiness_smoke() {
         "readiness: migrate must be no-op on freshly-written v1.2.0 lockfile: {mig:?}"
     );
     assert_eq!(mig.migrated_entries, 0, "readiness: zero entries rewritten on no-op: {mig:?}");
+
+    // -----------------------------------------------------------------
+    // v1.3.0 surface guards (per OpenSpec
+    // `feat-v1.3.0-cli-rename-freeze/proposal.md` §Acceptance items 3
+    // + 4): operator-facing CLI rename + JSON envelope dual-emit. The
+    // library-level assertions above already cover the v1.2.x
+    // readiness AC; this block extends the smoke with the new v1.3.0
+    // surface contracts driven through the real `grex` binary.
+    // -----------------------------------------------------------------
+
+    use assert_cmd::prelude::*;
+    use serde_json::Value;
+
+    fn bin() -> std::process::Command {
+        std::process::Command::cargo_bin("grex").expect("grex binary built")
+    }
+
+    // (5) v1.3.0 — `--workspace` deprecation warn-once on stderr.
+    // Driving `sync` against the readiness fixture: the verb body
+    // should run end-to-end (warm-up sync above already populated the
+    // lockfile, so this is a no-op skip path), and the deprecation
+    // diagnostic MUST land on stderr regardless.
+    let dep_out = bin()
+        .arg("sync")
+        .arg(&f.root)
+        .arg("--workspace")
+        .arg(&f.workspace)
+        .arg("--dry-run")
+        .output()
+        .expect("v1.3.0 readiness: spawn grex sync --workspace");
+    let dep_stderr = String::from_utf8_lossy(&dep_out.stderr);
+    assert!(
+        dep_stderr.contains("--workspace is deprecated"),
+        "v1.3.0 readiness: stderr MUST contain `--workspace is deprecated` deprecation diagnostic; got:\n---\n{dep_stderr}\n---"
+    );
+
+    // (6) v1.3.0 — JSON envelope dual-emit for `ls` and `doctor`. Both
+    // top-level envelopes MUST carry `workspace` AND `pack` keys
+    // (additive forward-compat, identical values).
+    let ls_out =
+        bin().current_dir(&f.root).args(["--json", "ls"]).assert().success().get_output().clone();
+    let ls_stdout = String::from_utf8(ls_out.stdout).expect("ls --json utf-8");
+    let ls_v: Value = serde_json::from_str(&ls_stdout)
+        .unwrap_or_else(|e| panic!("v1.3.0 readiness: ls --json invalid: {e}\n{ls_stdout}"));
+    assert!(
+        ls_v.get("workspace").is_some(),
+        "v1.3.0 readiness: ls envelope MUST contain `workspace` key"
+    );
+    assert!(
+        ls_v.get("pack").is_some(),
+        "v1.3.0 readiness: ls envelope MUST contain `pack` key (dual-emit)"
+    );
+
+    let doctor_out = bin()
+        .current_dir(&f.root)
+        .args(["doctor", "--json"])
+        .output()
+        .expect("v1.3.0 readiness: spawn grex doctor --json");
+    let doctor_stdout = String::from_utf8_lossy(&doctor_out.stdout);
+    let doctor_v: Value = serde_json::from_str(&doctor_stdout).unwrap_or_else(|e| {
+        panic!("v1.3.0 readiness: doctor --json invalid: {e}\n{doctor_stdout}")
+    });
+    assert!(
+        doctor_v.get("workspace").is_some(),
+        "v1.3.0 readiness: doctor envelope MUST contain `workspace` key"
+    );
+    assert!(
+        doctor_v.get("pack").is_some(),
+        "v1.3.0 readiness: doctor envelope MUST contain `pack` key (dual-emit)"
+    );
 }

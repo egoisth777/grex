@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 /// orchestrator layer emitted; exit codes are set via `std::process::exit`
 /// on the halt paths since `anyhow::Error` does not carry them.
 pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
+    crate::cli::deprecation::warn_workspace_alias_used();
     let Some(pack_root) = args.pack_root.clone() else {
         // Missing required positional → usage error. `--json` emits the
         // canonical error envelope (`{verb, error: {kind, message}}`);
@@ -67,7 +68,7 @@ pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> 
     let opts = SyncOptions::new()
         .with_dry_run(dry_run)
         .with_validate(!args.no_validate)
-        .with_workspace(args.workspace.clone())
+        .with_workspace(args.pack.clone())
         .with_ref_override(args.ref_override.clone())
         .with_only_patterns(only_patterns)
         .with_force(args.force)
