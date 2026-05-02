@@ -24,8 +24,11 @@
                  remotes (git@github.com:egoisth777/<name>.git) and a `main`
                  branch with the seed content committed.
 
-      -Check     Audit only. For each fixture: verify the GH repo exists, SSH
+      -Check     Audit only. For each fixture: verify the GH repo exists, HTTPS
                  clone works, and required seed files are present. NO writes.
+                 (HTTPS matches the harness runtime + CI clone path; the
+                 fixtures are public, so anonymous HTTPS clone succeeds without
+                 credentials.)
 
       -DryRun    Print the actions that would be taken (provision or check)
                  without invoking gh/git side effects.
@@ -222,11 +225,11 @@ function Invoke-Check {
 
     $name     = $Fixture.Name
     $fullName = "$Owner/$name"
-    $sshUrl   = "git@github.com:$Owner/$name.git"
+    $httpsUrl = "https://github.com/$Owner/$name.git"
     $required = $Fixture.Required
 
     if ($DryRun) {
-        Write-DryRun "would audit $fullName (gh repo view + ssh clone + seed files: $($required -join ', '))"
+        Write-DryRun "would audit $fullName (gh repo view + https clone + seed files: $($required -join ', '))"
         return
     }
 
@@ -238,16 +241,17 @@ function Invoke-Check {
         throw "fixture missing on GitHub: $fullName"
     }
 
-    # 2. SSH clone to a temp dir
+    # 2. HTTPS clone to a temp dir (public repos clone anonymously; this matches
+    #    the harness runtime + CI clone path, which both use HTTPS).
     $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("grex-real-smoke-audit-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
     $cloneDir = Join-Path $tmpRoot $name
 
     try {
-        $rc = Invoke-Native -Exe 'git' -Args @('clone', '--depth', '1', $sshUrl, $cloneDir) -Cwd $tmpRoot -AllowFailure
+        $rc = Invoke-Native -Exe 'git' -Args @('clone', '--depth', '1', $httpsUrl, $cloneDir) -Cwd $tmpRoot -AllowFailure
         if ($rc -ne 0) {
-            Write-Err "$fullName : SSH clone failed (exit $rc) — verify SSH key + repo visibility"
-            throw "ssh clone failed for $fullName"
+            Write-Err "$fullName : HTTPS clone failed (exit $rc) — verify repo is public + reachable"
+            throw "https clone failed for $fullName"
         }
 
         # 3. Required seed files
@@ -261,7 +265,7 @@ function Invoke-Check {
             throw "seed files missing in $fullName"
         }
 
-        Write-Ok "$fullName : present on GH, SSH clone OK, seed files present"
+        Write-Ok "$fullName : present on GH, HTTPS clone OK, seed files present"
     } finally {
         if (Test-Path -LiteralPath $tmpRoot) {
             Remove-Item -LiteralPath $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue

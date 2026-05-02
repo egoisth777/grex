@@ -36,22 +36,10 @@ jobs:
             target
           key: real-smoke-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Setup SSH for fixture repos
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.REAL_SMOKE_SSH_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          eval $(ssh-agent -s)
-          echo "$SSH_PRIVATE_KEY" | ssh-add -
-          ssh-keyscan -H github.com >> ~/.ssh/known_hosts
-          # echo agent env to workflow env so subsequent steps inherit
-          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
-          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
-
-      - name: Verify SSH access to fixtures
+      - name: Verify HTTPS access to fixtures
         run: |
           for fixture in grex-test-leaf grex-test-meta-flat grex-test-meta-nested grex-test-cycle-a grex-test-cycle-b grex-test-broken-manifest; do
-            git ls-remote git@github.com:egoisth777/$fixture.git HEAD || (echo "FIXTURE MISSING: $fixture" && exit 1)
+            git ls-remote https://github.com/egoisth777/$fixture.git HEAD || (echo "FIXTURE MISSING: $fixture" && exit 1)
           done
 
       - name: Build grex CLI (release)
@@ -65,8 +53,3 @@ jobs:
         env:
           RUST_LOG: warn
           RUST_BACKTRACE: 1
-
-      - name: Cleanup SSH agent
-        if: always()
-        run: |
-          ssh-agent -k || true
