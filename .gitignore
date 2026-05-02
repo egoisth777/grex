@@ -13,6 +13,10 @@ grex.jsonl
 .grex/
 **/.grex/
 
+# real-smoke fixture seeds — track .grex/pack.yaml but not generated artifacts
+!scripts/real-smoke-fixtures/*/.grex/
+!scripts/real-smoke-fixtures/*/.grex/pack.yaml
+
 # editors
 .vscode/
 .idea/
@@ -34,3 +38,7 @@ grex-doc/book/
 # CWD-fossil files dropped by external tooling (cc-cfg statusline probes, etc.)
 claude-statusline-probe.txt
 *statusline-probe*.txt
+
+# Real-smoke fixture local clones (created by scripts/provision-real-smoke-fixtures.ps1)
+scripts/real-smoke-fixtures/*/.git/
+scripts/real-smoke-fixtures/*/.git

@@ -1,0 +1,25 @@
+[package]
+name = "real-smoke"
+version = "0.0.0"
+edition = "2021"
+publish = false  # never on crates.io
+license = "MIT OR Apache-2.0"
+description = "Black-box real-smoke harness for grex CLI: drives a pre-built grex binary against pre-provisioned GitHub fixture repos via git worktrees."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "real-smoke"
+path = "src/main.rs"
+
+[dependencies]
+# black-box subprocess only — DO NOT depend on grex-core / grex-cli internals.
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+tempfile = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

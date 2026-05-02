@@ -1,0 +1,55 @@
+name: real-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+  schedule:
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  real-smoke:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'real-smoke'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.79'
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: real-smoke-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Verify HTTPS access to fixtures
+        run: |
+          for fixture in grex-test-leaf grex-test-meta-flat grex-test-meta-nested grex-test-cycle-a grex-test-cycle-b grex-test-broken-manifest; do
+            git ls-remote https://github.com/egoisth777/$fixture.git HEAD || (echo "FIXTURE MISSING: $fixture" && exit 1)
+          done
+
+      - name: Build grex CLI (release)
+        run: cargo build --release -p grex-cli
+
+      - name: Add grex to PATH
+        run: echo "${{ github.workspace }}/target/release" >> $GITHUB_PATH
+
+      - name: Run real-smoke regression suite
+        run: cargo test -p real-smoke -- --ignored --nocapture
+        env:
+          RUST_LOG: warn
+          RUST_BACKTRACE: 1

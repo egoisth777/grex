@@ -1,0 +1,4 @@
+[fixture]
+name = "meta-nested"
+role = "smoke-fixture"
+layout = "sub-pack-under-meta"

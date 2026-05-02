@@ -1,0 +1,6 @@
+schema_version: "1"
+name: grex-test-cycle-b
+type: meta
+version: "0.1.0"
+children:
+  - { url: https://github.com/egoisth777/grex-test-cycle-a.git, path: a, ref: main }
