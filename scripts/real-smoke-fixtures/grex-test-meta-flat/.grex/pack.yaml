@@ -1,0 +1,8 @@
+schema_version: "1"
+name: grex-test-meta-flat
+type: meta
+version: "0.1.0"
+children:
+  - { url: https://github.com/egoisth777/grex-test-leaf.git, path: leaf-1, ref: main }
+  - { url: https://github.com/egoisth777/grex-test-leaf.git, path: leaf-2, ref: main }
+  - { url: https://github.com/egoisth777/grex-test-leaf.git, path: leaf-3, ref: main }

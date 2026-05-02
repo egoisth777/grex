@@ -13,6 +13,10 @@ grex.jsonl
 .grex/
 **/.grex/
 
+# real-smoke fixture seeds — track .grex/pack.yaml but not generated artifacts
+!scripts/real-smoke-fixtures/*/.grex/
+!scripts/real-smoke-fixtures/*/.grex/pack.yaml
+
 # editors
 .vscode/
 .idea/

@@ -1,0 +1,5 @@
+schema_version: "1"
+# missing required `name` field
+type: meta
+version: "not-a-semver"
+children: "not-a-list-just-a-string"
