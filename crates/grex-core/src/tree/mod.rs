@@ -39,6 +39,6 @@ pub use quarantine::{
     DEFAULT_RETAIN_DAYS,
 };
 pub use walker::{
-    dest_has_git_repo, sync_meta, synthesize_plain_git_manifest, SyncMetaOptions, SyncMetaReport,
-    Walker,
+    dest_has_git_repo, sync_meta, synthesize_plain_git_manifest, DryRunWouldCloneRecord,
+    SyncMetaOptions, SyncMetaReport, Walker,
 };

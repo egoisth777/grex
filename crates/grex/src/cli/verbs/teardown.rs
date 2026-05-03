@@ -23,7 +23,10 @@ use tokio_util::sync::CancellationToken;
 /// (same pattern as `sync` since `anyhow::Error` does not carry them).
 pub fn run(args: TeardownArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     crate::cli::deprecation::warn_workspace_alias_used();
-    let Some(pack_root) = args.pack_root.clone() else {
+    // v1.3.1 B2 — defer to the shared cwd-default helper so `grex
+    // teardown` run from inside a pack root no longer requires the
+    // operator to repeat the path. Mirrors `sync`'s resolution order.
+    let Some(pack_root) = super::resolve_pack_root_or_cwd(args.pack_root.as_deref()) else {
         // Missing required positional → usage error. Mirrors `sync`'s
         // fall-through (see that verb for the rationale).
         if global.json {

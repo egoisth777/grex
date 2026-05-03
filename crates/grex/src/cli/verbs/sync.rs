@@ -28,7 +28,12 @@ use tokio_util::sync::CancellationToken;
 /// on the halt paths since `anyhow::Error` does not carry them.
 pub fn run(args: SyncArgs, global: &GlobalFlags, cancel: &CancellationToken) -> Result<()> {
     crate::cli::deprecation::warn_workspace_alias_used();
-    let Some(pack_root) = args.pack_root.clone() else {
+    // v1.3.1 B2 — when `<pack_root>` is omitted but cwd carries the
+    // pack-marker `.grex/pack.yaml`, default `pack_root = cwd` (mirrors
+    // how `git status` defaults to cwd when `.git/` is present). The
+    // legacy "<pack_root> required" usage error is preserved when cwd
+    // lacks the marker.
+    let Some(pack_root) = super::resolve_pack_root_or_cwd(args.pack_root.as_deref()) else {
         // Missing required positional → usage error. `--json` emits the
         // canonical error envelope (`{verb, error: {kind, message}}`);
         // text mode prints a hint to stderr. Both paths exit 2 (the

@@ -64,6 +64,16 @@ pub enum CheckKind {
     /// so JSON consumers can branch on `restore` vs `gc` outcomes
     /// without parsing the human-readable detail string.
     QuarantineRestore,
+    /// v1.3.1 (B12) — advisory: a pack directory under the meta-repo
+    /// is present in the parent git index (`git ls-files` returns a
+    /// match). The advisory is **informational only**: it carries
+    /// [`Severity::Ok`] so the worst-severity exit-code roll-up is not
+    /// affected. Operators can dismiss the finding by adding the pack
+    /// path to the parent meta-repo's `.gitignore` and (optionally)
+    /// running `git rm --cached <pack>` once. Doctor never auto-mutates
+    /// the parent meta-repo's `.gitignore` — that contract is owned by
+    /// the operator.
+    ParentGitTracksPackContent,
 }
 
 impl CheckKind {
@@ -77,6 +87,7 @@ impl CheckKind {
             CheckKind::SyntheticPack => "synthetic-pack",
             CheckKind::QuarantineGc => "quarantine-gc",
             CheckKind::QuarantineRestore => "quarantine-restore",
+            CheckKind::ParentGitTracksPackContent => "parent-git-tracks-pack-content",
         }
     }
 }
@@ -450,6 +461,15 @@ fn run_meta_checks(meta_dir: &Path, report: &mut DoctorReport) {
 
     let synth = check_synthetic_packs(&lock);
     report.findings.extend(synth.findings);
+
+    // v1.3.1 (B12) — advisory: report when a pack path under this
+    // meta is tracked by the parent meta-repo's git index. Pure
+    // read-only probe; emits an `Info`-equivalent finding
+    // (`Severity::Ok`) per pack so the exit-code roll-up is not
+    // affected. The advisory is mute when no parent git repo is
+    // visible above `meta_dir`.
+    let parent_findings = check_parent_git_tracks_pack_content(meta_dir, packs.as_ref());
+    report.findings.extend(parent_findings.findings);
 }
 
 /// v1.2.5 — quarantine-GC check. Surveys `<meta>/.grex/trash/` and
@@ -966,6 +986,100 @@ pub fn check_synthetic_packs(lock: &HashMap<String, LockEntry>) -> CheckResult {
         });
     }
     CheckResult { findings }
+}
+
+/// v1.3.1 (B12) — advisory check: report packs whose on-disk content
+/// is tracked by the parent meta-repo's git index. Pure read-only.
+///
+/// Behaviour:
+/// * If `<meta_dir>` is not inside any git repo (no `.git/` walking up
+///   the ancestors), no findings are emitted — the advisory is mute
+///   when there is no parent to advise about.
+/// * For each registered pack at `<meta_dir>/<state.path>`, run
+///   `git -C <parent_repo> ls-files --error-unmatch <pack_rel_path>`.
+///   A zero exit indicates the path is tracked → emit one
+///   `ParentGitTracksPackContent` finding with `Severity::Ok` (advisory
+///   only — does NOT change exit code).
+/// * Per-pack git failures (binary missing, etc.) silently degrade to
+///   "no finding for this pack" so the doctor walk completes.
+///
+/// The check runs against `packs` produced by [`manifest::fold`]; if
+/// `packs` is `None` (manifest unreadable) the check is skipped — the
+/// schema-error finding already informs the operator.
+pub fn check_parent_git_tracks_pack_content(
+    meta_dir: &Path,
+    packs: Option<&HashMap<String, PackState>>,
+) -> CheckResult {
+    let Some(packs) = packs else {
+        return CheckResult::default();
+    };
+    let Some(parent_repo) = find_parent_git_repo(meta_dir) else {
+        return CheckResult::default();
+    };
+    let mut findings = Vec::new();
+    let ordered: BTreeMap<_, _> = packs.iter().collect();
+    for (id, state) in ordered {
+        // Compute the pack path relative to the parent git repo root.
+        let pack_abs = meta_dir.join(&state.path);
+        let Ok(pack_rel) = pack_abs.strip_prefix(&parent_repo) else {
+            continue;
+        };
+        let rel_str = pack_rel.to_string_lossy();
+        if rel_str.is_empty() {
+            continue;
+        }
+        if parent_git_path_tracked(&parent_repo, rel_str.as_ref()) {
+            findings.push(Finding {
+                check: CheckKind::ParentGitTracksPackContent,
+                severity: Severity::Ok,
+                pack: Some(id.clone()),
+                detail: format!(
+                    "advisory: pack `{id}` at `{rel_str}` is tracked by the parent meta-repo's git index. Add it to the meta-repo's `.gitignore` (and `git rm --cached` once) to clear this finding. grex never writes to the parent `.gitignore` automatically."
+                ),
+                auto_fixable: false,
+                synthetic: false,
+            });
+        }
+    }
+    CheckResult { findings }
+}
+
+/// Walk parent directories of `start` looking for the nearest ancestor
+/// that contains a `.git/` entry (directory or worktree gitlink file).
+/// Returns the ancestor path, NOT the `.git/` itself. None if no parent
+/// git repo is found.
+///
+/// Note: this deliberately walks STRICTLY upward starting from
+/// `start.parent()` — a pack-managed meta-repo with its own `.git/` at
+/// `meta_dir/.git/` is NOT the "parent" in the sense the advisory
+/// cares about (the advisory is "the meta-repo above me tracks my
+/// content", not "my own repo tracks my own content").
+fn find_parent_git_repo(start: &Path) -> Option<PathBuf> {
+    let mut cur = start.parent()?;
+    loop {
+        if cur.join(".git").exists() {
+            return Some(cur.to_path_buf());
+        }
+        cur = cur.parent()?;
+    }
+}
+
+/// Best-effort `git -C <repo> ls-files --error-unmatch <rel_path>`
+/// probe. Returns `true` when the path is tracked, `false` otherwise
+/// (untracked, ignored, missing git binary, etc.). Stderr is silenced
+/// so the doctor output stays clean.
+fn parent_git_path_tracked(repo: &Path, rel_path: &str) -> bool {
+    use std::process::{Command, Stdio};
+    let normalised = rel_path.replace('\\', "/");
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(&normalised)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    matches!(status, Ok(s) if s.success())
 }
 
 /// Shorthand — build a workspace-scoped config-lint warning finding.

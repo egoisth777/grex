@@ -27,3 +27,4 @@ import Grex.Walker
 import Grex.Phase1
 import Grex.Consent
 import Grex.Quarantine
+import Grex.Lockfile

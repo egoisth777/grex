@@ -122,6 +122,9 @@ impl<'a> Walker<'a> {
             parent: None,
             commit_sha: root_commit_sha,
             synthetic: false,
+            // Root has no parent ChildRef — there is no manifest `ref:`
+            // value to mirror. v1.3.1 B14.
+            manifest_ref: None,
         });
         let root_identity = pack_identity_for_root(root_pack_path);
         self.walk_recursive(root_id, &root_manifest, &mut state, &mut vec![root_identity])?;
@@ -233,6 +236,10 @@ impl<'a> Walker<'a> {
             parent: Some(parent_id),
             commit_sha,
             synthetic: is_synthetic,
+            // v1.3.1 B14: carry the parent manifest's `ref:` verbatim
+            // so the sync orchestrator can mirror it into
+            // `LockEntry.branch`.
+            manifest_ref: child.r#ref.clone(),
         });
         state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 
@@ -607,6 +614,16 @@ pub struct SyncMetaOptions {
     /// frame so each meta's own trash bucket gets swept. Sweep
     /// failures log via tracing and DO NOT halt the sync.
     pub retention: Option<super::RetentionConfig>,
+    /// v1.3.1 (B4) — when `true`, Phase 1 SKIPS every clone/fetch
+    /// subprocess + lockfile + events.jsonl mutation. The walker still
+    /// traverses the manifest tree (parsing in-memory) and accumulates
+    /// one [`DryRunWouldCloneRecord`] per child that WOULD have been
+    /// cloned into [`SyncMetaReport::dry_run_would_clone`]. Lean
+    /// theorem `Grex.Walker.dry_run_no_side_effects` formalises the
+    /// invariant `dry_run = true ⇒ no network call ∧ no FS write`.
+    /// Default: `false` (preserves v1.3.0 mutation semantics for the
+    /// default sync path).
+    pub dry_run: bool,
 }
 
 impl Default for SyncMetaOptions {
@@ -620,13 +637,42 @@ impl Default for SyncMetaOptions {
             parallel: None,
             quarantine: None,
             retention: None,
+            dry_run: false,
         }
     }
+}
+
+/// v1.3.1 (B4) — one in-memory record describing a child the walker
+/// WOULD have cloned if `SyncMetaOptions::dry_run` were `false`. Mirrors
+/// the [`crate::manifest::Event::DryRunWouldClone`] event shape, but
+/// surfaced through the walker's [`SyncMetaReport`] return value
+/// instead of written to events.jsonl — dry-run is contractually
+/// side-effect-free per Lean theorem `dry_run_no_side_effects`. CLI
+/// renderers can serialize the records to stdout JSON if desired.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DryRunWouldCloneRecord {
+    /// Folder name (= repo name) the child would land at. Mirrors the
+    /// runtime invariant `id = file_name(dest)` enforced by the
+    /// non-dry-run path.
+    pub id: String,
+    /// Upstream source URL.
+    pub url: String,
+    /// Effective ref (manifest-declared or `--ref` override). `None`
+    /// when neither is set.
+    pub ref_: Option<String>,
 }
 
 /// Outcome of one [`sync_meta`] invocation. Aggregated across every
 /// recursion frame: a sub-meta's report is folded into its parent's
 /// report at the end of Phase 3.
+///
+/// Marked `#[non_exhaustive]` so future PATCH/MINOR slices can add
+/// fields (e.g. v1.3.1's `dry_run_would_clone`) without breaking
+/// external struct-literal constructors or exhaustive pattern matches.
+/// In-crate construction goes through `..Default::default()` to stay
+/// `non_exhaustive`-compatible.
+#[non_exhaustive]
 #[derive(Debug, Default)]
 pub struct SyncMetaReport {
     /// Number of metas processed (this meta + every descendant Phase 3
@@ -644,6 +690,11 @@ pub struct SyncMetaReport {
     /// The walker continues past recoverable errors so the caller sees
     /// the full picture in one pass.
     pub errors: Vec<TreeError>,
+    /// v1.3.1 (B4) — one record per child the walker WOULD have cloned
+    /// during Phase 1 if `SyncMetaOptions::dry_run` were `false`.
+    /// Always empty when `dry_run = false`. CLI renderers should
+    /// surface the records as the dry-run plan for the operator.
+    pub dry_run_would_clone: Vec<DryRunWouldCloneRecord>,
 }
 
 impl SyncMetaReport {
@@ -652,6 +703,7 @@ impl SyncMetaReport {
         self.phase1_classifications.append(&mut child.phase1_classifications);
         self.phase2_pruned.append(&mut child.phase2_pruned);
         self.errors.append(&mut child.errors);
+        self.dry_run_would_clone.append(&mut child.dry_run_would_clone);
     }
 }
 
@@ -845,6 +897,10 @@ struct Phase1ChildOutcome {
     /// `PresentUndeclared`; the caller aggregates these into one
     /// `UntrackedGitRepos` error after the parallel pass.
     undeclared: Option<(PathBuf, DestClass)>,
+    /// v1.3.1 (B4) — `Some(record)` when `dry_run = true` and the
+    /// child would have been cloned (`Missing` classification) had the
+    /// real path run. Folded into `report.dry_run_would_clone`.
+    dry_run_record: Option<DryRunWouldCloneRecord>,
 }
 
 /// Phase 1: classify each declared child, then dispatch. Per the v1.2.0
@@ -911,6 +967,9 @@ fn phase1_sync_children(
         if let Some(pair) = outcome.undeclared {
             undeclared_seen.push(pair);
         }
+        if let Some(rec) = outcome.dry_run_record {
+            report.dry_run_would_clone.push(rec);
+        }
     }
     if let Err(e) = aggregate_untracked(undeclared_seen) {
         report.errors.push(e);
@@ -936,15 +995,30 @@ fn phase1_handle_child(
         classification: (meta_dir.to_path_buf(), dest.clone(), class),
         error: None,
         undeclared: None,
+        dry_run_record: None,
     };
     match class {
         DestClass::Missing => {
-            if let Err(e) = phase1_clone(backend, child, &dest, opts) {
+            // v1.3.1 (B4) — gate the clone subprocess + parent-mkdir
+            // behind `dry_run`. When `dry_run = true` we record what
+            // WOULD have been cloned (id = folder name = repo name)
+            // and emit no FS / network / lockfile / events.jsonl
+            // mutation. Lean theorem `dry_run_no_side_effects`
+            // pins the invariant.
+            if opts.dry_run {
+                fill_dry_run_record(&mut out, &dest, child, opts);
+            } else if let Err(e) = phase1_clone(backend, child, &dest, opts) {
                 out.error = Some(e);
             }
         }
         DestClass::PresentDeclared => {
-            if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
+            // v1.3.1 (B4) — same gate for fetch/checkout. The dest
+            // already exists on disk so a dry-run still emits a
+            // would-clone record (callers want a uniform list of
+            // children that would be touched), but no fetch fires.
+            if opts.dry_run {
+                fill_dry_run_record(&mut out, &dest, child, opts);
+            } else if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
                 out.error = Some(e);
             }
         }
@@ -970,6 +1044,37 @@ fn phase1_handle_child(
         }
     }
     out
+}
+
+/// v1.3.1 (B4) — populate `out` for a dry-run child. The runtime
+/// invariant `id = file_name(dest)` mirrors the non-dry-run path; if
+/// `file_name` is absent (dest ends in `..` / is a filesystem root) or
+/// the component is non-UTF-8, recording an empty `id` would silently
+/// corrupt the dry-run plan, so we route the failure into
+/// `out.error` (folded into `report.errors`) and continue per the
+/// fail-loud-not-fail-fast contract. Shared between the `Missing` and
+/// `PresentDeclared` arms of [`phase1_handle_child`].
+fn fill_dry_run_record(
+    out: &mut Phase1ChildOutcome,
+    dest: &Path,
+    child: &ChildRef,
+    opts: &SyncMetaOptions,
+) {
+    match dest.file_name().and_then(|n| n.to_str()) {
+        Some(name) => {
+            out.dry_run_record = Some(DryRunWouldCloneRecord {
+                id: name.to_string(),
+                url: child.url.clone(),
+                ref_: opts.ref_override.clone().or_else(|| child.r#ref.clone()),
+            });
+        }
+        None => {
+            out.error = Some(TreeError::InvalidDestination {
+                path: dest.to_path_buf(),
+                reason: "dest has no UTF-8 file_name component".to_string(),
+            });
+        }
+    }
 }
 
 /// Phase 1 clone helper. Acquires the M6 `PackLock` on the prospective

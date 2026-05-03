@@ -204,13 +204,19 @@ fn scripted_pack_install_then_teardown_runs_both_hooks() {
     assert!(!sentinel.exists(), "teardown.sh must have removed sentinel");
 }
 
-// ------------------------------------------------------------ 4. gitignore upsert
+// ------------------------------------------------------------ 4. gitignore non-mutation
+//
+// B12 v1.3.1: per-lifecycle `.gitignore` mutation REMOVED. The tests
+// below were inverted from their v1.2.x counterparts: where they
+// previously asserted that install / teardown wrote and removed a
+// managed block, they now assert that the workspace `.gitignore` is
+// left untouched by both lifecycles. The advisory finding is now
+// surfaced by `grex doctor` (see `tests/doctor_advisory.rs`).
 
-/// Install with `x-gitignore` writes a workspace `.gitignore` whose
-/// managed block contains the declared patterns and is marked with the
-/// pack name (R-M5-08).
+/// B12 v1.3.1: Install with `x-gitignore:` MUST NOT create the
+/// workspace `.gitignore`. Inverted from the v1.2.x assertion.
 #[test]
-fn gitignore_upsert_on_install_writes_managed_block() {
+fn gitignore_install_does_not_create_file() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let root = tmp_path.join("root");
@@ -218,27 +224,21 @@ fn gitignore_upsert_on_install_writes_managed_block() {
         &root,
         "schema_version: \"1\"\nname: gipack\ntype: declarative\nx-gitignore:\n  - target/\n  - \"*.log\"\n",
     );
-    // v1.2.1 path (iii): workspace IS the meta_dir; gitignore lands at
-    // `<meta_dir>/.gitignore`.
     let workspace = root.clone();
 
     run(&root, &options(workspace.clone())).expect("install ok");
-    let gi = fs::read_to_string(workspace.join(".gitignore")).expect(".gitignore must exist");
-    assert!(gi.contains("# >>> grex:gipack >>>"), "open marker missing: {gi}");
-    assert!(gi.contains("# <<< grex:gipack <<<"), "close marker missing: {gi}");
-    assert!(gi.contains("target/"), "pattern missing: {gi}");
-    assert!(gi.contains("*.log"), "pattern missing: {gi}");
+    assert!(
+        !workspace.join(".gitignore").exists(),
+        "B12 v1.3.1: install MUST NOT create `.gitignore`. Found: {:?}",
+        fs::read_to_string(workspace.join(".gitignore")),
+    );
 }
 
-/// `apply_gitignore` is called exactly once per install — no duplicate
-/// block (which would indicate both the declarative driver in
-/// `run_declarative_actions` AND the plugin `install` ran apply).
-/// Counting open markers is the cheapest observable proof; the
-/// managed-block upserter is idempotent so multiple apply calls
-/// would still leave one block, but a second apply site on the wrong
-/// ordering could re-open the block elsewhere in the file.
+/// B12 v1.3.1: repeated install does not re-emit a managed block —
+/// because no managed block is ever emitted now. Counts markers as a
+/// belt-and-suspenders check.
 #[test]
-fn gitignore_applied_once_per_install() {
+fn gitignore_no_markers_after_repeated_install() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let root = tmp_path.join("root");
@@ -246,23 +246,30 @@ fn gitignore_applied_once_per_install() {
         &root,
         "schema_version: \"1\"\nname: once\ntype: declarative\nx-gitignore:\n  - once/\n",
     );
-    // v1.2.1 path (iii): workspace IS the meta_dir.
     let workspace = root.clone();
 
     run(&root, &options(workspace.clone())).expect("install ok");
-    let gi = fs::read_to_string(workspace.join(".gitignore")).unwrap();
-    let opens = gi.matches("# >>> grex:once >>>").count();
-    let closes = gi.matches("# <<< grex:once <<<").count();
-    assert_eq!(opens, 1, "expected exactly one open marker, got {opens}: {gi}");
-    assert_eq!(closes, 1, "expected exactly one close marker, got {closes}: {gi}");
+    run(&root, &options(workspace.clone())).expect("install ok again");
+    let gi = fs::read_to_string(workspace.join(".gitignore")).unwrap_or_default();
+    assert_eq!(
+        gi.matches("# >>> grex:once >>>").count(),
+        0,
+        "no managed-block open markers must be written: {gi}",
+    );
+    assert_eq!(
+        gi.matches("# <<< grex:once <<<").count(),
+        0,
+        "no managed-block close markers must be written: {gi}",
+    );
 }
 
 // ------------------------------------------------------------ 5. gitignore teardown
 
-/// Teardown removes the managed block and preserves any user-authored
-/// content outside the block verbatim.
+/// B12 v1.3.1: Teardown does not touch the workspace `.gitignore` —
+/// no managed block was written by install, and teardown does not
+/// retire one either. User-authored content is preserved byte-for-byte.
 #[test]
-fn gitignore_teardown_removes_block_preserves_user_content() {
+fn gitignore_teardown_preserves_user_content_byte_for_byte() {
     let tmp = TempDir::new().unwrap();
     let tmp_path = tmp.path();
     let root = tmp_path.join("root");
@@ -270,21 +277,22 @@ fn gitignore_teardown_removes_block_preserves_user_content() {
         &root,
         "schema_version: \"1\"\nname: gip2\ntype: declarative\nx-gitignore:\n  - managed/\n",
     );
-    // v1.2.1 path (iii): workspace IS the meta_dir.
     let workspace = root.clone();
-    // Seed user-authored content into the meta dir.
     let user_line = "user-authored-pattern/\n";
     fs::write(workspace.join(".gitignore"), user_line).unwrap();
+    let pre_bytes = fs::read(workspace.join(".gitignore")).unwrap();
 
     run(&root, &options(workspace.clone())).expect("install ok");
-    let after_install = fs::read_to_string(workspace.join(".gitignore")).unwrap();
-    assert!(after_install.contains("user-authored-pattern/"));
-    assert!(after_install.contains("grex:gip2"));
+    let mid_bytes = fs::read(workspace.join(".gitignore")).unwrap();
+    assert_eq!(pre_bytes, mid_bytes, "install must not mutate user `.gitignore`");
+    assert!(
+        !String::from_utf8_lossy(&mid_bytes).contains("grex:gip2"),
+        "no managed block expected after install"
+    );
 
     teardown(&root, &options(workspace.clone())).expect("teardown ok");
-    let after = fs::read_to_string(workspace.join(".gitignore")).unwrap();
-    assert!(!after.contains("grex:gip2"), "block must be gone: {after}");
-    assert!(after.contains("user-authored-pattern/"), "user content preserved: {after}");
+    let post_bytes = fs::read(workspace.join(".gitignore")).unwrap();
+    assert_eq!(pre_bytes, post_bytes, "teardown must not mutate user `.gitignore`");
 }
 
 // ------------------------------------------------------------ 6. multi-pack coexistence
