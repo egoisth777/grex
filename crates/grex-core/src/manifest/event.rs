@@ -384,7 +384,7 @@ impl Event {
     /// [`std::mem::discriminant`].
     ///
     /// v1.3.1 fix-sweep B7: replaces the `op = ?std::mem::discriminant(ev)`
-    /// site in [`crate::manifest::append::emit_semantic_warnings`].
+    /// site in `crate::manifest::append::emit_semantic_warnings`.
     pub fn op_name(&self) -> &'static str {
         match self {
             Event::Add { .. } => "add",

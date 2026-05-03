@@ -81,7 +81,7 @@ pub struct PackNode {
     /// surfaces (doctor, ls). Default `false` for every declared pack.
     pub synthetic: bool,
     /// Verbatim copy of the parent manifest's `ref:` field (the
-    /// originating [`crate::pack::ChildRef::r#ref`]) — `None` for the
+    /// originating `crate::pack::ChildRef::r#ref`) — `None` for the
     /// root and for children whose manifest declared no `ref:`. Threaded
     /// from the walker down to [`crate::sync::run`] so the lockfile
     /// `branch` slot can mirror the manifest verbatim, per the v1.3.1

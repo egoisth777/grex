@@ -205,7 +205,7 @@ pub enum TreeError {
     /// the path ends in `..` or is a filesystem root) or the component
     /// is not UTF-8. Recording the child with an empty `id` would
     /// silently corrupt the dry-run plan, so the walker pushes this
-    /// error into [`SyncMetaReport::errors`] instead and continues.
+    /// error into `SyncMetaReport.errors` instead and continues.
     #[error("invalid destination path `{path}`: {reason}")]
     InvalidDestination {
         /// On-disk destination path that lacked a usable file_name.

@@ -1003,7 +1003,7 @@ pub fn check_synthetic_packs(lock: &HashMap<String, LockEntry>) -> CheckResult {
 /// * Per-pack git failures (binary missing, etc.) silently degrade to
 ///   "no finding for this pack" so the doctor walk completes.
 ///
-/// The check runs against `packs` produced by [`manifest::fold`]; if
+/// The check runs against `packs` produced by [`crate::manifest::fold::fold`]; if
 /// `packs` is `None` (manifest unreadable) the check is skipped — the
 /// schema-error finding already informs the operator.
 pub fn check_parent_git_tracks_pack_content(
