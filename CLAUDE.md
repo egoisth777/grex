@@ -25,10 +25,10 @@ Rationale: Two-copy knowledge bases drift. SSOT is the single source. Memory ent
 
 # 0-state hop-in (auto-load for fresh session)
 On every new session, read in order:
-1. `progress.md` — current state + last endpoint
-2. `milestone.md` — phased delivery plan
+1. `.omne/var/progress.md` — current state + last endpoint (SSOT-tracked, edit via .omne/ working tree per rule 7)
+2. `.omne/var/milestone.md` — phased delivery plan (SSOT-tracked)
 3. `openspec/feat-grex/spec.md` — active feature spec
 4. `.omne/cfg/README.md` — design-doc index
 Then branch into topic-specific `.omne/cfg/*.md` as needed.
 
-Active feature: v1.2.4 IN FLIGHT — Phase 1 OpenSpec landed on `feat-v1.2.4` branch @ commit 71069c8. Phase 2 (Lean theorem + Rust impl) pending next session. Scope locked (A1 rayon cancellation token + 6 polish + 3 tests + axiom CI smoke check). SemVer: PATCH 1.2.4 per maintainer (additive). Lean obligation: theorem `cancellation_terminates_promptly` extends `sync_meta_inner_model` with `cancelled:Bool` param. v1.3.0 readiness AC: each v1.2.x ship guards sub-pack-under-meta-pack flow + basic action commands via e2e smoke test. Pick up from progress.md "## Endpoint (2026-05-02, feat-v1.2.4 — openspec triplet landed, Phase 2 pending)" — checkout feat-v1.2.4, dispatch Lean worker first per rule 8 gate.
+Active feature: v1.2.4 IN FLIGHT — Phase 1 OpenSpec landed on `feat-v1.2.4` branch @ commit 71069c8. Phase 2 (Lean theorem + Rust impl) pending next session. Scope locked (A1 rayon cancellation token + 6 polish + 3 tests + axiom CI smoke check). SemVer: PATCH 1.2.4 per maintainer (additive). Lean obligation: theorem `cancellation_terminates_promptly` extends `sync_meta_inner_model` with `cancelled:Bool` param. v1.3.0 readiness AC: each v1.2.x ship guards sub-pack-under-meta-pack flow + basic action commands via e2e smoke test. Pick up from `.omne/var/progress.md` "## Endpoint (2026-05-02, feat-v1.2.4 — openspec triplet landed, Phase 2 pending)" — checkout feat-v1.2.4, dispatch Lean worker first per rule 8 gate.
