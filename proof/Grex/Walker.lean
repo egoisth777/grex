@@ -715,11 +715,11 @@ is already a pure recursion with no FS or network in its codomain. The
 theorem below is the model-level reading of B4: dry-run is observationally
 inert at the model layer; the Rust bridge guarantees zero FS write / zero
 network call when the dry_run gate is set. The bridge interpretation
-is bundled with axiom #2 `sync_local_writes` (Bridge.lean) — no new
-axiom is required.
+is bundled with the existing `sync_local_writes` bridge entry (Bridge.lean
+entry #2) — no new bridge axiom is required.
 
 Bridge.lean axiom count remains 9; Types.lean axiom count remains 4
-(no `axiom`-keyword additions in this release).
+(no top-level `axiom` keyword additions in this release).
 -/
 
 /-- **`dry_run_no_side_effects` (v1.3.1, Rule-8 gate).**
