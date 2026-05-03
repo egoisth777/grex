@@ -293,10 +293,16 @@ fn emit_semantic_warnings(events: &[Event]) {
             }
             Event::Update { id, .. } | Event::Sync { id, .. } => {
                 if !live.contains(id.as_str()) {
+                    // v1.3.1 fix-sweep B7: render the op tag via the stable
+                    // snake_case `op_name()` accessor rather than
+                    // `Debug`-formatting `std::mem::discriminant(ev)`,
+                    // which renders as the unhelpful `Discriminant(N)`
+                    // and breaks dogfood operators trying to grep trace
+                    // output for `op=sync` / `op=update` etc.
                     tracing::warn!(
                         line = line_num,
                         id = %id,
-                        op = ?std::mem::discriminant(ev),
+                        op = %ev.op_name(),
                         "manifest event references unknown pack id (no prior Add)"
                     );
                 }
@@ -317,6 +323,10 @@ fn emit_semantic_warnings(events: &[Event]) {
             Event::ActionStarted { .. }
             | Event::ActionCompleted { .. }
             | Event::ActionHalted { .. } => {}
+            // v1.3.1 (B4) — dry-run audit; the walker emitted this without
+            // any prior `Add` (dry-run never mutates state), so the
+            // live-set check is intentionally skipped.
+            Event::DryRunWouldClone { .. } => {}
             // v1.2.0 Stage 1.l — workspace-scoped audit; not tied to a
             // pack id so it has no live-set check.
             Event::ForcePruneExecuted { .. } => {}

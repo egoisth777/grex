@@ -13,22 +13,58 @@ pub type PackId = String;
 
 /// Current manifest schema version. Bumped whenever event shapes change
 /// incompatibly.
-pub const SCHEMA_VERSION: &str = "1";
+///
+/// # v1.3.1 schema v2 hard-cut (B8)
+///
+/// Bumped from `"1"` to `"2"` as part of the v1.3.1 dogfood-finding
+/// remediation:
+///
+/// * The action-audit variants ([`Event::ActionStarted`],
+///   [`Event::ActionCompleted`], [`Event::ActionHalted`]) renamed their
+///   pack-id field from `pack` to `id` so every event variant uses the
+///   same `id` discriminant per `.omne/cfg/manifest.md` §"events schema
+///   v2" reader contract. Each of those three variants now also carries
+///   a `schema_version: String` field so consumers can disambiguate v1
+///   vs v2 records line-by-line during the migration window (no field
+///   deployments per maintainer 2026-05-02; this is the only writer
+///   shape from now on).
+/// * A new variant [`Event::DryRunWouldClone`] is added for B4 — emitted
+///   by the walker when `dry_run = true` instead of firing a real clone
+///   subprocess + lockfile write + events.jsonl mutation. Carries the
+///   would-be-cloned child's id (= folder name = repo name), declared
+///   `ref`, and `url` so a downstream caller can reconstruct the plan.
+///
+/// Per the maintainer's 2026-05-02 directive, no v1 writers ever shipped
+/// the legacy `pack` field to a customer environment; the rename is a
+/// hard cut with no back-compat shim. Old logs (if any internal dogfood
+/// log carried v1 records) still decode through the existing
+/// `serde(rename_all = "snake_case")` + `Unknown` fallback because the
+/// variant tags themselves did not change — only the field names within
+/// each variant.
+pub const SCHEMA_VERSION: &str = "2";
 
 /// One entry in the manifest log.
 ///
 /// Serialized form uses a lowercase `"op"` tag:
 /// ```json
-/// {"op":"add","ts":"...","id":"...","url":"...","path":"...","type":"...","schema_version":"1"}
+/// {"op":"add","ts":"...","id":"...","url":"...","path":"...","type":"...","schema_version":"2"}
 /// ```
 ///
-/// # Action audit variants (PR E)
+/// # Action audit variants (PR E, schema v2 since v1.3.1)
 ///
 /// [`Event::ActionStarted`] is appended **before** the executor runs an
 /// action. [`Event::ActionCompleted`] is appended **after** success;
 /// [`Event::ActionHalted`] is appended **after** failure. A dangling
 /// `ActionStarted` with no matching completed/halted peer is a crash
 /// candidate — see [`crate::sync::scan_recovery`].
+///
+/// As of v1.3.1 (schema v2) the pack-id field on these three variants
+/// is named `id` (was `pack` in v1) and each carries a `schema_version`
+/// string field — see the [`SCHEMA_VERSION`] doc comment for the
+/// rationale. The runtime invariant that `id` equals the on-disk folder
+/// name (= repo name) for both meta-packs and single packs is enforced
+/// by writers; deserialization preserves whatever string the writer
+/// emitted (the schema is shape-only, not a folder-name validator).
 ///
 /// These variants are ignored by [`crate::manifest::fold::fold`] (they do
 /// not mutate pack state) so the folded projection is unchanged from the
@@ -94,38 +130,55 @@ pub enum Event {
     /// `executor.execute` so a crash mid-action leaves a discoverable
     /// trace. A dangling `ActionStarted` with no matching completed/halted
     /// peer signals a crashed run — see [`crate::sync::scan_recovery`].
+    ///
+    /// v1.3.1 (schema v2): pack-id field renamed from `pack` to `id`;
+    /// `schema_version` field added. See [`SCHEMA_VERSION`].
     ActionStarted {
         /// Event timestamp.
         ts: DateTime<Utc>,
-        /// Pack identifier owning the action.
-        pack: PackId,
+        /// Pack identifier owning the action. Runtime invariant: equals
+        /// the on-disk folder name (= repo name) for both meta-packs
+        /// and single packs.
+        id: PackId,
         /// 0-based index into the pack's top-level `actions` vector.
         action_idx: usize,
         /// Short action kind tag (e.g. `"symlink"`, `"mkdir"`).
         action_name: String,
+        /// Schema version at time of write.
+        schema_version: String,
     },
     /// The executor returned `Ok`. Paired with a preceding
     /// [`Event::ActionStarted`]. `result_summary` is a short
     /// human-readable string (e.g. `"performed_change"`).
+    ///
+    /// v1.3.1 (schema v2): pack-id field renamed from `pack` to `id`;
+    /// `schema_version` field added. See [`SCHEMA_VERSION`].
     ActionCompleted {
         /// Event timestamp.
         ts: DateTime<Utc>,
-        /// Pack identifier owning the action.
-        pack: PackId,
+        /// Pack identifier owning the action. Same folder-name invariant
+        /// as [`Event::ActionStarted::id`].
+        id: PackId,
         /// 0-based index into the pack's top-level `actions` vector.
         action_idx: usize,
         /// Short outcome summary tag.
         result_summary: String,
+        /// Schema version at time of write.
+        schema_version: String,
     },
     /// The executor returned `Err`. Paired with a preceding
     /// [`Event::ActionStarted`]. `error_summary` is the error's `Display`
     /// output truncated to a small limit so an audit trail line stays
     /// single-event-sized.
+    ///
+    /// v1.3.1 (schema v2): pack-id field renamed from `pack` to `id`;
+    /// `schema_version` field added. See [`SCHEMA_VERSION`].
     ActionHalted {
         /// Event timestamp.
         ts: DateTime<Utc>,
-        /// Pack identifier owning the action.
-        pack: PackId,
+        /// Pack identifier owning the action. Same folder-name invariant
+        /// as [`Event::ActionStarted::id`].
+        id: PackId,
         /// 0-based index into the pack's top-level `actions` vector.
         action_idx: usize,
         /// Short action kind tag.
@@ -133,6 +186,40 @@ pub enum Event {
         /// Truncated error message (at most
         /// [`ACTION_ERROR_SUMMARY_MAX`] bytes).
         error_summary: String,
+        /// Schema version at time of write.
+        schema_version: String,
+    },
+    /// v1.3.1 (B4) — emitted by the walker when `dry_run = true` instead
+    /// of firing a real clone subprocess. Records what WOULD have been
+    /// cloned so a downstream caller can reconstruct the plan without
+    /// any network call, FS write, or lockfile mutation having happened.
+    ///
+    /// `id` is the would-be-cloned child's folder name (= repo name);
+    /// `ref_` mirrors the manifest-declared ref (or the global
+    /// `--ref` override when set); `url` is the upstream source URL.
+    /// The variant carries no `path`/`pack_type` because dry-run does
+    /// not load the child's pack.yaml — only what the parent manifest
+    /// declares is observable.
+    ///
+    /// `op` discriminator: `"dry_run_would_clone"` (snake_case).
+    /// `ref_` serializes as `"ref"` to dodge the Rust keyword while
+    /// keeping the JSONL field name aligned with manifest authorship
+    /// conventions.
+    DryRunWouldClone {
+        /// Event timestamp.
+        ts: DateTime<Utc>,
+        /// Folder name (= repo name) the child would land at if a real
+        /// sync ran.
+        id: PackId,
+        /// Upstream source URL. Mirrors the manifest `url` field.
+        url: String,
+        /// Effective ref (manifest-declared or `--ref` override).
+        /// `None` when neither is set; downstream callers display this
+        /// as the backend's default branch.
+        #[serde(rename = "ref")]
+        ref_: Option<String>,
+        /// Schema version at time of write.
+        schema_version: String,
     },
     /// v1.2.0 Stage 1.l — A walker Phase 2 prune fired against a
     /// non-Clean consent verdict because the operator requested
@@ -285,22 +372,56 @@ fn empty_pack_id() -> &'static PackId {
 pub const ACTION_ERROR_SUMMARY_MAX: usize = 2048;
 
 impl Event {
+    /// Return the stable snake_case op tag for this variant.
+    ///
+    /// This is the same string that serde emits as the `"op"` field when
+    /// the event is serialized (driven by
+    /// `#[serde(tag = "op", rename_all = "snake_case")]` on the enum).
+    /// It is intended as a Display-stable name for use in tracing
+    /// fields (`op = %ev.op_name()`) so trace output renders human-
+    /// readable tags (e.g. `op="sync"`) instead of the opaque
+    /// `op=Discriminant(N)` produced by `Debug`-formatting
+    /// [`std::mem::discriminant`].
+    ///
+    /// v1.3.1 fix-sweep B7: replaces the `op = ?std::mem::discriminant(ev)`
+    /// site in `crate::manifest::append::emit_semantic_warnings`.
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            Event::Add { .. } => "add",
+            Event::Update { .. } => "update",
+            Event::Rm { .. } => "rm",
+            Event::Sync { .. } => "sync",
+            Event::ActionStarted { .. } => "action_started",
+            Event::ActionCompleted { .. } => "action_completed",
+            Event::ActionHalted { .. } => "action_halted",
+            Event::DryRunWouldClone { .. } => "dry_run_would_clone",
+            Event::ForcePruneExecuted { .. } => "force_prune_executed",
+            Event::QuarantineStart { .. } => "quarantine_start",
+            Event::QuarantineComplete { .. } => "quarantine_complete",
+            Event::QuarantineFailed { .. } => "quarantine_failed",
+            Event::QuarantineRestored { .. } => "quarantine_restored",
+            Event::QuarantineGcSwept { .. } => "quarantine_gc_swept",
+            Event::Unknown => "unknown",
+        }
+    }
+
     /// Return the pack id the event applies to.
     ///
-    /// Action-audit variants return the `pack` field; legacy variants
-    /// return their `id`. Workspace-scoped variants
-    /// ([`Event::ForcePruneExecuted`]) return the dest `path` as their
-    /// identifier — there is no single owning pack for an audit-only
-    /// override record.
+    /// As of v1.3.1 (schema v2) every pack-scoped variant uses the same
+    /// `id` field name — see [`SCHEMA_VERSION`] for the rename rationale.
+    /// Workspace-scoped variants ([`Event::ForcePruneExecuted`]) return
+    /// the dest `path` as their identifier — there is no single owning
+    /// pack for an audit-only override record.
     pub fn id(&self) -> &PackId {
         match self {
             Event::Add { id, .. }
             | Event::Update { id, .. }
             | Event::Rm { id, .. }
-            | Event::Sync { id, .. } => id,
-            Event::ActionStarted { pack, .. }
-            | Event::ActionCompleted { pack, .. }
-            | Event::ActionHalted { pack, .. } => pack,
+            | Event::Sync { id, .. }
+            | Event::ActionStarted { id, .. }
+            | Event::ActionCompleted { id, .. }
+            | Event::ActionHalted { id, .. }
+            | Event::DryRunWouldClone { id, .. } => id,
             Event::ForcePruneExecuted { path, .. } => path,
             // v1.2.1 Item 5b — quarantine variants carry the dest as
             // their identifier (`src`); same audit-only pattern as
@@ -331,6 +452,7 @@ impl Event {
             | Event::ActionStarted { ts, .. }
             | Event::ActionCompleted { ts, .. }
             | Event::ActionHalted { ts, .. }
+            | Event::DryRunWouldClone { ts, .. }
             | Event::ForcePruneExecuted { ts, .. }
             | Event::QuarantineStart { ts, .. }
             | Event::QuarantineComplete { ts, .. }
@@ -441,12 +563,17 @@ mod tests {
     fn action_started_roundtrip() {
         let e = Event::ActionStarted {
             ts: ts(),
-            pack: "warp".into(),
+            id: "warp".into(),
             action_idx: 3,
             action_name: "symlink".into(),
+            schema_version: SCHEMA_VERSION.into(),
         };
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""op":"action_started""#));
+        // v1.3.1 schema v2 hard-cut: field is `id`, not `pack`.
+        assert!(s.contains(r#""id":"warp""#));
+        assert!(!s.contains(r#""pack":"warp""#));
+        assert!(s.contains(r#""schema_version":"2""#));
         assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
     }
 
@@ -454,12 +581,16 @@ mod tests {
     fn action_completed_roundtrip() {
         let e = Event::ActionCompleted {
             ts: ts(),
-            pack: "warp".into(),
+            id: "warp".into(),
             action_idx: 1,
             result_summary: "performed_change".into(),
+            schema_version: SCHEMA_VERSION.into(),
         };
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""op":"action_completed""#));
+        assert!(s.contains(r#""id":"warp""#));
+        assert!(!s.contains(r#""pack":"warp""#));
+        assert!(s.contains(r#""schema_version":"2""#));
         assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
     }
 
@@ -467,13 +598,49 @@ mod tests {
     fn action_halted_roundtrip() {
         let e = Event::ActionHalted {
             ts: ts(),
-            pack: "warp".into(),
+            id: "warp".into(),
             action_idx: 2,
             action_name: "exec".into(),
             error_summary: "non-zero exit 3".into(),
+            schema_version: SCHEMA_VERSION.into(),
         };
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""op":"action_halted""#));
+        assert!(s.contains(r#""id":"warp""#));
+        assert!(!s.contains(r#""pack":"warp""#));
+        assert!(s.contains(r#""schema_version":"2""#));
+        assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
+    }
+
+    #[test]
+    fn dry_run_would_clone_roundtrip() {
+        let e = Event::DryRunWouldClone {
+            ts: ts(),
+            id: "warp-cfgs".into(),
+            url: "https://example.com/warp-cfgs.git".into(),
+            ref_: Some("main".into()),
+            schema_version: SCHEMA_VERSION.into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""op":"dry_run_would_clone""#));
+        assert!(s.contains(r#""id":"warp-cfgs""#));
+        // Rust keyword `ref` is exposed via `#[serde(rename = "ref")]`.
+        assert!(s.contains(r#""ref":"main""#));
+        assert!(s.contains(r#""schema_version":"2""#));
+        assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
+    }
+
+    #[test]
+    fn dry_run_would_clone_no_ref_serializes_null() {
+        let e = Event::DryRunWouldClone {
+            ts: ts(),
+            id: "warp-cfgs".into(),
+            url: "https://example.com/warp-cfgs.git".into(),
+            ref_: None,
+            schema_version: SCHEMA_VERSION.into(),
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""ref":null"#));
         assert_eq!(serde_json::from_str::<Event>(&s).unwrap(), e);
     }
 
@@ -481,7 +648,10 @@ mod tests {
     fn legacy_lowercase_tags_still_parse() {
         // Historical writers used `rename_all = "lowercase"`. snake_case
         // and lowercase are identical for the single-word legacy tags, so
-        // old logs must still decode.
+        // old logs must still decode. The Add/Sync variants are unchanged
+        // by the v1.3.1 schema v2 hard-cut so a v1 record decoded today
+        // remains valid; only the Action* variants gained `id`/dropped
+        // `pack`/added `schema_version`.
         let raw = r#"{"op":"add","ts":"2026-04-19T10:00:00Z","id":"a","url":"u","path":"a","type":"declarative","schema_version":"1"}"#;
         let _: Event = serde_json::from_str(raw).unwrap();
         let raw = r#"{"op":"sync","ts":"2026-04-19T10:00:00Z","id":"a","sha":"deadbeef"}"#;

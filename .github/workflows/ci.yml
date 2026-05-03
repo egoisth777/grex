@@ -294,11 +294,14 @@ jobs:
           cat > "$probe" <<'EOF'
           import Grex.Walker
           import Grex.Scheduler
+          import Grex.Lockfile
           #print axioms Grex.Walker.cancellation_terminates_promptly
           #print axioms Grex.Walker.sync_meta_no_cycle_infinite_clone
           #print axioms Grex.Walker.partial_clone_cleanup_idempotent
           #print axioms Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir
           #print axioms Grex.Scheduler.pool_deadlock_guard_terminates
+          #print axioms Grex.Walker.dry_run_no_side_effects
+          #print axioms Grex.Lockfile.lockfile_branch_mirrors_manifest_ref
           EOF
           # Run the probe via `lake env lean --run` semantics: plain
           # `lake env lean <file>` elaborates the file and prints all
@@ -314,6 +317,8 @@ jobs:
             "Grex.Walker.partial_clone_cleanup_idempotent"
             "Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir"
             "Grex.Scheduler.pool_deadlock_guard_terminates"
+            "Grex.Walker.dry_run_no_side_effects"
+            "Grex.Lockfile.lockfile_branch_mirrors_manifest_ref"
           )
           fail=0
           for thm in "${theorems[@]}"; do

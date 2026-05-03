@@ -198,6 +198,21 @@ pub enum TreeError {
         /// violated.
         reason: String,
     },
+
+    /// v1.3.1 (B4) — a child's resolved on-disk destination has no
+    /// usable UTF-8 `file_name` component. Surfaces during dry-run
+    /// record construction when `dest.file_name()` returns `None` (e.g.
+    /// the path ends in `..` or is a filesystem root) or the component
+    /// is not UTF-8. Recording the child with an empty `id` would
+    /// silently corrupt the dry-run plan, so the walker pushes this
+    /// error into `SyncMetaReport.errors` instead and continues.
+    #[error("invalid destination path `{path}`: {reason}")]
+    InvalidDestination {
+        /// On-disk destination path that lacked a usable file_name.
+        path: PathBuf,
+        /// One-line explanation of which rule the path violated.
+        reason: String,
+    },
 }
 
 /// Discriminator for [`TreeError::DirtyTreeRefusal`]. Each kind has its

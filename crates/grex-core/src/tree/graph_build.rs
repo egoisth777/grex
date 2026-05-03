@@ -91,6 +91,10 @@ pub fn build_graph(
         parent: None,
         commit_sha: root_commit_sha,
         synthetic: false,
+        // Root has no parent ChildRef — there is no manifest `ref:`
+        // value to mirror. v1.3.1 B14: lockfile.branch for the root
+        // entry is empty by construction.
+        manifest_ref: None,
     });
     let root_identity = pack_identity_for_root(workspace);
     walk_recursive(
@@ -218,6 +222,9 @@ fn handle_child(
         parent: Some(parent_id),
         commit_sha,
         synthetic: is_synthetic,
+        // v1.3.1 B14: carry the parent manifest's `ref:` verbatim so
+        // the sync orchestrator can mirror it into `LockEntry.branch`.
+        manifest_ref: child.r#ref.clone(),
     });
     state.edges.push(PackEdge { from: parent_id, to: child_id, kind: EdgeKind::Child });
 

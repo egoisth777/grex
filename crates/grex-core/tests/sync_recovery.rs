@@ -18,7 +18,7 @@ use std::fs;
 
 use chrono::Utc;
 use grex_core::execute::ExecError;
-use grex_core::manifest::{append_event, read_all, Event};
+use grex_core::manifest::{append_event, read_all, Event, SCHEMA_VERSION};
 use grex_core::sync::{self, scan_recovery, HaltedContext, SyncError, SyncOptions};
 use tokio_util::sync::CancellationToken;
 
@@ -202,23 +202,27 @@ fn recovery_scan_finds_dangling_starts() {
     fs::create_dir_all(log.parent().unwrap()).unwrap();
 
     // One "clean" pair + one "dangling" lone ActionStarted.
+    // v1.3.1 schema v2: pack-id field is `id`; `schema_version` is required.
     let clean_start = Event::ActionStarted {
         ts: Utc::now(),
-        pack: "pk".into(),
+        id: "pk".into(),
         action_idx: 0,
         action_name: "mkdir".into(),
+        schema_version: SCHEMA_VERSION.into(),
     };
     let clean_completed = Event::ActionCompleted {
         ts: Utc::now(),
-        pack: "pk".into(),
+        id: "pk".into(),
         action_idx: 0,
         result_summary: "PerformedChange".into(),
+        schema_version: SCHEMA_VERSION.into(),
     };
     let dangling = Event::ActionStarted {
         ts: Utc::now(),
-        pack: "pk".into(),
+        id: "pk".into(),
         action_idx: 1,
         action_name: "symlink".into(),
+        schema_version: SCHEMA_VERSION.into(),
     };
     for ev in [&clean_start, &clean_completed, &dangling] {
         append_event(&log, ev).unwrap();

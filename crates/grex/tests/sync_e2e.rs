@@ -187,8 +187,26 @@ fn options(dry_run: bool, workspace: PathBuf) -> SyncOptions {
 }
 
 #[test]
-fn e2e_dry_run_3_level_tree() {
+fn e2e_dry_run_after_wet_3_level_tree() {
+    // v1.3.1 (B4): dry-run no longer clones. Operator must sync once
+    // (wet) to populate the working tree, then dry-run reflects "what
+    // WOULD happen on next sync". Pre-v1.3.1 this test exercised
+    // dry-run on a fresh fixture and relied on the buggy clone-anyway
+    // behaviour to populate child manifests; we now seed the tree with
+    // a wet run first, then dry-run on the populated workspace and
+    // confirm no FS / lockfile mutation occurs the second time around.
     let f = build_fixture();
+    run(&f.root, &options(false, f.workspace.clone())).expect("wet seed run succeeds");
+
+    // Snapshot the lockfile + events.jsonl after wet seed so we can
+    // assert the dry-run leaves them byte-equal.
+    let lockfile_path = f.root.join(".grex/grex.lock");
+    let legacy_lockfile_path = f.root.join(".grex-lock");
+    let events_path = f.root.join(".grex/events.jsonl");
+    let lockfile_pre =
+        std::fs::read(&lockfile_path).or_else(|_| std::fs::read(&legacy_lockfile_path)).ok();
+    let events_pre = std::fs::read(&events_path).ok();
+
     let report = run(&f.root, &options(true, f.workspace.clone())).expect("dry run succeeds");
     assert_eq!(report.graph.nodes().len(), 4, "expect root + a + b + c");
     let child_edges = report
@@ -200,26 +218,12 @@ fn e2e_dry_run_3_level_tree() {
     assert_eq!(child_edges, 3, "3 Child edges: root→a, root→b, b→c");
     assert!(report.halted.is_none());
 
-    // M5-1c: meta packs now dispatch through `MetaPlugin` and emit one
-    // synthesis step per pack. So steps = a.mkdir + a.symlink + c.mkdir
-    // (3 declarative actions) + b.meta + root.meta (2 synthesis
-    // envelopes) = 5. Declarative actions are WouldPerformChange;
-    // meta synthesis steps are NoOp.
-    assert_eq!(report.steps.len(), 5);
-    let declarative_steps = report
-        .steps
-        .iter()
-        .filter(|s| matches!(s.exec_step.result, ExecResult::WouldPerformChange))
-        .count();
-    assert_eq!(declarative_steps, 3, "3 declarative actions plan: {:?}", report.steps);
-    let meta_steps =
-        report.steps.iter().filter(|s| matches!(s.exec_step.result, ExecResult::NoOp)).count();
-    assert_eq!(meta_steps, 2, "2 meta synthesis NoOp steps: {:?}", report.steps);
-
-    // Disk must be untouched.
-    assert!(!f.a_target_dir.exists(), "dry-run mkdir must not create dir");
-    assert!(!f.a_symlink_dst.exists(), "dry-run symlink must not create link");
-    assert!(!f.c_target_dir.exists(), "dry-run mkdir must not create dir");
+    // Dry-run on populated workspace MUST NOT mutate lockfile or events log.
+    let lockfile_post =
+        std::fs::read(&lockfile_path).or_else(|_| std::fs::read(&legacy_lockfile_path)).ok();
+    let events_post = std::fs::read(&events_path).ok();
+    assert_eq!(lockfile_pre, lockfile_post, "dry-run must not mutate lockfile");
+    assert_eq!(events_pre, events_post, "dry-run must not mutate events.jsonl");
 }
 
 #[test]
@@ -565,6 +569,21 @@ fn e2e_force_plus_dry_run_plans_but_does_not_write_lockfile() {
     // Lockfile unchanged — dry-run must never persist.
     let post_body = fs::read_to_string(&lockfile_path).expect("lockfile still present");
     assert_eq!(warm_body, post_body, "dry-run + force must not rewrite lockfile");
+
+    // v1.3.1 (B4 reviewer fix-up): the workspace-scoped sidecar lock at
+    // `<workspace>/.grex.sync.lock` must NOT be created by a dry-run.
+    // Pre-fix, `open_workspace_lock` ran unconditionally and
+    // `ScopedLock::open` materialised the file before any dry_run gate
+    // had a chance to skip the rest of the pipeline. Removing the
+    // warm-up's lock first keeps this assertion meaningful even if the
+    // wet warm-up legitimately created one.
+    let ws_lock = f.workspace.join(".grex.sync.lock");
+    let _ = fs::remove_file(&ws_lock);
+    let _ = run(&f.root, &dry_force).expect("second dry+force sync ok");
+    assert!(
+        !ws_lock.exists(),
+        "B4 v1.3.1: dry-run MUST NOT create `<workspace>/.grex.sync.lock`; found {ws_lock:?}",
+    );
 }
 
 #[test]

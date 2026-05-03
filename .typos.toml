@@ -7,4 +7,6 @@ builtin = "builtin"
 extend-exclude = [
     "Cargo.lock",
     "target/",
+    "**/progress.md",
+    "**/history.md",
 ]

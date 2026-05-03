@@ -46,7 +46,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::execute::{ExecCtx, ExecError, ExecStep};
-use crate::fs::gitignore;
 use crate::pack::{Action, PackManifest};
 use crate::pack_lock::{PackLock, PackLockError};
 
@@ -213,40 +212,6 @@ impl Drop for VisitedInsertGuard {
     }
 }
 
-/// Key used under [`PackManifest::extensions`] to carry a pack's
-/// `.gitignore` patterns (R-M5-08 integration). The YAML shape is a
-/// sequence of strings:
-///
-/// ```yaml
-/// x-gitignore:
-///   - target/
-///   - "*.log"
-/// ```
-///
-/// Missing key → pack contributes no managed block. Empty list → the
-/// block is written with zero pattern lines (author opt-in marker).
-/// Any non-sequence / non-string entries are silently ignored so a
-/// malformed extension never halts the lifecycle.
-const GITIGNORE_EXT_KEY: &str = "x-gitignore";
-
-/// Extract `x-gitignore` patterns from `pack.extensions`. Returns
-/// `None` when the key is absent so callers can skip gitignore
-/// integration entirely (no managed block written or removed).
-fn read_gitignore_patterns(pack: &PackManifest) -> Option<Vec<String>> {
-    let raw = pack.extensions.get(GITIGNORE_EXT_KEY)?;
-    let seq = raw.as_sequence()?;
-    Some(seq.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-}
-
-/// Resolve the `.gitignore` path a pack writes its managed block into.
-/// Convention: `<workspace>/.gitignore`. Keeps every pack's block in
-/// one file so operators inspect one location regardless of pack
-/// layout. The workspace-level placement also matches how tools
-/// (`git check-ignore`, editors) resolve rules.
-fn gitignore_target(ctx: &ExecCtx<'_>) -> std::path::PathBuf {
-    ctx.workspace.join(".gitignore")
-}
-
 /// Write the `x-gitignore` managed block for `pack`. Every pack gets a
 /// managed block that always includes the default grex-managed patterns
 /// (`.grex-lock` as of feat-m6-2); the author's `x-gitignore` list is
@@ -256,31 +221,17 @@ fn gitignore_target(ctx: &ExecCtx<'_>) -> std::path::PathBuf {
 ///
 /// Errors map to [`ExecError::ExecInvalid`] so the lifecycle surfaces a
 /// single halt variant rather than leaking the gitignore error taxonomy.
-pub(crate) fn apply_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
-    let authored = read_gitignore_patterns(pack).unwrap_or_default();
-    let target = gitignore_target(ctx);
-    // Defaults first so the generated block is stable regardless of
-    // authored content; de-dup if an author explicitly lists one of the
-    // defaults (e.g. `.grex-lock`) so we never double-emit.
-    let mut merged: Vec<&str> = vec![crate::pack_lock::PACK_LOCK_FILE_NAME];
-    for p in &authored {
-        if !merged.contains(&p.as_str()) {
-            merged.push(p.as_str());
-        }
-    }
-    gitignore::upsert_managed_block(&target, &pack.name, &merged)
-        .map_err(|e| ExecError::ExecInvalid(format!("gitignore upsert failed: {e}")))
-}
-
-/// Remove the `x-gitignore` managed block for `pack`. No-op when the
-/// file is absent or the block is not present. Called on every
-/// teardown regardless of whether the manifest still carries the
-/// extension, so a pack whose author removed the extension before
-/// running teardown still gets its prior block cleaned.
-fn retire_gitignore(ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<(), ExecError> {
-    let target = gitignore_target(ctx);
-    gitignore::remove_managed_block(&target, &pack.name)
-        .map_err(|e| ExecError::ExecInvalid(format!("gitignore remove failed: {e}")))
+pub(crate) fn apply_gitignore(_ctx: &ExecCtx<'_>, _pack: &PackManifest) -> Result<(), ExecError> {
+    // B12 v1.3.1: per-lifecycle `.gitignore` mutation removed.
+    //
+    // Maintainer decision (2026-05-02): `grex sync` no longer writes
+    // managed `# >>> grex:<pack> >>>` blocks into the parent meta-repo's
+    // `.gitignore`. The advisory finding for "parent git index tracks
+    // pack content" is surfaced by `grex doctor` instead, leaving the
+    // operator in control of the file. Function preserved as a no-op
+    // so existing call sites compile unchanged; the reviewer pass will
+    // delete the call sites in a follow-up commit.
+    Ok(())
 }
 
 /// Uniform registration surface for every pack type.
@@ -743,7 +694,7 @@ impl PackTypePlugin for MetaPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         if ctx.visited_meta.is_some() {
             // feat-m6 H9: release tier/lock guards before child recursion so
             // children can acquire their own Semaphore→PerPack sequence
@@ -782,7 +733,7 @@ impl PackTypePlugin for MetaPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         if ctx.visited_meta.is_some() {
             // feat-m6 H9: release tier/lock guards before child recursion
             // (see install() for rationale).
@@ -842,7 +793,7 @@ impl PackTypePlugin for MetaPlugin {
         // has already driven child teardown in reverse post-order
         // (synthesis_envelope path). In both cases a child failure
         // halts the pipeline before this retire executes.
-        retire_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Ok(step)
     }
 
@@ -861,7 +812,7 @@ impl PackTypePlugin for MetaPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         if ctx.visited_meta.is_some() {
             // feat-m6 H9: release tier/lock guards before child recursion
             // (see install() for rationale).
@@ -1041,7 +992,7 @@ impl PackTypePlugin for DeclarativePlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_actions(ctx, pack)
     }
 
@@ -1063,7 +1014,7 @@ impl PackTypePlugin for DeclarativePlugin {
         // Declarative actions are idempotent by contract, so update ==
         // re-install. The M4 FsExecutor guarantees "already satisfied"
         // short-circuits for symlink/env/mkdir.
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_actions(ctx, pack)
     }
 
@@ -1093,7 +1044,7 @@ impl PackTypePlugin for DeclarativePlugin {
             Some(actions) => Self::run_action_slice(ctx, actions)?,
             None => Self::run_auto_reverse(ctx, pack)?,
         };
-        retire_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Ok(step)
     }
 
@@ -1114,7 +1065,7 @@ impl PackTypePlugin for DeclarativePlugin {
             .map_err(map_pack_lock_err)?;
         // Sync mirrors install at the declarative layer; upstream fetch
         // is a meta-pack concern (child-pack git pulls in M5-2+).
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_actions(ctx, pack)
     }
 }
@@ -1232,7 +1183,11 @@ impl PackTypePlugin for ScriptedPlugin {
         Self::NAME
     }
 
-    async fn install(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+    async fn install(
+        &self,
+        ctx: &ExecCtx<'_>,
+        _pack: &PackManifest,
+    ) -> Result<ExecStep, ExecError> {
         let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
         let _permit = acquire_scheduler_permit(ctx).await?;
         // Register this pack root in the cycle-detection set BEFORE
@@ -1247,11 +1202,11 @@ impl PackTypePlugin for ScriptedPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_hook(ctx, "setup").await
     }
 
-    async fn update(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+    async fn update(&self, ctx: &ExecCtx<'_>, _pack: &PackManifest) -> Result<ExecStep, ExecError> {
         let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
         let _permit = acquire_scheduler_permit(ctx).await?;
         // Register this pack root in the cycle-detection set BEFORE
@@ -1266,14 +1221,14 @@ impl PackTypePlugin for ScriptedPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_hook(ctx, "update").await
     }
 
     async fn teardown(
         &self,
         ctx: &ExecCtx<'_>,
-        pack: &PackManifest,
+        _pack: &PackManifest,
     ) -> Result<ExecStep, ExecError> {
         let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
         let _permit = acquire_scheduler_permit(ctx).await?;
@@ -1294,11 +1249,11 @@ impl PackTypePlugin for ScriptedPlugin {
         // removed so a failing script does not "lose" the block (the
         // next teardown retry will retry both steps).
         let step = Self::run_hook(ctx, "teardown").await?;
-        retire_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Ok(step)
     }
 
-    async fn sync(&self, ctx: &ExecCtx<'_>, pack: &PackManifest) -> Result<ExecStep, ExecError> {
+    async fn sync(&self, ctx: &ExecCtx<'_>, _pack: &PackManifest) -> Result<ExecStep, ExecError> {
         let _tier_sema = crate::pack_lock::TierGuard::push(crate::pack_lock::Tier::Semaphore);
         let _permit = acquire_scheduler_permit(ctx).await?;
         // Register this pack root in the cycle-detection set BEFORE
@@ -1313,7 +1268,7 @@ impl PackTypePlugin for ScriptedPlugin {
             .acquire_async()
             .await
             .map_err(map_pack_lock_err)?;
-        apply_gitignore(ctx, pack)?;
+        // B12 v1.3.1: gitignore mutation removed; doctor handles advisory now.
         Self::run_hook(ctx, "sync").await
     }
 }
@@ -1872,12 +1827,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gitignore_extension_absent_still_emits_default_block() {
-        // feat-m6-2: every pack contributes `.grex-lock` to its managed
-        // block regardless of whether it declares `x-gitignore`. Prior
-        // behaviour (absent extension → no file) changed with the
-        // per-pack lock contract — `.grex-lock` must never appear in
-        // `git status` even when the author provided no extension.
+    async fn gitignore_extension_absent_does_not_create_file() {
+        // B12 v1.3.1: per-lifecycle `.gitignore` mutation removed.
+        // Inverted from the v1.2.x assertion that absent `x-gitignore`
+        // still produced a managed block carrying `.grex-lock` —
+        // install no longer writes the file at all.
         use crate::vars::VarEnv;
         use std::sync::Arc;
         use tempfile::TempDir;
@@ -1891,14 +1845,20 @@ mod tests {
         let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
         let plugin = DeclarativePlugin;
         plugin.install(&ctx, &pack).await.expect("install ok");
-        let gitig = std::fs::read_to_string(tmp_path.join(".gitignore"))
-            .expect("default managed block file is written");
-        assert!(gitig.contains("# >>> grex:ng >>>"), "managed block header present");
-        assert!(gitig.contains(".grex-lock"), "default managed pattern present");
+        assert!(
+            !tmp_path.join(".gitignore").exists(),
+            "B12 v1.3.1: install MUST NOT create `.gitignore`. Found: {:?}",
+            std::fs::read_to_string(tmp_path.join(".gitignore")),
+        );
     }
 
     #[tokio::test]
-    async fn gitignore_extension_present_writes_managed_block() {
+    async fn gitignore_extension_present_does_not_mutate_file() {
+        // B12 v1.3.1: even with `x-gitignore:` declared, install MUST
+        // NOT write a managed block. Inverted from the v1.2.x
+        // assertion that the block was created (and removed on
+        // teardown). The whole lifecycle is now no-op against
+        // `.gitignore`.
         use crate::vars::VarEnv;
         use std::sync::Arc;
         use tempfile::TempDir;
@@ -1912,14 +1872,16 @@ mod tests {
         let ctx = ExecCtx::new(&vars, &tmp_path, &tmp_path).with_registry(&action_reg);
         let plugin = DeclarativePlugin;
         plugin.install(&ctx, &pack).await.expect("install ok");
-        let gitig = std::fs::read_to_string(tmp_path.join(".gitignore")).unwrap();
-        assert!(gitig.contains("# >>> grex:gi >>>"));
-        assert!(gitig.contains("target/"));
-        assert!(gitig.contains("*.log"));
-        // Teardown removes the block.
+        assert!(
+            !tmp_path.join(".gitignore").exists(),
+            "B12 v1.3.1: install with `x-gitignore:` MUST NOT create `.gitignore`",
+        );
+        // Teardown also leaves the file untouched.
         plugin.teardown(&ctx, &pack).await.expect("teardown ok");
-        let after = std::fs::read_to_string(tmp_path.join(".gitignore")).unwrap_or_default();
-        assert!(!after.contains("grex:gi"), "teardown must remove block: {after}");
+        assert!(
+            !tmp_path.join(".gitignore").exists(),
+            "B12 v1.3.1: teardown MUST NOT create `.gitignore`",
+        );
     }
 
     // -------- end M5-2b tests --------------------------------------

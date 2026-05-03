@@ -45,7 +45,7 @@ use crate::execute::{
 use crate::fs::{ManifestLock, ScopedLock};
 use crate::git::GixBackend;
 use crate::lockfile::{
-    compute_actions_hash, read_lockfile, write_lockfile, LockEntry, LockfileError,
+    branch_of, compute_actions_hash, read_lockfile, write_lockfile, LockEntry, LockfileError,
 };
 use crate::manifest::{append_event, read_all, Event, ACTION_ERROR_SUMMARY_MAX, SCHEMA_VERSION};
 use crate::pack::{Action, PackValidationError};
@@ -578,17 +578,15 @@ pub fn run(
     // hiding it behind `_` (downstream stages will read it).
     let _ = cancel;
     let workspace = prepare_workspace(pack_root, opts)?;
-    let (mut ws_lock, ws_lock_path) = open_workspace_lock(&workspace)?;
-    let _ws_guard = match ws_lock.try_acquire() {
-        Ok(Some(g)) => g,
-        Ok(None) => {
-            return Err(SyncError::WorkspaceBusy {
-                workspace: workspace.clone(),
-                lock_path: ws_lock_path,
-            });
-        }
-        Err(e) => return Err(workspace_lock_err(&ws_lock_path, &e.to_string())),
-    };
+    // v1.3.1 (B4) — `dry_run = true` is contractually FS-mutation-free.
+    // `open_workspace_lock` (via `ScopedLock::open`) creates a sidecar
+    // file at `<workspace>/.grex.sync.lock`, which would itself violate
+    // the no-FS-mutation contract. Skip lock acquisition entirely in
+    // dry-run; the dry-run path is read-only by construction so
+    // concurrent dry-runs against the same workspace are safe.
+    let mut ws_lock_holder =
+        if !opts.dry_run { Some(open_workspace_lock(&workspace)?) } else { None };
+    let _ws_guard = try_acquire_workspace_guard(ws_lock_holder.as_mut(), &workspace)?;
 
     // Compile `--only` patterns into a GlobSet here so the
     // `globset` crate version does not leak into `SyncOptions`.
@@ -801,6 +799,12 @@ fn run_sync_meta(workspace: &Path, opts: &SyncOptions) -> Result<(), SyncError> 
         parallel,
         quarantine,
         retention,
+        // v1.3.1 (B4) — propagate the orchestrator's dry-run flag into
+        // the walker so Phase 1 skips clone/fetch and emits the
+        // would-clone records into `SyncMetaReport::dry_run_would_clone`
+        // instead. The orchestrator already gates lockfile persist via
+        // `persist_lockfile_if_clean`; this wires the walker side.
+        dry_run: opts.dry_run,
     };
     let prune_candidates = compute_prune_candidates(workspace, &loader);
     let report = sync_meta(workspace, &backend, &loader, &meta_opts, &prune_candidates)?;
@@ -943,6 +947,30 @@ fn open_workspace_lock(workspace: &Path) -> Result<(ScopedLock, PathBuf), SyncEr
     let ws_lock = ScopedLock::open(&ws_lock_path)
         .map_err(|e| workspace_lock_err(&ws_lock_path, &e.to_string()))?;
     Ok((ws_lock, ws_lock_path))
+}
+
+/// Try-acquire the workspace lock guard when the holder is `Some`.
+/// Returns `Ok(None)` when the holder is `None` (e.g. dry-run path skips
+/// lock acquisition entirely; see Blocker B4 v1.3.1). Translates the
+/// busy/error outcomes into the shared [`SyncError`] taxonomy. Extracted
+/// from [`run`] / [`teardown`] to keep both verb entry-points under the
+/// `clippy::too-many-lines` limit while preserving the original lock
+/// semantics.
+fn try_acquire_workspace_guard<'a>(
+    holder: Option<&'a mut (ScopedLock, PathBuf)>,
+    workspace: &Path,
+) -> Result<Option<fd_lock::RwLockWriteGuard<'a, std::fs::File>>, SyncError> {
+    let Some((ws_lock, ws_lock_path)) = holder else {
+        return Ok(None);
+    };
+    match ws_lock.try_acquire() {
+        Ok(Some(g)) => Ok(Some(g)),
+        Ok(None) => Err(SyncError::WorkspaceBusy {
+            workspace: workspace.to_path_buf(),
+            lock_path: ws_lock_path.clone(),
+        }),
+        Err(e) => Err(workspace_lock_err(ws_lock_path, &e.to_string())),
+    }
 }
 
 /// Build a `Validation` error describing a workspace-lock failure.
@@ -1323,6 +1351,10 @@ fn run_actions(
         let manifest = node.manifest.clone();
         let commit_sha = node.commit_sha.clone().unwrap_or_default();
         let synthetic = node.synthetic;
+        // v1.3.1 B14: parent manifest's `ref:` value for this node,
+        // captured by the walker. Threaded into `upsert_lock_entry`
+        // so the lockfile `branch` slot mirrors the manifest verbatim.
+        let manifest_ref = node.manifest_ref.clone();
         // `--only` filter + skip-on-hash short-circuits colocated in
         // `try_skip_or_filter` so this outer loop stays within the
         // 50-LOC per-function budget.
@@ -1375,7 +1407,15 @@ fn run_actions(
         // resolved HEAD SHA when the pack's working tree is a git
         // repository, otherwise an empty string keeps the hash stable.
         let actions_hash = compute_actions_hash(&actions, &commit_sha);
-        upsert_lock_entry(prior_lock, next_lock, &pack_name, &commit_sha, &actions_hash, synthetic);
+        upsert_lock_entry(
+            prior_lock,
+            next_lock,
+            &pack_name,
+            &commit_sha,
+            &actions_hash,
+            synthetic,
+            manifest_ref.as_deref(),
+        );
     }
 }
 
@@ -1539,7 +1579,7 @@ fn run_pack_lifecycle(
     // pack types halt the pack the same way M4 halted unknown actions.
     if pack_type_registry.get(type_tag).is_none() {
         let err = ExecError::UnknownAction(format!("pack type `{type_tag}`"));
-        record_action_err(report, event_log, lock_path, pack_name, 0, "pack-type", err);
+        record_action_err(dry_run, report, event_log, lock_path, pack_name, 0, "pack-type", err);
         return true;
     }
     match manifest.r#type {
@@ -1564,6 +1604,7 @@ fn run_pack_lifecycle(
             workspace,
             event_log,
             lock_path,
+            dry_run,
             registry,
             pack_type_registry,
             rt,
@@ -1580,7 +1621,7 @@ fn run_pack_lifecycle(
 /// Run a declarative pack's actions sequentially. Preserves the M4
 /// per-action event-log bracket (`ActionStarted` → `ActionCompleted` |
 /// `ActionHalted`). Returns `true` when the sync must halt.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_declarative_actions(
     report: &mut SyncReport,
     vars: &VarEnv,
@@ -1596,18 +1637,20 @@ fn run_declarative_actions(
     actions: &[Action],
     scheduler: &Arc<Scheduler>,
 ) -> bool {
-    // `apply_gitignore` is called per-lifecycle by each PackTypePlugin
-    // for meta/scripted, and here for declarative (which bypasses the
-    // plugin in `sync::run`'s per-action driver). Keeping plugins as
-    // the single apply site everywhere else means the declarative
-    // per-action path is the only code outside the PackTypePlugin
-    // surface that needs a direct apply call.
+    // B12 v1.3.1: `apply_gitignore` was previously called here for
+    // declarative packs (the per-action driver bypasses the plugin
+    // path). Auto-mutation of the parent meta-repo's `.gitignore` was
+    // removed in v1.3.1; `grex doctor` now surfaces an advisory when
+    // the parent git index tracks pack content. The function is kept
+    // as a no-op shim and the call is left in place so the diff stays
+    // minimal — the reviewer pass will delete it together with the
+    // other call sites in pack_type.rs.
     if !dry_run {
         let ctx = ExecCtx::new(vars, pack_path, workspace)
             .with_platform(Platform::current())
             .with_scheduler(scheduler);
         if let Err(e) = crate::plugin::pack_type::apply_gitignore(&ctx, manifest) {
-            record_action_err(report, event_log, lock_path, pack_name, 0, "gitignore", e);
+            record_action_err(dry_run, report, event_log, lock_path, pack_name, 0, "gitignore", e);
             return true;
         }
     }
@@ -1617,19 +1660,22 @@ fn run_declarative_actions(
             .with_scheduler(scheduler);
         let action_tag = action_kind_tag(action);
         append_manifest_event(
+            dry_run,
             event_log,
             lock_path,
             &Event::ActionStarted {
                 ts: Utc::now(),
-                pack: pack_name.to_string(),
+                id: pack_name.to_string(),
                 action_idx: idx,
                 action_name: action_tag.to_string(),
+                schema_version: SCHEMA_VERSION.to_string(),
             },
             &mut report.event_log_warnings,
         );
         let step_result =
             if dry_run { plan.execute(action, &ctx) } else { fs.execute(action, &ctx) };
         if !record_action_outcome(
+            dry_run,
             report,
             event_log,
             lock_path,
@@ -1655,6 +1701,7 @@ fn dispatch_pack_type_plugin(
     workspace: &Path,
     event_log: &Path,
     lock_path: &Path,
+    dry_run: bool,
     registry: &Arc<Registry>,
     pack_type_registry: &Arc<PackTypeRegistry>,
     rt: &tokio::runtime::Runtime,
@@ -1680,13 +1727,15 @@ fn dispatch_pack_type_plugin(
         .with_pack_type_registry(pack_type_registry)
         .with_scheduler(scheduler);
     append_manifest_event(
+        dry_run,
         event_log,
         lock_path,
         &Event::ActionStarted {
             ts: Utc::now(),
-            pack: pack_name.to_string(),
+            id: pack_name.to_string(),
             action_idx: 0,
             action_name: type_tag.to_string(),
+            schema_version: SCHEMA_VERSION.to_string(),
         },
         &mut report.event_log_warnings,
     );
@@ -1700,7 +1749,16 @@ fn dispatch_pack_type_plugin(
     // the plugin lifecycle and may span `.await` / thread hops under the
     // multi-thread runtime) has no enforcement frame to push into.
     let step_result = rt.block_on(crate::pack_lock::with_tier_scope(plugin.sync(&ctx, manifest)));
-    !record_action_outcome(report, event_log, lock_path, pack_name, 0, type_tag, step_result)
+    !record_action_outcome(
+        dry_run,
+        report,
+        event_log,
+        lock_path,
+        pack_name,
+        0,
+        type_tag,
+        step_result,
+    )
 }
 
 /// Pure skip-eligibility decision. Returns `Some(hash)` when the pack
@@ -1821,6 +1879,7 @@ fn upsert_lock_entry(
     commit_sha: &str,
     actions_hash: &str,
     synthetic: bool,
+    manifest_ref: Option<&str>,
 ) {
     if synthetic {
         if let Some(prior) = prior_lock.get(pack_name) {
@@ -1843,7 +1902,10 @@ fn upsert_lock_entry(
             // manifest path captured during the walk.
             path: pack_name.to_string(),
             sha: commit_sha.to_string(),
-            branch: String::new(),
+            // v1.3.1 B14: mirror the parent manifest's `ref:` value
+            // (or empty when absent), per the Lean theorem
+            // `Grex.Lockfile.lockfile_branch_mirrors_manifest_ref`.
+            branch: branch_of(manifest_ref),
             installed_at,
             actions_hash: actions_hash.to_string(),
             schema_version: "1".to_string(),
@@ -1862,7 +1924,9 @@ fn upsert_lock_entry(
 
 /// Record one action outcome into `report` + event log. Returns `false`
 /// when the run must halt (on error); `true` otherwise.
+#[allow(clippy::too_many_arguments)]
 fn record_action_outcome(
+    dry_run: bool,
     report: &mut SyncReport,
     event_log: &Path,
     lock_path: &Path,
@@ -1873,11 +1937,11 @@ fn record_action_outcome(
 ) -> bool {
     match step_result {
         Ok(step) => {
-            record_action_ok(report, event_log, lock_path, pack_name, idx, step);
+            record_action_ok(dry_run, report, event_log, lock_path, pack_name, idx, step);
             true
         }
         Err(e) => {
-            record_action_err(report, event_log, lock_path, pack_name, idx, action_tag, e);
+            record_action_err(dry_run, report, event_log, lock_path, pack_name, idx, action_tag, e);
             false
         }
     }
@@ -1885,7 +1949,13 @@ fn record_action_outcome(
 
 /// Success-path bookkeeping: emit legacy `Sync` summary + `ActionCompleted`
 /// audit event, then push the step onto the report.
+///
+/// v1.3.1 B4 fix-up: under `dry_run = true`, the on-disk event-log writes
+/// are skipped. The in-memory `report.steps` push still happens — dry-run
+/// callers rely on the planned-step transcript for output.
+#[allow(clippy::too_many_arguments)]
 fn record_action_ok(
+    dry_run: bool,
     report: &mut SyncReport,
     event_log: &Path,
     lock_path: &Path,
@@ -1893,15 +1963,24 @@ fn record_action_ok(
     idx: usize,
     step: ExecStep,
 ) {
-    append_step_event(event_log, lock_path, pack_name, &step, &mut report.event_log_warnings);
+    append_step_event(
+        dry_run,
+        event_log,
+        lock_path,
+        pack_name,
+        &step,
+        &mut report.event_log_warnings,
+    );
     append_manifest_event(
+        dry_run,
         event_log,
         lock_path,
         &Event::ActionCompleted {
             ts: Utc::now(),
-            pack: pack_name.to_string(),
+            id: pack_name.to_string(),
             action_idx: idx,
             result_summary: format!("{:?}", step.result),
+            schema_version: SCHEMA_VERSION.to_string(),
         },
         &mut report.event_log_warnings,
     );
@@ -1910,7 +1989,14 @@ fn record_action_ok(
 
 /// Halt-path bookkeeping: emit `ActionHalted` audit event, then stash the
 /// rich `HaltedContext` into `report.halted`.
+///
+/// v1.3.1 B4 fix-up: under `dry_run = true`, the on-disk event-log write
+/// is skipped; the `report.halted` slot still receives the
+/// [`HaltedContext`] so callers can render the halt reason without
+/// touching disk.
+#[allow(clippy::too_many_arguments)]
 fn record_action_err(
+    dry_run: bool,
     report: &mut SyncReport,
     event_log: &Path,
     lock_path: &Path,
@@ -1921,14 +2007,16 @@ fn record_action_err(
 ) {
     let error_summary = truncate_error_summary(&e);
     append_manifest_event(
+        dry_run,
         event_log,
         lock_path,
         &Event::ActionHalted {
             ts: Utc::now(),
-            pack: pack_name.to_string(),
+            id: pack_name.to_string(),
             action_idx: idx,
             action_name: action_tag.to_string(),
             error_summary,
+            schema_version: SCHEMA_VERSION.to_string(),
         },
         &mut report.event_log_warnings,
     );
@@ -2012,12 +2100,16 @@ fn recovery_hint_for(err: &ExecError) -> Option<String> {
 /// This closes the bypass gap surfaced by the M3 concurrency review where
 /// `append_event` was called without any cross-process serialisation.
 fn append_step_event(
+    dry_run: bool,
     log: &Path,
     lock_path: &Path,
     pack: &str,
     step: &ExecStep,
     warnings: &mut Vec<String>,
 ) {
+    if dry_run {
+        return;
+    }
     let summary = format!("{}:{:?}", step.action_name, step.result);
     let event = Event::Sync { ts: Utc::now(), id: pack.to_string(), sha: summary };
     if let Err(e) = append_event_locked(log, lock_path, &event) {
@@ -2034,7 +2126,21 @@ fn append_step_event(
 /// Failures are logged and recorded as non-fatal warnings — the spec
 /// marks event-log write failures as non-aborting so a transient disk
 /// error must not kill a sync mid-stream.
-fn append_manifest_event(log: &Path, lock_path: &Path, event: &Event, warnings: &mut Vec<String>) {
+///
+/// v1.3.1 B4 fix-up: when `dry_run` is `true`, this function is a no-op
+/// — the dry-run contract forbids any write to `<workspace>/.grex/`,
+/// including the audit `events.jsonl`. In-memory `event_log_warnings`
+/// records remain available; only the on-disk side effect is gated.
+fn append_manifest_event(
+    dry_run: bool,
+    log: &Path,
+    lock_path: &Path,
+    event: &Event,
+    warnings: &mut Vec<String>,
+) {
+    if dry_run {
+        return;
+    }
     if let Err(e) = append_event_locked(log, lock_path, event) {
         tracing::warn!(target: "grex::sync", "manifest append failed: {e}");
         warnings.push(format!("{}: {e}", log.display()));
@@ -2147,7 +2253,7 @@ pub fn teardown(
 /// auto-reverse / explicit-block logic must compose with the
 /// registry; going through the per-action path would mean
 /// re-implementing inverse synthesis in the sync loop.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn run_teardown(
     report: &mut SyncReport,
     order: &[usize],
@@ -2172,7 +2278,9 @@ fn run_teardown(
         let type_tag = manifest.r#type.as_str();
         if pack_type_registry.get(type_tag).is_none() {
             let err = ExecError::UnknownAction(format!("pack type `{type_tag}`"));
-            record_action_err(report, event_log, lock_path, &pack_name, 0, "pack-type", err);
+            // Teardown has no dry-run mode — pass `false` so the
+            // event-log writes proceed as before.
+            record_action_err(false, report, event_log, lock_path, &pack_name, 0, "pack-type", err);
             return;
         }
         let ctx = ExecCtx::new(vars, &pack_path, workspace)
@@ -2181,13 +2289,15 @@ fn run_teardown(
             .with_pack_type_registry(pack_type_registry)
             .with_scheduler(scheduler);
         append_manifest_event(
+            false,
             event_log,
             lock_path,
             &Event::ActionStarted {
                 ts: Utc::now(),
-                pack: pack_name.clone(),
+                id: pack_name.clone(),
                 action_idx: 0,
                 action_name: type_tag.to_string(),
+                schema_version: SCHEMA_VERSION.to_string(),
             },
             &mut report.event_log_warnings,
         );
@@ -2198,6 +2308,7 @@ fn run_teardown(
         let step_result =
             rt.block_on(crate::pack_lock::with_tier_scope(plugin.teardown(&ctx, &manifest)));
         if !record_action_outcome(
+            false,
             report,
             event_log,
             lock_path,
@@ -2397,20 +2508,22 @@ fn collect_dangling_starts(events: &[Event]) -> Vec<DanglingStart> {
     let mut open: HashMap<(String, usize), DanglingStart> = HashMap::new();
     for ev in events {
         match ev {
-            Event::ActionStarted { ts, pack, action_idx, action_name } => {
+            // v1.3.1 schema v2: pack-id field is `id`. The destructure
+            // binds `id` and `schema_version` is ignored via `..`.
+            Event::ActionStarted { ts, id, action_idx, action_name, .. } => {
                 open.insert(
-                    (pack.clone(), *action_idx),
+                    (id.clone(), *action_idx),
                     DanglingStart {
-                        pack: pack.clone(),
+                        pack: id.clone(),
                         action_idx: *action_idx,
                         action_name: action_name.clone(),
                         started_at: *ts,
                     },
                 );
             }
-            Event::ActionCompleted { pack, action_idx, .. }
-            | Event::ActionHalted { pack, action_idx, .. } => {
-                open.remove(&(pack.clone(), *action_idx));
+            Event::ActionCompleted { id, action_idx, .. }
+            | Event::ActionHalted { id, action_idx, .. } => {
+                open.remove(&(id.clone(), *action_idx));
             }
             _ => {}
         }
@@ -2515,7 +2628,7 @@ mod synthetic_transition_tests {
         );
         let mut next: HashMap<String, LockEntry> = HashMap::new();
 
-        upsert_lock_entry(&prior, &mut next, "beta", "deadbeef", &stable_hash(), true);
+        upsert_lock_entry(&prior, &mut next, "beta", "deadbeef", &stable_hash(), true, None);
 
         let entry = next.get("beta").expect("entry must be upserted");
         assert!(entry.synthetic, "downgraded entry must carry synthetic = true");
@@ -2544,7 +2657,7 @@ mod synthetic_transition_tests {
         );
         let mut next: HashMap<String, LockEntry> = HashMap::new();
 
-        upsert_lock_entry(&prior, &mut next, "gamma", "deadbeef", &stable_hash(), true);
+        upsert_lock_entry(&prior, &mut next, "gamma", "deadbeef", &stable_hash(), true, None);
 
         let entry = next.get("gamma").expect("entry must be upserted");
         assert!(entry.synthetic, "synthetic must remain true on no-op refresh");

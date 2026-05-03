@@ -80,6 +80,14 @@ pub struct PackNode {
     /// through to the lockfile (`LockEntry::synthetic`) and downstream
     /// surfaces (doctor, ls). Default `false` for every declared pack.
     pub synthetic: bool,
+    /// Verbatim copy of the parent manifest's `ref:` field (the
+    /// originating `crate::pack::ChildRef::r#ref`) — `None` for the
+    /// root and for children whose manifest declared no `ref:`. Threaded
+    /// from the walker down to [`crate::sync::run`] so the lockfile
+    /// `branch` slot can mirror the manifest verbatim, per the v1.3.1
+    /// B14 fix and the Lean theorem
+    /// `Grex.Lockfile.lockfile_branch_mirrors_manifest_ref`.
+    pub manifest_ref: Option<String>,
 }
 
 /// An edge in the walked graph.

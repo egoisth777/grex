@@ -549,13 +549,14 @@ fn cycle_detection_canonicalises_symlinks() {
     );
 }
 
-/// Child-failure preserves the parent meta pack's managed gitignore
-/// block: a partial teardown must leave the block in place so
-/// operators still see the advertised patterns until the remaining
-/// children tear down cleanly. Exercises the halt-before-retire
-/// ordering in `MetaPlugin::teardown` (recurse_children returns
-/// `Err(..)`, the `?` operator short-circuits before
-/// `retire_gitignore` runs).
+/// B12 v1.3.1: gitignore mutation removed. The pre-v1.3.1 contract
+/// was that a partial teardown must leave the parent's managed
+/// gitignore block in place; that contract is now vacuous because
+/// install never writes a block. Test retained but `#[ignore]`d so
+/// `cargo test` keeps a record of the prior invariant — the reviewer
+/// pass will delete it when the auto-mutation contract is fully
+/// retired (no callers reference managed-block writes anywhere).
+#[ignore = "B12 v1.3.1: gitignore auto-mutation removed; managed block is never written"]
 #[test]
 fn meta_teardown_child_failure_preserves_parent_gitignore_block() {
     let tmp = TempDir::new().unwrap();

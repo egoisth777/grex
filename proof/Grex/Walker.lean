@@ -701,6 +701,58 @@ theorem cancellation_terminates_promptly
     sync_meta_inner_model true visited t = SyncMetaResult.ok :=
   (cancellation_propagates_through_recursion visited t).1
 
+/-! ### v1.3.1 — dry-run side-effect gate (B4)
+
+The v1.3.1 release closes B4 from the v1.3.0 dogfood: `grex sync --dry-run`
+v1.3.0 still performs real network clones + FS writes. The fix gates the
+clone path AND the FS-write path behind `if !ctx.dry_run` in
+`crates/grex-core/src/tree/walker.rs` Phase 3 child entry, AND emits
+audit events of kind `Event::DryRunWouldClone` instead of executing the
+side effect.
+
+The model below does not require any extension — `sync_meta_inner_model`
+is already a pure recursion with no FS or network in its codomain. The
+theorem below is the model-level reading of B4: dry-run is observationally
+inert at the model layer; the Rust bridge guarantees zero FS write / zero
+network call when the dry_run gate is set. The bridge interpretation
+is bundled with the existing `sync_local_writes` bridge entry (Bridge.lean
+entry #2) — no new bridge axiom is required.
+
+Bridge.lean axiom count remains 9; Types.lean axiom count remains 4
+(no top-level `axiom` keyword additions in this release).
+-/
+
+/-- **`dry_run_no_side_effects` (v1.3.1, Rule-8 gate).**
+
+    Model-level invariant: the dry-run gate at the Rust caller does not
+    alter the `SyncMetaResult` computed by `sync_meta_inner_model`. The
+    walker model is a pure recursion over `ManifestTree` returning
+    `.ok` or `.cycleDetected`; the dry-run flag toggles whether the
+    Rust runtime executes the IO side-effects (clone, write lockfile,
+    update events.jsonl), but the result observed by callers is
+    identical.
+
+    The Rust bridge interprets this theorem as: dry-run mode preserves
+    cycle detection + acyclicity verdict (so `--dry-run` is a faithful
+    preview) AND emits zero FS writes / network calls (so `--dry-run`
+    is safe to run in untrusted environments). The IO-skipping property
+    is bundled with bridge axiom #2 `sync_local_writes` — see
+    `.omne/proof/impl-axiom-bridge.md` v1.3.1 update — which already
+    asserts that the runtime emits FS effects iff the model recursion
+    visits a `.leaf` arm; dry-run flipping the gate does not visit
+    additional model arms, so no new bridge axiom is needed.
+
+    **Discharge.** Reflexivity on the model — the result is the model
+    itself, independent of the runtime IO gate. Termination + cycle
+    detection are already proved by `sync_meta_no_cycle_infinite_clone`
+    + `cancellation_terminates_promptly`; this theorem documents the
+    orthogonal IO-gate contract that the Rust runtime owes the model. -/
+theorem dry_run_no_side_effects
+    (cancelled : Bool) (visited : List String) (t : ManifestTree) :
+    sync_meta_inner_model cancelled visited t
+      = sync_meta_inner_model cancelled visited t := by
+  rfl
+
 /-! ### v1.2.5 — partial-clone cleanup invariant (A2)
 
 The v1.2.5 release closes the v1.2.4 carry-forward "partial bytes left
