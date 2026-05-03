@@ -1,7 +1,9 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — real-smoke harness MERGED + v1.3.x backlog locked)` (immediately below). Active branch: `main @ 5c16fca` (squash-merge of PR #67 `real-smoke harness → main`). Tag `v1.3.0` remains on `origin`; no new tag cut for the infra-only harness. All 4 crates remain live on crates.io at 1.3.0. Real-smoke harness is LIVE (6 GH fixture repos under `egoisth777/grex-test-*`, `crates/real-smoke/`, `.github/workflows/real-smoke.yml`); baseline 2 pass / 13 fail (B1, B9 PASS; B2-B8, B10-B15 FAIL) — identical local + remote (workflow run 25263889564). v1.3.x patch series locked (v1.3.1 critical bundle next). v1.4.0 hard deadline: `--workspace` flag REMOVAL (moved up from v2.0.0 per maintainer 2026-05-02 directive) + 3 previously-deferred dead-code removals + plugin-API freeze.
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-03, main — v1.3.1 SHIPPED)` (immediately below). Active branch: `main @ 338ff7b` (squash-merge of PR #68 `feat-v1.3.1 → main`). Tag `v1.3.1` on `origin`. All 4 crates live on crates.io at `1.3.1`. v1.3.1 closed 6 dogfood bugs (B2/B4/B7/B8/B12/B14) from `.omne/cfg/dogfood-findings-v1.3.0.md`. v1.3.x patch series continues: v1.3.2 next (B11 lockfile path move + B6 retire `synthetic` + B13 nested slash paths). Real-smoke harness baseline UNCHANGED at 2/13 — gix HTTPS feature gap blocks downstream flips; orthogonal infra item, separate from v1.3.1 scope. v1.4.0 hard deadline: `--workspace` flag REMOVAL (per maintainer 2026-05-02 directive) + 3 deferred dead-code removals + plugin-API freeze.
+
+**v1.3.1 SHIPPED 2026-05-03 on `main` (squash commit `338ff7b`, PR #68).** SemVer = PATCH (additive, contractually bug-fix only — `SyncMetaReport` retrofitted with `#[non_exhaustive]` to keep the new `dry_run_would_clone` field non-breaking). 6 dogfood bugs closed: B2 (cwd-default pack root), B4 (dry-run no longer clones / no FS mutation — gates added at Phase 1 walker, action-emit, lockfile, and workspace-lock layers), B7 (`Event::op_name()` Display tag replaces `Discriminant(N)` debug formatting on `tracing::warn!`), B8 (events.jsonl schema_version 1→2 hard-cut, `pack`→`id` rename on `Action*` variants, new `DryRunWouldClone` variant — no back-compat shim per maintainer 2026-05-02), B12 (REMOVED `.gitignore` auto-mutation entirely; `apply_gitignore`/`retire_gitignore` no-op shims, new `grex doctor` advisory `ParentGitTracksPackContent` severity=Ok), B14 (`LockEntry.branch` carries manifest `ref:` via new `PackNode.manifest_ref` plumbing through walker → graph → sync → `upsert_lock_entry`, plus pure helper `grex_core::lockfile::writer::branch_of` matching the Lean model). Lean: 2 new theorems on `[propext]` only — `Grex.Walker.dry_run_no_side_effects` + `Grex.Lockfile.lockfile_branch_mirrors_manifest_ref`; axiom budget unchanged at 9 bridge / 4 types / 0 model. CI axiom-stability gate extended to **7 theorems**. New `TreeError::InvalidDestination` variant for empty-`file_name` edge case in dry-run record construction. 6 new test files (cli_cwd_default, walker_dry_run, events_schema_v2, sync_no_gitignore_write, doctor_advisory, lockfile_branch_carry). `e2e_dry_run_3_level_tree` rewritten as `e2e_dry_run_after_wet_3_level_tree` to match the no-clone-on-dry-run contract. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.3.1`.
 
 **v1.3.0 SHIPPED MILESTONE 2026-05-02 on `main` (squash commit `52caf59`, PR #66).** SemVer = MINOR (per maintainer rule 6 — strictly additive: new `--pack` clap alias on `sync`/`serve`/`migrate-lockfile`/`teardown`, additive JSON envelope dual-emit `workspace`+`pack`, `MCP SyncParams` gains `pack` field with `pack.or(workspace)` precedence, additive `ExecCtx<'a>::pack` field). Existing `--workspace` continues to work; usage emits one-time deprecation warning to stderr (target `grex::cli::deprecation`); removal scheduled for v2.0.0. `grex doctor --json` envelope nests inner report under `report` so the top-level can carry `workspace`+`pack` (inner shape stays byte-equal to MCP `doctor` — parity test asserts CLI[`report`] == MCP body). `grex-cli` pulls `serde_json` with feature `preserve_order` so the `serde_json::json!({...})` macro respects source-order keys, satisfying the byte-stable-order contract. Plugin-API marked UNSTABLE in `crates/grex-core/src/plugin/mod.rs` doc-comment + `grex-plugins-builtin` description suffix; freeze deferred to v1.4.0. Behavior contract freeze: 13 STABLE contracts FROZEN per `.omne/cfg/freeze-v1.3.0.md`. Lean: NONE (rule 8 simple exemption — pure CLI surface + serde shims + freeze annotations; zero new algorithmic behavior). 5 existing theorems remain on `[propext]` / no-axioms; axiom budget unchanged at 9 bridge / 4 types / 0 model. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.3.0`.
 
@@ -22,6 +24,88 @@
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
 **v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-03, main — v1.3.1 SHIPPED)
+
+**State:** main @ `338ff7b` (squash-merge of PR #68 `feat-v1.3.1 → main`). Tag `v1.3.1` on `origin`. All 4 crates live on crates.io at `1.3.1`. v1.3.1 milestone: COMPLETE.
+
+### What shipped (6 bugs closed)
+
+| Bug | Severity | Site | Fix |
+|---|---|---|---|
+| B2  | Medium   | `grex sync` / `teardown` cwd resolution | New `resolve_pack_root_or_cwd` helper at `crates/grex/src/cli/verbs/mod.rs`. When `pack_root` arg absent and `cwd/.grex/pack.yaml` exists, default to cwd. |
+| B4  | Critical | `grex sync --dry-run` | Gates at 4 layers: walker Phase 1 (clone/fetch subprocess), `append_manifest_event` (events.jsonl writes), `upsert_lock_entry` (lockfile writes), `open_workspace_lock` (`.grex.sync.lock` sidecar). Walker emits `DryRunWouldCloneRecord` into in-memory `SyncMetaReport.dry_run_would_clone` — no FS, no network. Lean theorem `dry_run_no_side_effects` formalises the model-level invariant. |
+| B7  | High     | `tracing::warn!` op rendering | New `Event::op_name(&self) -> &'static str` returning the snake_case op tag. Swapped `op = ?std::mem::discriminant(ev)` → `op = %ev.op_name()` in `manifest::append::emit_semantic_warnings`. Tracing init was already correctly routed to stderr in v1.3.0. |
+| B8  | High     | events.jsonl schema | Hard-cut to `schema_version = "2"`. `Event::ActionStarted/ActionCompleted/ActionHalted` field rename `pack` → `id`, plus new `schema_version: String` field on each. New `Event::DryRunWouldClone` variant (op tag `dry_run_would_clone`) with `id`/`url`/`ref`/`schema_version` fields. Compiler-found 10 callsite renames + 3 fixture updates. No back-compat shim — no v1.2.x logs in field per maintainer. |
+| B12 | Critical | `.gitignore` auto-mutation | REMOVED entirely. `crate::plugin::pack_type::apply_gitignore` and `retire_gitignore` collapsed to no-op `Ok(())` shims (callsites left intact for diff minimality; deletion deferred to next reviewer pass). New `CheckKind::ParentGitTracksPackContent` advisory finding (severity `Ok`) in `doctor::mod` — runs `git -C <parent> ls-files --error-unmatch <pack_path>` to detect parent-git tracking. |
+| B14 | Critical | Lockfile `branch` empty | New `PackNode.manifest_ref: Option<String>` field captured at walk time (4 construction sites: 2 in `tree::walker` + 2 in `tree::graph_build`). `upsert_lock_entry` gains 7th param `manifest_ref: Option<&str>` and writes `branch: branch_of(manifest_ref)` instead of `String::new()`. Pure helper `grex_core::lockfile::writer::branch_of(Option<&str>) -> String` matches Lean model `branchOf : Option String → String`. |
+
+### Lean obligations (rule 8 gate)
+
+2 new theorems compiled, `lake build` green, axiom budget unchanged at **9 bridge / 4 types / 0 model**. CI axiom-stability gate extended to **7 theorems**:
+
+| # | Theorem | Axioms |
+|---|---|---|
+| 1 | `Grex.Walker.cancellation_terminates_promptly` | `[propext]` |
+| 2 | `Grex.Walker.sync_meta_no_cycle_infinite_clone` | `[propext]` |
+| 3 | `Grex.Walker.partial_clone_cleanup_idempotent` | none |
+| 4 | `Grex.Walker.walker_subpath_resolution_bounded_by_meta_dir` | none |
+| 5 | `Grex.Scheduler.pool_deadlock_guard_terminates` | `[propext]` |
+| 6 | `Grex.Walker.dry_run_no_side_effects` (NEW) | `[propext]` |
+| 7 | `Grex.Lockfile.lockfile_branch_mirrors_manifest_ref` (NEW) | `[propext]` |
+
+### Validation gate (all passed)
+
+| Check | Result |
+|---|---|
+| `cargo fmt --check --all` | green |
+| `cargo build --workspace --all-targets` | green |
+| `cargo clippy --workspace --all-targets -- -D warnings` | green |
+| `cargo test --workspace --no-fail-fast` | env-only fails: `dispatch_parallel` + `pack_type_dispatch` (Windows UAC os err 740 carry-forward from v1.2.6/v1.3.0) |
+| `cargo doc --workspace --no-deps` | green (4 rustdoc broken-intra-doc-link nits fixed in `a7ae642`) |
+| `lake build` | green, 0 sorry, 0 admit |
+| Axiom audit (7 theorems) | all `[propext]` only or no axioms |
+| `python .omne/scripts/validate.py` | 41 SSOT files clean |
+| `cargo run -p xtask -- gen-man` | drift-free |
+| Required CI checks (8) | all green: build × 3 OSes, cargo-deny, MCP conformance, man-drift, release-plan, typos |
+| Non-required CI | code-metrics fail (informational; `Event::op_name` cyclomatic 16 + pre-existing `cap_copy_dir_contents` 17 carry-forward); real-smoke fail (gix HTTPS feature gap — orthogonal infra) |
+
+### Real-smoke status
+
+Real-smoke baseline **unchanged at 2 pass / 13 fail** vs the `25263889564` workflow run locked in the prior endpoint. The 6 GH fixture repos under `egoisth777/grex-test-*` are HTTPS-cloneable, but the harness's `gix` backend ships without HTTPS feature compiled in (`'https' is not compiled in. Compile with the 'http-client-curl' or 'http-client-reqwest' cargo feature`). Every clone-driving smoke test fails at the network layer BEFORE reaching the v1.3.1 fixes. Locking the harness's git backend with HTTPS support is a separate v1.3.x infra item; not blocking v1.3.1 ship.
+
+v1.3.1 fixes verified by 6 new in-process tests (`crates/grex-core/tests/walker_dry_run.rs` 3/3, `events_schema_v2.rs` 6/6, `lockfile_branch_carry.rs` 8/8, `doctor_advisory.rs` 3/3; `crates/grex/tests/cli_cwd_default.rs` 4/4, `sync_no_gitignore_write.rs` 3/3) plus extended `tracing_to_stderr.rs` (B7) and rewritten `sync_e2e.rs::e2e_dry_run_after_wet_3_level_tree` (B4 contract).
+
+### Crates live on crates.io
+
+- https://crates.io/crates/grex-core/1.3.1
+- https://crates.io/crates/grex-mcp/1.3.1
+- https://crates.io/crates/grex-plugins-builtin/1.3.1
+- https://crates.io/crates/grex-cli/1.3.1
+
+### v1.3.x backlog state
+
+- v1.3.1 SHIPPED ← this endpoint
+- v1.3.2 next: B11 (lockfile path `.grex-lock` → `.grex/grex.lock`), B6 (retire `synthetic` field), B13 (nested slash paths)
+- v1.3.3: B2 partial-done, B3 (`pack`/`workspace` flag accepts `pack_root`), B5 (doctor consults `.gitignore`), B10 (`add --ref` flag)
+- v1.3.4: B1 (ls type classifier), B9 (stub verbs exit non-zero), B15 (path collision warn)
+- v1.4.0 HARD: `--workspace` removal + 3 deferred dead-code removals (`PackLock::acquire` sync, `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS`) + plugin-API freeze + smoke-harness gix HTTPS feature
+
+### Decisions locked this session (maintainer 2026-05-02 / 2026-05-03)
+
+- B11 lockfile path move: PATCH, defer to v1.3.2 (paired with B6/B13 contract drift bundle).
+- B8 events rename: hard-cut, no back-compat shim (no field deployments).
+- B12 `.gitignore`: kill auto-mutation entirely (operator owns the file). doctor advisory only.
+- Pack `id` = folder name = repo name, uniform across meta-pack and single pack.
+
+### Files / artifacts touched this session
+
+- 6 Rust crates (grex-core 14 files, grex-cli 6 files, real-smoke fixture-asserter unchanged)
+- 2 Lean modules (Walker.lean +52 lines, new Lockfile.lean 224 lines, Grex.lean +1 import)
+- OpenSpec triplet under `openspec/changes/feat-v1.3.1/{proposal.md, design.md, tasks.md}` (G2 frontmatter clean)
+- 6 new test files
+- CI: extended axiom audit to 7 theorems; `.typos.toml` updated for git-SHA substring carry; man drift regenerated
+- Workspace version 1.3.0 → 1.3.1; `xtask/tests/version_test.rs` pin synced
 
 ## Endpoint (2026-05-02, main — real-smoke harness MERGED + v1.3.x backlog locked)
 
