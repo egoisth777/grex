@@ -39,7 +39,7 @@ unicode-normalization = "0.1.25"
 # which the boundary primitive depends on). Cross-platform: cap-std uses
 # `openat2(RESOLVE_BENEATH)` on Linux ≥ 5.6, falls back to manual
 # O_NOFOLLOW component-by-component checks elsewhere.
-cap-std = "3"
+cap-std = "4"
 # v1.2.1 item 3: rayon work-stealing pool drives Phase 1 + Phase 3 sibling
 # parallelism inside `sync_meta`. Bounded by a per-call `ThreadPoolBuilder`
 # sized from `SyncMetaOptions::parallel`; Lean axiom `sync_disjoint_commutes`
