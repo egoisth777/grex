@@ -1,7 +1,7 @@
 # progress — grex
 
 ## Where we are
-**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — v1.3.0 SHIPPED MILESTONE)` (immediately below). Active branch: `main @ 52caf59` (squash-merge of PR #66 `feat-v1.3.0 → main`). Tag `v1.3.0` on `origin`. All 4 crates live on crates.io at 1.3.0. v1.3.0 milestone cycle: COMPLETE. Behavior contract FROZEN per `.omne/cfg/freeze-v1.3.0.md` (13 STABLE contracts). Deferrals to v1.4.0: `PackLock::acquire` (sync) + `Scheduler::permits` + `DEFAULT_MANAGED_GITIGNORE_PATTERNS` removals + plugin-API freeze (currently UNSTABLE per doc-comment).
+**Next session bootstrap:** read this `## Where we are` block + the latest `## Endpoint (2026-05-02, main — real-smoke harness MERGED + v1.3.x backlog locked)` (immediately below). Active branch: `main @ bfd5ba8` (squash-merge of PR #67 `real-smoke harness → main`). Tag `v1.3.0` remains on `origin`; no new tag cut for the infra-only harness. All 4 crates remain live on crates.io at 1.3.0. Real-smoke harness is LIVE (6 GH fixture repos under `egoisth777/grex-test-*`, `crates/real-smoke/`, `.github/workflows/real-smoke.yml`); baseline 2 pass / 13 fail (B1, B9 PASS; B2-B8, B10-B15 FAIL) — identical local + remote (workflow run 25263889564). v1.3.x patch series locked (v1.3.1 critical bundle next). v1.4.0 hard deadline: `--workspace` flag REMOVAL (moved up from v2.0.0 per maintainer 2026-05-02 directive) + 3 previously-deferred dead-code removals + plugin-API freeze.
 
 **v1.3.0 SHIPPED MILESTONE 2026-05-02 on `main` (squash commit `52caf59`, PR #66).** SemVer = MINOR (per maintainer rule 6 — strictly additive: new `--pack` clap alias on `sync`/`serve`/`migrate-lockfile`/`teardown`, additive JSON envelope dual-emit `workspace`+`pack`, `MCP SyncParams` gains `pack` field with `pack.or(workspace)` precedence, additive `ExecCtx<'a>::pack` field). Existing `--workspace` continues to work; usage emits one-time deprecation warning to stderr (target `grex::cli::deprecation`); removal scheduled for v2.0.0. `grex doctor --json` envelope nests inner report under `report` so the top-level can carry `workspace`+`pack` (inner shape stays byte-equal to MCP `doctor` — parity test asserts CLI[`report`] == MCP body). `grex-cli` pulls `serde_json` with feature `preserve_order` so the `serde_json::json!({...})` macro respects source-order keys, satisfying the byte-stable-order contract. Plugin-API marked UNSTABLE in `crates/grex-core/src/plugin/mod.rs` doc-comment + `grex-plugins-builtin` description suffix; freeze deferred to v1.4.0. Behavior contract freeze: 13 STABLE contracts FROZEN per `.omne/cfg/freeze-v1.3.0.md`. Lean: NONE (rule 8 simple exemption — pure CLI surface + serde shims + freeze annotations; zero new algorithmic behavior). 5 existing theorems remain on `[propext]` / no-axioms; axiom budget unchanged at 9 bridge / 4 types / 0 model. MSRV unchanged (1.79). All 4 crates (grex-core / grex-mcp / grex-plugins-builtin / grex-cli) live on crates.io at `1.3.0`.
 
@@ -22,6 +22,45 @@
 **SSOT enforcement state:** disciplines 13-15 active — frontmatter required on all SSOT `.md`, validation gate via pre-commit hook (no `--no-verify` bypass), no Co-Authored-By trailers in either repo. grex-inst main @ `65233e2` post-purge.
 
 **v1.2.4 SHIPPED.** openspec triplet on feat-v1.2.4 @ 71069c8 → squash-merged to main @ 2136bce → tag `v1.2.4` → 4 crates published. Roadmap to v1.3.0 documented in proposal.md (v1.2.5 next: A2 partial-clone cleanup + A3 pool deadlock + quarantine GC/restore + retention policy).
+
+## Endpoint (2026-05-02, main — real-smoke harness MERGED + v1.3.x backlog locked)
+
+### Where we are
+- main @ `bfd5ba8` (real-smoke harness squash-merge; PR #67)
+- 4 crates SHIPPED on crates.io: `grex-core 1.3.0`, `grex-mcp 1.3.0`, `grex-plugins-builtin 1.3.0`, `grex-cli 1.3.0` (unchanged by infra merge)
+- 5 Lean theorems on `[propext]` / no-axioms; Bridge axioms 9, Types 4, Model 0 (unchanged from v1.2.4 baseline)
+- Real-smoke harness LIVE: `.github/workflows/real-smoke.yml` + `crates/real-smoke/` + `scripts/provision-real-smoke-fixtures.ps1`
+- 6 GH fixture repos live under `egoisth777`: `grex-test-{leaf, meta-flat, meta-nested, cycle-a, cycle-b, broken-manifest}` — HTTPS-cloneable; audit 6/6 green
+- Smoke baseline: **2 pass / 13 fail** (B1, B9 PASS; B2-B8, B10-B15 FAIL). Identical local + remote (workflow run `25263889564`). Locks regression direction for v1.3.x.
+
+### Active backlog: v1.3.x patch series (autonomous decisions, maintainer override anytime)
+- **v1.3.1**: critical bundle (B4 dry-run network leak, B11 lockfile location, B12 silent `.gitignore`, B14 empty branch, B8 events `id` vs `pack`, B7 tracing on stdout). PREREQ: B2 cwd-default-pack-root fix (unblocks 8+ failing tests).
+- **v1.3.2**: contract drift (B6 retired synthesis, B13 nested slash paths).
+- **v1.3.3**: UX (B2 partial done in v1.3.1, B3 `pack`/`workspace` flag accepts `pack_root`, B5 doctor consults `.gitignore`, B10 `add --ref` flag).
+- **v1.3.4**: cleanup (B1 ls type classifier, B9 stub verbs exit non-zero, B15 path collision warn).
+- **v1.4.0 HARD DEADLINE**: `--workspace` flag REMOVAL (was v2.0.0; maintainer 2026-05-02 directive moved up). Plus deferred dead-code removals (`PackLock::acquire` sync, `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const) and plugin-API freeze.
+
+### How v1.3.1 ships
+- Branch: `feat-v1.3.1`
+- OpenSpec triplet first (per CLAUDE.md DON'T 6)
+- Lean obligations: per-bug per rule 8 (most are CLI surface = simple exempt; B14 lockfile field needs theorem; B8 events schema needs theorem)
+- Real-smoke gate: each fixed bug must flip its `t_b##` test green AS PART OF the patch (regression-lock contract)
+- Cargo publish topo + tag `v1.3.1`
+
+### Open questions for v1.3.1 dispatch
+- B12 `.gitignore` mutation: silently fix vs add `--no-gitignore-edit` opt-out? Maintainer call.
+- B11 lockfile rename: `.grex-lock` → `.grex/grex.lock` is BREAKING for any tooling reading the old path. SemVer impact?
+- B8 events `pack` → `id`: requires reader+writer both updated AND backward-compat for v1.2.x logs. Migration shim or hard-cut?
+
+### Files / artifacts
+- 6 fixtures: `github.com/egoisth777/grex-test-{leaf,meta-flat,meta-nested,cycle-a,cycle-b,broken-manifest}`
+- Provision script: `scripts/provision-real-smoke-fixtures.ps1` (default, `-DryRun`, `-Check` modes)
+- Harness crate: `crates/real-smoke/` (publish=false; lib + bin + worktree + grex_cli + assertions + fixtures + 15 regression tests)
+- CI workflow: `.github/workflows/real-smoke.yml` (workflow_dispatch + nightly cron 02:00 UTC + label-gated PR `real-smoke`)
+- Bug catalog: `.omne/cfg/dogfood-findings-v1.3.0.md` (B1-B15 + post-mortem + smoke-baseline confirmation note)
+- Real-smoke design: `.omne/cfg/real-smoke.md`
+- Freeze table: `.omne/cfg/freeze-v1.3.0.md` (UPDATED 2026-05-02 — `--workspace` removal target moved v2.0.0 → v1.4.0)
+- Migration guide: `.omne/cfg/migration-v1.3.0.md`
 
 ## Endpoint (2026-05-02, main — v1.3.0 SHIPPED MILESTONE)
 
