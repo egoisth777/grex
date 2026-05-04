@@ -176,13 +176,19 @@ fn plain_git_children_sync_walks_to_completion() {
         );
     }
 
-    // Lockfile records every child with `synthetic: true`.
+    // Lockfile records every child. v1.3.2 W1 retired the writer side of
+    // `LockEntry.synthetic` (`pack-spec.md §v1.2.0` — sync-time auto-
+    // synthesis is gone for v1.2.0+ entries), so post-sync the field
+    // round-trips as `false` regardless of the walker's in-memory shape.
     let entries = read_lockfile_entries(&layout.root);
     for name in &layout.child_names {
         let entry = entries
             .get(name.as_str())
             .unwrap_or_else(|| panic!("lockfile must carry entry for `{name}`; got: {entries:?}"));
-        assert!(entry.synthetic, "plain-git child `{name}` must have synthetic=true: {entry:?}",);
+        assert!(
+            !entry.synthetic,
+            "post-v1.3.2 lockfile entries must never carry `synthetic: true`; got: {entry:?}",
+        );
     }
 
     // FIX-4 — invariant pin: synthetic plain-git children MUST NOT
@@ -314,9 +320,10 @@ fn mixed_tree_meta_with_declarative_and_plain_git_children() {
         "plain-git child must remain pack.yaml-less",
     );
 
-    // Lockfile distinguishes the two: declared pack-yaml children have
-    // `synthetic: false`; synthesised plain-git children have
-    // `synthetic: true`.
+    // Lockfile records both children. v1.3.2 W1 retired the writer side
+    // of `LockEntry.synthetic` (`pack-spec.md §v1.2.0`), so neither entry
+    // carries the field on disk regardless of the walker's in-memory
+    // shape. Both ids must be present.
     let entries = read_lockfile_entries(&root);
     let decl_entry = entries.get("decl").expect("decl in lockfile");
     let plain_entry = entries.get("plain").expect("plain in lockfile");
@@ -325,31 +332,38 @@ fn mixed_tree_meta_with_declarative_and_plain_git_children() {
         "declarative child `decl` must have synthetic=false: {decl_entry:?}",
     );
     assert!(
-        plain_entry.synthetic,
-        "plain-git child `plain` must have synthetic=true: {plain_entry:?}",
+        !plain_entry.synthetic,
+        "post-v1.3.2 plain-git child `plain` must round-trip with synthetic=false: {plain_entry:?}",
     );
 }
 
-/// FIX 1 regression — synthetic plain-git children must surface as
-/// `OK (synthetic)` doctor findings (driven by the lockfile, not the
-/// manifest events) AND must NOT trip the `unregistered directory on
-/// disk` warning. Both failure modes were observed by the v1.1.1 fix
-/// sweep before doctor was rewired to consult the lockfile.
+/// Post-v1.3.2 regression — plain-git children walked by `sync` must NOT
+/// trip the `unregistered directory on disk` warning. v1.3.2 W1 retired
+/// `LockEntry.synthetic` (`pack-spec.md §v1.2.0` — sync-time auto-
+/// synthesis is dead on disk), so the doctor's drift-skip now keys on
+/// "lockfile contains the entry" rather than the obsolete
+/// `synthetic == true` flag. Fresh syncs no longer emit `synthetic-pack`
+/// findings; the legacy `OK (synthetic)` row is preserved only for
+/// v1.1.x lockfiles that still carry the flag on disk.
 #[test]
-#[allow(clippy::too_many_lines)] // E2E narrative — splitting hides the test intent.
-fn doctor_after_plain_git_sync_reports_ok_synthetic_and_no_unregistered_warning() {
+fn doctor_after_plain_git_sync_skips_unregistered_warning_for_walked_children() {
     let layout = build_plain_git_layout(&["alpha", "beta"]);
 
-    // Populate the lockfile with synthetic entries via a real sync.
+    // Populate the lockfile via a real sync.
     grex().current_dir(&layout.root).args(["sync", "."]).assert().success();
 
-    // Sanity: lockfile carries `synthetic: true` for every plain-git child.
+    // Sanity: lockfile records every plain-git child. Per W1, `synthetic`
+    // is stripped on emit, so every entry round-trips with
+    // `synthetic = false`.
     let entries = read_lockfile_entries(&layout.root);
     for name in &layout.child_names {
         let entry = entries
             .get(name.as_str())
             .unwrap_or_else(|| panic!("lockfile must carry entry for `{name}`; got: {entries:?}"));
-        assert!(entry.synthetic, "fixture invariant: `{name}` must be synthetic");
+        assert!(
+            !entry.synthetic,
+            "post-v1.3.2 lockfile entries must never carry `synthetic: true`; got: {entry:?}",
+        );
     }
 
     // Run doctor in JSON mode so we can assert structurally on the
@@ -366,32 +380,19 @@ fn doctor_after_plain_git_sync_reports_ok_synthetic_and_no_unregistered_warning(
     let report = &envelope["report"];
     let findings = report["findings"].as_array().expect("findings array");
 
-    // Acceptance #1: one `synthetic-pack` finding per plain-git child,
-    // each `severity: ok` and detail "OK (synthetic)".
+    // Acceptance #1: ZERO `synthetic-pack` findings — fresh syncs no
+    // longer emit the field, so the legacy carryover branch finds
+    // nothing to report.
     let synth: Vec<&serde_json::Value> =
         findings.iter().filter(|f| f["check"].as_str() == Some("synthetic-pack")).collect();
-    assert_eq!(
-        synth.len(),
-        layout.child_names.len(),
-        "one synthetic-pack finding per plain-git child; got {synth:?}",
+    assert!(
+        synth.is_empty(),
+        "post-v1.3.2 fresh syncs must NOT produce synthetic-pack findings; got {synth:?}",
     );
-    for f in &synth {
-        assert_eq!(f["severity"].as_str(), Some("ok"), "synthetic-pack must be Ok: {f}");
-        assert_eq!(
-            f["detail"].as_str(),
-            Some("OK (synthetic)"),
-            "synthetic-pack detail must be `OK (synthetic)`: {f}",
-        );
-        assert_eq!(f["synthetic"].as_bool(), Some(true), "Finding.synthetic must be true: {f}");
-    }
-    let mut synth_ids: Vec<&str> = synth.iter().map(|f| f["pack"].as_str().unwrap()).collect();
-    synth_ids.sort();
-    let mut expected_ids: Vec<&str> = layout.child_names.iter().map(String::as_str).collect();
-    expected_ids.sort();
-    assert_eq!(synth_ids, expected_ids, "synthetic-pack findings must cover every child");
 
     // Acceptance #2: ZERO unregistered-directory warnings for the
     // plain-git child names. The lockfile-driven on-disk-drift skip
+    // (now keyed on entry presence, not the obsolete synthetic flag)
     // is what makes this hold.
     for name in &layout.child_names {
         let needle = format!("unregistered directory on disk: {name}");
@@ -402,7 +403,7 @@ fn doctor_after_plain_git_sync_reports_ok_synthetic_and_no_unregistered_warning(
         });
         assert!(
             hit.is_none(),
-            "doctor must NOT flag synthetic plain-git child `{name}` as unregistered; \
+            "doctor must NOT flag walked plain-git child `{name}` as unregistered; \
              findings={findings:?}",
         );
     }

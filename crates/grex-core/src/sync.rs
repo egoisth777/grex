@@ -580,10 +580,11 @@ pub fn run(
     let workspace = prepare_workspace(pack_root, opts)?;
     // v1.3.1 (B4) — `dry_run = true` is contractually FS-mutation-free.
     // `open_workspace_lock` (via `ScopedLock::open`) creates a sidecar
-    // file at `<workspace>/.grex.sync.lock`, which would itself violate
-    // the no-FS-mutation contract. Skip lock acquisition entirely in
-    // dry-run; the dry-run path is read-only by construction so
-    // concurrent dry-runs against the same workspace are safe.
+    // file at `<workspace>/.grex/.grex.sync.lock` (v1.3.2 B11), which
+    // would itself violate the no-FS-mutation contract. Skip lock
+    // acquisition entirely in dry-run; the dry-run path is read-only
+    // by construction so concurrent dry-runs against the same
+    // workspace are safe.
     let mut ws_lock_holder =
         if !opts.dry_run { Some(open_workspace_lock(&workspace)?) } else { None };
     let _ws_guard = try_acquire_workspace_guard(ws_lock_holder.as_mut(), &workspace)?;
@@ -942,8 +943,16 @@ fn ensure_workspace_dir(workspace: &Path) -> Result<(), SyncError> {
 }
 
 /// Open (but do not acquire) the workspace-level lock file.
+///
+/// v1.3.2 B11: lives at `<workspace>/.grex/.grex.sync.lock`. The `.grex/`
+/// parent is auto-created here so the lock open does not race against
+/// callers that have not yet seeded a manifest sidecar.
 fn open_workspace_lock(workspace: &Path) -> Result<(ScopedLock, PathBuf), SyncError> {
     let ws_lock_path = workspace_lock_path(workspace);
+    if let Some(parent) = ws_lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| workspace_lock_err(&ws_lock_path, &e.to_string()))?;
+    }
     let ws_lock = ScopedLock::open(&ws_lock_path)
         .map_err(|e| workspace_lock_err(&ws_lock_path, &e.to_string()))?;
     Ok((ws_lock, ws_lock_path))
@@ -1263,10 +1272,12 @@ fn event_lock_path(event_log: &Path) -> PathBuf {
 }
 
 /// Compute the sidecar lock path for the workspace itself. Lives at
-/// `<workspace>/.grex.sync.lock` — the workspace dir is already created by
-/// the `run()` prologue, so the lock sidecar lands beside the child clones.
+/// `<workspace>/.grex/.grex.sync.lock` (v1.3.2 B11 hard-cut from
+/// `<workspace>/.grex.sync.lock`). Co-locating under `.grex/` matches
+/// the per-pack-lock and backend-lock placements so all stateful sidecar
+/// files cluster under a single namespace.
 fn workspace_lock_path(workspace: &Path) -> PathBuf {
-    workspace.join(".grex.sync.lock")
+    workspace.join(".grex").join(".grex.sync.lock")
 }
 
 /// Aggregate manifest-level + graph-level validators and return their output.

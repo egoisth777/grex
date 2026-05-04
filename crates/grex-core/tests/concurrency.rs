@@ -37,7 +37,7 @@ fn sync_run(
 ) -> Result<grex_core::sync::SyncReport, SyncError> {
     sync::run(pack_root, opts, &CancellationToken::new())
 }
-use grex_core::{GitBackend, GixBackend};
+use grex_core::{BackendLockCtxOwned, GitBackend, GixBackend};
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,10 @@ fn two_syncs_same_workspace_second_errors_busy() {
     let gate_t1 = Arc::clone(&gate);
     let release_t1 = Arc::clone(&release);
     let holder = thread::spawn(move || {
-        let lock_path = ws_for_t1.join(".grex.sync.lock");
+        // v1.3.2 B11: workspace lock now lives at `<ws>/.grex/.grex.sync.lock`.
+        let lock_dir = ws_for_t1.join(".grex");
+        std::fs::create_dir_all(&lock_dir).expect("mkdir .grex");
+        let lock_path = lock_dir.join(".grex.sync.lock");
         let mut lock = grex_core::fs::ScopedLock::open(&lock_path).expect("open lock");
         let _g = lock.try_acquire().expect("no io err").expect("lock acquired by t1");
         gate_t1.wait(); // t2 may now attempt sync
@@ -133,7 +136,7 @@ fn two_syncs_same_workspace_second_errors_busy() {
         SyncError::WorkspaceBusy { workspace: ws, lock_path } => {
             // resolve_workspace canonicalises; compare against canonical.
             assert_eq!(ws, canonical_workspace);
-            assert_eq!(lock_path, canonical_workspace.join(".grex.sync.lock"));
+            assert_eq!(lock_path, canonical_workspace.join(".grex").join(".grex.sync.lock"));
         }
         other => panic!("expected WorkspaceBusy, got {other:?}"),
     }
@@ -177,7 +180,9 @@ fn git_backend_concurrent_fetch_serialized() {
 
     let backend = Arc::new(GixBackend::new());
     let dest = tmp.path().join("clone");
-    <GixBackend as GitBackend>::clone(&*backend, &url, &dest, Some("main")).expect("initial clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    <GixBackend as GitBackend>::clone(&*backend, &url, &dest, Some("main"), lock_ctx.as_ctx())
+        .expect("initial clone");
 
     let barrier = Arc::new(Barrier::new(2));
     let mut handles = Vec::new();
@@ -185,9 +190,10 @@ fn git_backend_concurrent_fetch_serialized() {
         let b = Arc::clone(&backend);
         let d = dest.clone();
         let bar = Arc::clone(&barrier);
+        let ctx = lock_ctx.clone();
         handles.push(thread::spawn(move || {
             bar.wait();
-            b.fetch(&d)
+            b.fetch(&d, ctx.as_ctx())
         }));
     }
     for h in handles {
@@ -219,13 +225,15 @@ fn git_backend_concurrent_clone_distinct_dests() {
     let kb = Arc::clone(&backend);
     // `Arc<GixBackend>::clone` resolves to `Arc::clone`, not the
     // `GitBackend::clone` method. Disambiguate with UFCS.
+    let ctx_a = BackendLockCtxOwned::from_dest(&dest_a);
+    let ctx_b = BackendLockCtxOwned::from_dest(&dest_b);
     let ta = thread::spawn(move || {
         barrier_a.wait();
-        <GixBackend as GitBackend>::clone(&*ka, &ua, &dest_a, Some("main"))
+        <GixBackend as GitBackend>::clone(&*ka, &ua, &dest_a, Some("main"), ctx_a.as_ctx())
     });
     let tb = thread::spawn(move || {
         barrier_b.wait();
-        <GixBackend as GitBackend>::clone(&*kb, &ub, &dest_b, Some("main"))
+        <GixBackend as GitBackend>::clone(&*kb, &ub, &dest_b, Some("main"), ctx_b.as_ctx())
     });
     ta.join().unwrap().expect("clone a");
     tb.join().unwrap().expect("clone b");
@@ -247,12 +255,13 @@ fn git_backend_checkout_rejects_dirty_after_lock() {
 
     let backend = GixBackend::new();
     let dest = tmp.path().join("clone");
-    backend.clone(&url, &dest, Some("main")).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    backend.clone(&url, &dest, Some("main"), lock_ctx.as_ctx()).expect("clone");
 
     // Dirty the worktree: modify a tracked file.
     fs::write(dest.join("README.md"), b"dirty edit\n").unwrap();
 
-    let err = backend.checkout(&dest, "main").expect_err("must refuse");
+    let err = backend.checkout(&dest, "main", lock_ctx.as_ctx()).expect_err("must refuse");
     assert!(
         matches!(err, grex_core::GitError::DirtyWorkingTree(_)),
         "expected DirtyWorkingTree, got {err:?}"

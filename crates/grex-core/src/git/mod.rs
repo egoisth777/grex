@@ -24,6 +24,9 @@ use std::path::{Path, PathBuf};
 
 pub use self::error::GitError;
 pub use self::gix_backend::GixBackend;
+// `BackendLockCtx` is part of the `GitBackend` trait surface (v1.3.2 B11);
+// re-export at module root so consumers don't need to thread the inline
+// `git::BackendLockCtx` import alongside the trait import.
 
 /// Result of a successful clone.
 ///
@@ -35,6 +38,80 @@ pub struct ClonedRepo {
     pub path: PathBuf,
     /// HEAD commit SHA, 40-char lowercase hex.
     pub head_sha: String,
+}
+
+/// Per-call backend-lock context (v1.3.2 B11).
+///
+/// The per-repo backend lock lives at
+/// `<parent_meta>/.grex/locks/<child_path>.backend.lock` (parent-owned) so
+/// it (a) survives a `rm -rf <dest>` rebuild and (b) keeps every lock
+/// artifact under one `.grex/` namespace per meta. This struct threads the
+/// `(parent_meta, child_path)` pair through the [`GitBackend`] surface so
+/// the backend can compute the lock path without re-deriving it from
+/// `dest` (which would lose intermediate `/` segments on slash-paths).
+///
+/// `child_path` is the LITERAL manifest-declared path (e.g. `tools/foo`)
+/// — POSIX forward slashes, no slug encoding. Intermediate directories
+/// under `<parent_meta>/.grex/locks/` are auto-created on first acquire.
+#[derive(Debug, Clone, Copy)]
+pub struct BackendLockCtx<'a> {
+    /// Workdir of the meta-pack that owns the child clone (`meta_dir` in
+    /// the walker terminology). Lock files live under
+    /// `<parent_meta>/.grex/locks/`.
+    pub parent_meta: &'a Path,
+    /// Manifest-declared child path (e.g. `"tools/foo"`). Used verbatim
+    /// as the suffix of the backend-lock filename.
+    pub child_path: &'a str,
+}
+
+impl<'a> BackendLockCtx<'a> {
+    /// Construct a new lock context.
+    #[must_use]
+    pub const fn new(parent_meta: &'a Path, child_path: &'a str) -> Self {
+        Self { parent_meta, child_path }
+    }
+}
+
+/// Owned counterpart of [`BackendLockCtx`]. Provides a convenient way for
+/// tests and callers that don't otherwise carry a parent-meta + child-path
+/// pair to derive one from a flat `dest` path: `parent_meta = dest.parent()`,
+/// `child_path = dest.file_name()`. Borrow with [`BackendLockCtxOwned::as_ctx`]
+/// at the trait-method call site.
+///
+/// v1.3.2 B11 — added so the per-repo backend lock lands under
+/// `<parent>/.grex/locks/<name>.backend.lock` for callers that have only a
+/// `dest` path on hand. Production code paths (walker phase1) construct
+/// [`BackendLockCtx`] directly with the manifest-declared `child.path()`.
+#[derive(Debug, Clone)]
+pub struct BackendLockCtxOwned {
+    /// Owned parent-meta path.
+    pub parent_meta: PathBuf,
+    /// Owned child path (POSIX-style, may contain `/`).
+    pub child_path: String,
+}
+
+impl BackendLockCtxOwned {
+    /// Derive a lock context from a flat `dest` path. Used by tests that
+    /// don't otherwise carry a parent-meta — `dest.parent()` plays the
+    /// role of `parent_meta` and `dest.file_name()` the role of
+    /// `child_path`. Falls back to `"."` and `"repo"` respectively when
+    /// either component is absent.
+    #[must_use]
+    pub fn from_dest(dest: &Path) -> Self {
+        let parent_meta =
+            dest.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+        let child_path = dest
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map_or_else(|| "repo".to_string(), str::to_string);
+        Self { parent_meta, child_path }
+    }
+
+    /// Borrow as a [`BackendLockCtx`] for trait-method call sites.
+    #[must_use]
+    pub fn as_ctx(&self) -> BackendLockCtx<'_> {
+        BackendLockCtx::new(&self.parent_meta, &self.child_path)
+    }
 }
 
 /// Stable surface for all git operations grex needs.
@@ -60,24 +137,41 @@ pub trait GitBackend: Send + Sync {
     /// - If `r#ref` is `None`, leave the working tree on the remote's default
     ///   HEAD.
     ///
+    /// `lock_ctx` carries `(parent_meta, child_path)` so the backend can
+    /// compute the per-repo lock path under `<parent_meta>/.grex/locks/`
+    /// (v1.3.2 B11). Implementations that do not lock may ignore the
+    /// argument.
+    ///
     /// # Errors
     ///
     /// Any clone-, network-, or checkout-layer failure maps to a
     /// [`GitError`] variant — see that enum for the taxonomy.
-    fn clone(&self, url: &str, dest: &Path, r#ref: Option<&str>) -> Result<ClonedRepo, GitError>;
+    fn clone(
+        &self,
+        url: &str,
+        dest: &Path,
+        r#ref: Option<&str>,
+        lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError>;
 
     /// Fetch from the default remote (`origin`) into an existing repo at
     /// `dest`. Leaves the working tree untouched.
+    ///
+    /// `lock_ctx` carries the parent-meta + child-path so the per-repo
+    /// lock can be computed under `<parent_meta>/.grex/locks/` (v1.3.2 B11).
     ///
     /// # Errors
     ///
     /// Returns [`GitError::NotARepository`] when `dest` is not a git repo,
     /// or [`GitError::FetchFailed`] on any network- or ref-update failure.
-    fn fetch(&self, dest: &Path) -> Result<(), GitError>;
+    fn fetch(&self, dest: &Path, lock_ctx: BackendLockCtx<'_>) -> Result<(), GitError>;
 
     /// Resolve `r#ref` (branch, tag, or SHA) and update the working tree at
     /// `dest` to match. Refuses to run if the working tree has uncommitted
     /// changes.
+    ///
+    /// `lock_ctx` carries the parent-meta + child-path so the per-repo
+    /// lock can be computed under `<parent_meta>/.grex/locks/` (v1.3.2 B11).
     ///
     /// # Errors
     ///
@@ -85,7 +179,12 @@ pub trait GitBackend: Send + Sync {
     /// - [`GitError::DirtyWorkingTree`] when there are uncommitted changes.
     /// - [`GitError::RefNotFound`] when the ref cannot be resolved.
     /// - [`GitError::CheckoutFailed`] for any other checkout-layer failure.
-    fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), GitError>;
+    fn checkout(
+        &self,
+        dest: &Path,
+        r#ref: &str,
+        lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<(), GitError>;
 
     /// Return HEAD at `dest` as a 40-char lowercase hex SHA.
     ///

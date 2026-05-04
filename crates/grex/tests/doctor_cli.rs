@@ -66,7 +66,8 @@ fn seed_manifest(workspace: &Path, pack_id: &str) {
 /// Write a valid workspace-level managed block for `pack_id`.
 fn seed_clean_gitignore(workspace: &Path, pack_id: &str) {
     let gi = workspace.join(".gitignore");
-    let body = format!("# >>> grex:{id} >>>\n.grex-lock\n# <<< grex:{id} <<<\n", id = pack_id);
+    // v1.3.2 B11: managed-block default is `.grex/` (was `.grex-lock`).
+    let body = format!("# >>> grex:{id} >>>\n.grex/\n# <<< grex:{id} <<<\n", id = pack_id);
     fs::write(gi, body).unwrap();
 }
 

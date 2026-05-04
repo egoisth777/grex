@@ -80,7 +80,13 @@ impl GitBackend for InMemGit {
     fn name(&self) -> &'static str {
         "v1_3_1-b4-dry-run-mock-git"
     }
-    fn clone(&self, url: &str, dest: &Path, _ref: Option<&str>) -> Result<ClonedRepo, GitError> {
+    fn clone(
+        &self,
+        url: &str,
+        dest: &Path,
+        _ref: Option<&str>,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError> {
         std::fs::create_dir_all(dest.join(".git")).unwrap();
         self.calls
             .lock()
@@ -88,11 +94,16 @@ impl GitBackend for InMemGit {
             .push(BackendCall::Clone { url: url.to_string(), dest: dest.to_path_buf() });
         Ok(ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
     }
-    fn fetch(&self, dest: &Path) -> Result<(), GitError> {
+    fn fetch(&self, dest: &Path, _lock_ctx: grex_core::BackendLockCtx<'_>) -> Result<(), GitError> {
         self.calls.lock().unwrap().push(BackendCall::Fetch { dest: dest.to_path_buf() });
         Ok(())
     }
-    fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), GitError> {
+    fn checkout(
+        &self,
+        dest: &Path,
+        r#ref: &str,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         self.calls
             .lock()
             .unwrap()

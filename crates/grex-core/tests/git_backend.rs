@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use grex_core::git::gix_backend::file_url_from_path;
-use grex_core::{ClonedRepo, GitBackend, GitError, GixBackend};
+use grex_core::{
+    BackendLockCtx, BackendLockCtxOwned, ClonedRepo, GitBackend, GitError, GixBackend,
+};
 use tempfile::TempDir;
 
 /// CI runners (ubuntu, macos) have no global `user.name`/`user.email`, which
@@ -131,7 +133,9 @@ fn clone_empty_dest_ok() {
     let dest = tmp.path().join("clone-ok");
 
     let b = GixBackend::new();
-    let ClonedRepo { path, head_sha } = b.clone(&url, &dest, None).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    let ClonedRepo { path, head_sha } =
+        b.clone(&url, &dest, None, lock_ctx.as_ctx()).expect("clone");
     assert_eq!(path, dest);
     assert_eq!(head_sha.len(), 40);
     assert!(dest.join("README.md").is_file());
@@ -146,7 +150,8 @@ fn clone_nonempty_dest_errors() {
     fs::create_dir_all(&dest).unwrap();
     fs::write(dest.join("stray.txt"), b"x").unwrap();
 
-    let err = GixBackend::new().clone(&url, &dest, None).unwrap_err();
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    let err = GixBackend::new().clone(&url, &dest, None, lock_ctx.as_ctx()).unwrap_err();
     match err {
         GitError::DestinationNotEmpty(p) => assert_eq!(p, dest),
         other => panic!("expected DestinationNotEmpty, got {other:?}"),
@@ -162,7 +167,10 @@ fn clone_with_ref_checks_out() {
 
     let url = file_url_from_path(&bare);
     let dest = tmp.path().join("clone-tag");
-    let cloned = GixBackend::new().clone(&url, &dest, Some("v1")).expect("clone at tag v1");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    let cloned = GixBackend::new()
+        .clone(&url, &dest, Some("v1"), lock_ctx.as_ctx())
+        .expect("clone at tag v1");
 
     assert_eq!(cloned.head_sha, first_sha, "v1 should pin to first commit");
     assert_ne!(cloned.head_sha, second_sha);
@@ -176,10 +184,11 @@ fn fetch_existing_repo_ok() {
     let dest = tmp.path().join("fetch-repo");
     let backend = GixBackend::new();
 
-    backend.clone(&url, &dest, None).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    backend.clone(&url, &dest, None, lock_ctx.as_ctx()).expect("clone");
     let _new_sha = add_commit_to_bare(tmp.path(), &bare, "late.txt", "later");
 
-    backend.fetch(&dest).expect("fetch");
+    backend.fetch(&dest, lock_ctx.as_ctx()).expect("fetch");
     // Working tree must remain untouched — README.md still present, late.txt
     // must NOT have been checked out (fetch never touches the worktree).
     assert!(dest.join("README.md").is_file());
@@ -196,17 +205,18 @@ fn checkout_resolves_branch_name() {
     let url = file_url_from_path(&bare);
     let dest = tmp.path().join("co-branch");
     let backend = GixBackend::new();
-    let cloned = backend.clone(&url, &dest, None).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    let cloned = backend.clone(&url, &dest, None, lock_ctx.as_ctx()).expect("clone");
     // Clone puts us on whatever the remote HEAD was (main). Branch feat/x
     // exists as a remote ref already since bare was cloned after the push.
     assert_eq!(cloned.head_sha, second_sha);
 
     // Move HEAD back to first commit via SHA, then forward to feat/x via
     // ref name. First step avoids depending on starting position.
-    backend.checkout(&dest, &first_sha).expect("checkout first");
+    backend.checkout(&dest, &first_sha, lock_ctx.as_ctx()).expect("checkout first");
     assert_eq!(backend.head_sha(&dest).unwrap(), first_sha);
 
-    backend.checkout(&dest, "origin/feat/x").expect("checkout feat/x");
+    backend.checkout(&dest, "origin/feat/x", lock_ctx.as_ctx()).expect("checkout feat/x");
     assert_eq!(backend.head_sha(&dest).unwrap(), second_sha);
 }
 
@@ -217,9 +227,10 @@ fn checkout_ref_not_found_errors() {
     let url = file_url_from_path(&bare);
     let dest = tmp.path().join("co-missing");
     let backend = GixBackend::new();
-    backend.clone(&url, &dest, None).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    backend.clone(&url, &dest, None, lock_ctx.as_ctx()).expect("clone");
 
-    let err = backend.checkout(&dest, "does-not-exist").unwrap_err();
+    let err = backend.checkout(&dest, "does-not-exist", lock_ctx.as_ctx()).unwrap_err();
     match err {
         GitError::RefNotFound(name) => assert_eq!(name, "does-not-exist"),
         other => panic!("expected RefNotFound, got {other:?}"),
@@ -246,7 +257,8 @@ fn head_sha_length_40() {
     let url = file_url_from_path(&bare);
     let dest = tmp.path().join("sha-len");
     let backend = GixBackend::new();
-    backend.clone(&url, &dest, None).expect("clone");
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    backend.clone(&url, &dest, None, lock_ctx.as_ctx()).expect("clone");
 
     let sha = backend.head_sha(&dest).expect("head");
     assert_eq!(sha.len(), 40);
@@ -272,13 +284,24 @@ impl GitBackend for MockBackend {
             self.name
         }
     }
-    fn clone(&self, _url: &str, dest: &Path, _ref: Option<&str>) -> Result<ClonedRepo, GitError> {
+    fn clone(
+        &self,
+        _url: &str,
+        dest: &Path,
+        _ref: Option<&str>,
+        _lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError> {
         Ok(ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
     }
-    fn fetch(&self, _dest: &Path) -> Result<(), GitError> {
+    fn fetch(&self, _dest: &Path, _lock_ctx: BackendLockCtx<'_>) -> Result<(), GitError> {
         Ok(())
     }
-    fn checkout(&self, _dest: &Path, _r: &str) -> Result<(), GitError> {
+    fn checkout(
+        &self,
+        _dest: &Path,
+        _r: &str,
+        _lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         Ok(())
     }
     fn head_sha(&self, _dest: &Path) -> Result<String, GitError> {
@@ -293,9 +316,10 @@ fn mock_backend_satisfies_trait() {
 
     let tmp = TempDir::new().unwrap();
     let dest = tmp.path().join("mock");
-    let c = backend.clone("http://example/foo", &dest, None).unwrap();
+    let lock_ctx = BackendLockCtxOwned::from_dest(&dest);
+    let c = backend.clone("http://example/foo", &dest, None, lock_ctx.as_ctx()).unwrap();
     assert_eq!(c.head_sha.len(), 40);
-    backend.fetch(&dest).unwrap();
-    backend.checkout(&dest, "whatever").unwrap();
+    backend.fetch(&dest, lock_ctx.as_ctx()).unwrap();
+    backend.checkout(&dest, "whatever", lock_ctx.as_ctx()).unwrap();
     assert_eq!(backend.head_sha(&dest).unwrap().len(), 40);
 }

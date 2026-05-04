@@ -555,8 +555,10 @@ mod tests {
         assert_eq!(plan.imported[0].path, "good");
         assert_eq!(plan.failed.len(), 1, "the traversal-bearing row goes to failed");
         assert_eq!(plan.failed[0].path, "../escape");
+        // v1.2.0: slash-paths accepted, but `..` segments still rejected.
+        // Diagnostic now leads with the dot-segment failure mode.
         assert!(
-            plan.failed[0].error.contains("separator"),
+            plan.failed[0].error.contains(".."),
             "error must explain the rejection: {}",
             plan.failed[0].error,
         );

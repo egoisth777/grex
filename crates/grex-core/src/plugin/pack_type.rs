@@ -50,24 +50,36 @@ use crate::pack::{Action, PackManifest};
 use crate::pack_lock::{PackLock, PackLockError};
 
 /// Deprecated back-compat shim for the default managed-gitignore
-/// patterns contributed by grex itself (`.grex-lock` as of feat-m6-2).
+/// patterns contributed by grex itself.
+///
+/// v1.3.2 B11: pinned to `.grex/` (was `.grex-lock` in v1.2.x). The
+/// `.grex/` entry covers every grex sidecar artifact — per-pack lock
+/// (`<pack>/.grex/.grex-lock`), workspace sync lock
+/// (`<ws>/.grex/.grex.sync.lock`), backend locks
+/// (`<parent>/.grex/locks/...`), event log (`.grex/events.jsonl`),
+/// resolved-state lockfile (`.grex/grex.lock.jsonl`).
 ///
 /// Prefer [`default_managed_gitignore_patterns`] — this const is kept
 /// only to preserve the v1.2.x public surface for downstream consumers
-/// and will be removed in v1.3.0.
+/// and will be removed in v1.4.0.
 #[deprecated(
     since = "1.2.4",
-    note = "use `default_managed_gitignore_patterns()` accessor; this const will be removed in v1.3.0"
+    note = "use `default_managed_gitignore_patterns()` accessor; this const will be removed in v1.4.0"
 )]
-pub const DEFAULT_MANAGED_GITIGNORE_PATTERNS: &[&str] = &[crate::pack_lock::PACK_LOCK_FILE_NAME];
+pub const DEFAULT_MANAGED_GITIGNORE_PATTERNS: &[&str] = &[".grex/"];
 
 /// Accessor used by integration tests and `doctor` checks to pin the
-/// default managed-gitignore patterns contributed by grex itself
-/// (`.grex-lock` as of feat-m6-2) on top of each pack's authored
-/// `x-gitignore` list.
+/// default managed-gitignore patterns contributed by grex itself.
+///
+/// v1.3.2 B11: returns `[".grex/"]` — single trailing-slash directory
+/// pattern that covers every grex sidecar artifact under the pack root
+/// (locks, event log, resolved-state lockfile, backend-lock tree). The
+/// previous `.grex-lock` standalone entry is no longer required because
+/// the per-pack lock now lives at `<pack>/.grex/.grex-lock` and is
+/// already covered by `.grex/`.
 #[must_use]
 pub fn default_managed_gitignore_patterns() -> &'static [&'static str] {
-    &[crate::pack_lock::PACK_LOCK_FILE_NAME]
+    &[".grex/"]
 }
 
 /// Translate a [`PackLockError`] into the [`ExecError`] taxonomy used by
@@ -94,9 +106,15 @@ pub(crate) fn map_pack_lock_err(e: PackLockError) -> ExecError {
             // dispatch graph — map to the existing MetaCycle variant so
             // callers match a single shape.
             //
-            // Strip the `.grex-lock` sidecar filename so the error
-            // refers to the pack root the recursion re-entered.
-            let pack_root = path.parent().map(std::path::Path::to_path_buf).unwrap_or(path);
+            // Strip the `.grex/.grex-lock` sidecar suffix so the error
+            // refers to the pack root the recursion re-entered. v1.3.2
+            // B11: the lock now lives one extra level deep (under
+            // `.grex/`), so strip TWO components — file + `.grex/`.
+            let pack_root = path
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(path);
             ExecError::MetaCycle { path: pack_root }
         }
     }
@@ -214,10 +232,11 @@ impl Drop for VisitedInsertGuard {
 
 /// Write the `x-gitignore` managed block for `pack`. Every pack gets a
 /// managed block that always includes the default grex-managed patterns
-/// (`.grex-lock` as of feat-m6-2); the author's `x-gitignore` list is
-/// appended after the defaults. If no extension is present and the pack
-/// would contribute nothing beyond defaults the block is still written
-/// so the `.grex-lock` file never leaks into `git status`.
+/// (`.grex/` as of v1.3.2 B11; was `.grex-lock` in v1.2.x); the author's
+/// `x-gitignore` list is appended after the defaults. If no extension is
+/// present and the pack would contribute nothing beyond defaults the block
+/// is still written so grex sidecar artifacts (locks, event log, resolved
+/// state) never leak into `git status`.
 ///
 /// Errors map to [`ExecError::ExecInvalid`] so the lifecycle surfaces a
 /// single halt variant rather than leaking the gitignore error taxonomy.
@@ -1830,8 +1849,9 @@ mod tests {
     async fn gitignore_extension_absent_does_not_create_file() {
         // B12 v1.3.1: per-lifecycle `.gitignore` mutation removed.
         // Inverted from the v1.2.x assertion that absent `x-gitignore`
-        // still produced a managed block carrying `.grex-lock` —
-        // install no longer writes the file at all.
+        // still produced a managed block carrying `.grex-lock` (now
+        // `.grex/` per v1.3.2 B11) — install no longer writes the file
+        // at all.
         use crate::vars::VarEnv;
         use std::sync::Arc;
         use tempfile::TempDir;

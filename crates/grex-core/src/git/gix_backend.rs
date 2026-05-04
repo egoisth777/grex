@@ -24,7 +24,7 @@ use gix::refs::Target;
 use gix::remote::Direction;
 
 use super::error::GitError;
-use super::{ClonedRepo, GitBackend};
+use super::{BackendLockCtx, ClonedRepo, GitBackend};
 use crate::fs::ScopedLock;
 
 /// Pure-Rust [`GitBackend`] driven by the `gix` crate.
@@ -53,12 +53,18 @@ impl GitBackend for GixBackend {
         "gix"
     }
 
-    fn clone(&self, url: &str, dest: &Path, r#ref: Option<&str>) -> Result<ClonedRepo, GitError> {
-        // Per-repo lock: the sidecar lives in the parent dir (keyed by dest's
-        // last component) so the clone can still require `dest` to be empty.
-        // Once clone has happened, subsequent fetch/checkout continue to use
-        // the *same* sidecar — its path is a pure function of `dest`.
-        with_repo_lock(dest, || {
+    fn clone(
+        &self,
+        url: &str,
+        dest: &Path,
+        r#ref: Option<&str>,
+        lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError> {
+        // Per-repo lock: v1.3.2 B11 — the sidecar lives at
+        // `<parent_meta>/.grex/locks/<child_path>.backend.lock`
+        // (parent-owned). It survives a `rm -rf <dest>` rebuild and
+        // pre-exists the clone (`.grex/` is created on first acquire).
+        with_repo_lock(lock_ctx, || {
             ensure_dest_empty(dest)?;
             let repo = run_clone(url, dest, r#ref)?;
             let head_sha = read_head_sha(&repo)?;
@@ -66,11 +72,16 @@ impl GitBackend for GixBackend {
         })
     }
 
-    fn fetch(&self, dest: &Path) -> Result<(), GitError> {
-        with_repo_lock(dest, || fetch_locked(dest))
+    fn fetch(&self, dest: &Path, lock_ctx: BackendLockCtx<'_>) -> Result<(), GitError> {
+        with_repo_lock(lock_ctx, || fetch_locked(dest))
     }
 
-    fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), GitError> {
+    fn checkout(
+        &self,
+        dest: &Path,
+        r#ref: &str,
+        lock_ctx: BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         // Per-repo lock held across the whole operation. Cleanliness is
         // validated AFTER the lock is acquired (a prior caller may have
         // left the tree dirty between `is_dirty()` at t=0 and us observing
@@ -84,7 +95,7 @@ impl GitBackend for GixBackend {
         // function under the lock; we deliberately do not rely on gix's
         // `overwrite_existing: false` escape hatch (changing it to `false`
         // would break legitimate sync-after-stale-files recovery flows).
-        with_repo_lock(dest, || {
+        with_repo_lock(lock_ctx, || {
             let repo = open_repo(dest)?;
             ensure_clean_worktree(&repo, dest)?;
             let target = resolve_ref(&repo, r#ref)?;
@@ -103,21 +114,35 @@ impl GitBackend for GixBackend {
 // helpers — each kept small so trait methods stay under cyclomatic budget.
 // ---------------------------------------------------------------------------
 
-/// Lock sidecar path for per-repo serialisation. Kept in the parent dir so
-/// the clone path can still require `dest` to be empty, and the sidecar
-/// survives a `rm -rf <dest>` rebuild between retries.
-fn repo_lock_path(dest: &Path) -> PathBuf {
-    let parent = dest.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let stem = dest
-        .file_name()
-        .map_or_else(|| std::ffi::OsString::from("repo"), std::ffi::OsStr::to_os_string);
-    let mut name = std::ffi::OsString::from(".grex-backend-");
-    name.push(&stem);
-    name.push(".lock");
-    parent.join(name)
+/// Lock sidecar path for per-repo serialisation.
+///
+/// v1.3.2 B11: the sidecar lives under the PARENT meta-pack's `.grex/locks/`
+/// namespace at `<parent_meta>/.grex/locks/<child_path>.backend.lock`.
+/// `child_path` is the literal manifest-declared path verbatim (e.g.
+/// `tools/foo` → `<parent>/.grex/locks/tools/foo.backend.lock`); intermediate
+/// directories are auto-created on first acquire by [`with_repo_lock`].
+///
+/// Properties (per `.omne/lockfile.md` §"File location"):
+/// - Survives `rm -rf <dest>` — lock is parent-owned, not dest-adjacent.
+/// - Pre-clone safe — parent's `.grex/` exists before any child clone.
+/// - Path-keyed identity — no collision when two children share `name:`
+///   at distinct paths.
+fn repo_lock_path(lock_ctx: BackendLockCtx<'_>) -> PathBuf {
+    let mut p = lock_ctx.parent_meta.join(".grex").join("locks");
+    // Use a relative `Path::new(child_path)` so forward-slash separators
+    // in the literal manifest path translate to OS-native separators
+    // when joined. `child_path` is validated by the manifest loader
+    // before reaching here; `..` and absolute components are rejected
+    // upstream.
+    p.push(Path::new(lock_ctx.child_path));
+    let mut filename =
+        p.file_name().map_or_else(std::ffi::OsString::new, std::ffi::OsStr::to_os_string);
+    filename.push(".backend.lock");
+    p.set_file_name(filename);
+    p
 }
 
-/// Run `op` while holding the per-repo filesystem lock for `dest`.
+/// Run `op` while holding the per-repo filesystem lock for `(parent_meta, child_path)`.
 ///
 /// Lock is blocking (`fd_lock::RwLock::write`) — per-repo contention is
 /// rare and waiting is the right UX when it happens (e.g. two sync runs
@@ -125,11 +150,20 @@ fn repo_lock_path(dest: &Path) -> PathBuf {
 /// workspace-level lock in [`crate::sync::run`] is the fast-failing guard
 /// that prevents two syncs from ever reaching this point concurrently on
 /// the same workspace.
-fn with_repo_lock<T, F>(dest: &Path, op: F) -> Result<T, GitError>
+///
+/// v1.3.2 B11: intermediate directories under `<parent_meta>/.grex/locks/`
+/// are auto-created via `fs::create_dir_all` so a slash-path child like
+/// `tools/foo` finds its lock dir on first invocation.
+fn with_repo_lock<T, F>(lock_ctx: BackendLockCtx<'_>, op: F) -> Result<T, GitError>
 where
     F: FnOnce() -> Result<T, GitError>,
 {
-    let lock_path = repo_lock_path(dest);
+    let lock_path = repo_lock_path(lock_ctx);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            GitError::Internal(format!("create lock dir {}: {e}", parent.display()))
+        })?;
+    }
     let mut lock = ScopedLock::open(&lock_path)
         .map_err(|e| GitError::Internal(format!("open repo lock {}: {e}", lock_path.display())))?;
     let _guard = lock.acquire().map_err(|e| {

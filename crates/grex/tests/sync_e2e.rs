@@ -201,7 +201,8 @@ fn e2e_dry_run_after_wet_3_level_tree() {
     // Snapshot the lockfile + events.jsonl after wet seed so we can
     // assert the dry-run leaves them byte-equal.
     let lockfile_path = f.root.join(".grex/grex.lock");
-    let legacy_lockfile_path = f.root.join(".grex-lock");
+    // v1.3.2 B11: per-pack lock now lives at `<pack>/.grex/.grex-lock`.
+    let legacy_lockfile_path = f.root.join(".grex").join(".grex-lock");
     let events_path = f.root.join(".grex/events.jsonl");
     let lockfile_pre =
         std::fs::read(&lockfile_path).or_else(|_| std::fs::read(&legacy_lockfile_path)).ok();
@@ -571,18 +572,18 @@ fn e2e_force_plus_dry_run_plans_but_does_not_write_lockfile() {
     assert_eq!(warm_body, post_body, "dry-run + force must not rewrite lockfile");
 
     // v1.3.1 (B4 reviewer fix-up): the workspace-scoped sidecar lock at
-    // `<workspace>/.grex.sync.lock` must NOT be created by a dry-run.
-    // Pre-fix, `open_workspace_lock` ran unconditionally and
+    // `<workspace>/.grex/.grex.sync.lock` (v1.3.2 B11) must NOT be created
+    // by a dry-run. Pre-fix, `open_workspace_lock` ran unconditionally and
     // `ScopedLock::open` materialised the file before any dry_run gate
     // had a chance to skip the rest of the pipeline. Removing the
     // warm-up's lock first keeps this assertion meaningful even if the
     // wet warm-up legitimately created one.
-    let ws_lock = f.workspace.join(".grex.sync.lock");
+    let ws_lock = f.workspace.join(".grex").join(".grex.sync.lock");
     let _ = fs::remove_file(&ws_lock);
     let _ = run(&f.root, &dry_force).expect("second dry+force sync ok");
     assert!(
         !ws_lock.exists(),
-        "B4 v1.3.1: dry-run MUST NOT create `<workspace>/.grex.sync.lock`; found {ws_lock:?}",
+        "B4 v1.3.1 / B11 v1.3.2: dry-run MUST NOT create `<workspace>/.grex/.grex.sync.lock`; found {ws_lock:?}",
     );
 }
 

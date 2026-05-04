@@ -194,15 +194,30 @@ impl GitBackend for MockGitBackend {
     fn name(&self) -> &'static str {
         "mock-git-b14"
     }
-    fn clone(&self, _url: &str, dest: &Path, _ref: Option<&str>) -> Result<ClonedRepo, GitError> {
+    fn clone(
+        &self,
+        _url: &str,
+        dest: &Path,
+        _ref: Option<&str>,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError> {
         self.calls.lock().unwrap().push("clone".into());
         fs::create_dir_all(dest).unwrap();
         Ok(ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
     }
-    fn fetch(&self, _dest: &Path) -> Result<(), GitError> {
+    fn fetch(
+        &self,
+        _dest: &Path,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         Ok(())
     }
-    fn checkout(&self, _dest: &Path, _ref: &str) -> Result<(), GitError> {
+    fn checkout(
+        &self,
+        _dest: &Path,
+        _ref: &str,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         Ok(())
     }
     fn head_sha(&self, _dest: &Path) -> Result<String, GitError> {

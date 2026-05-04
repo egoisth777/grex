@@ -261,13 +261,19 @@ impl<'a> Walker<'a> {
         // M4-D: `ref_override` wins over the parent-declared `child.ref`.
         // Falls back to the declared ref when no override is active.
         let effective_ref = self.ref_override.as_deref().or(child.r#ref.as_deref());
+        // v1.3.2 B11 — backend-lock context: parent_meta is the legacy
+        // single-frame walker's workspace, child_path is the literal
+        // manifest-declared path. The lock lands at
+        // `<workspace>/.grex/locks/<child_path>.backend.lock`.
+        let child_path = child.effective_path();
+        let lock_ctx = crate::git::BackendLockCtx::new(&self.workspace, &child_path);
         if dest_has_git_repo(&dest) {
-            self.backend.fetch(&dest)?;
+            self.backend.fetch(&dest, lock_ctx)?;
             if let Some(r) = effective_ref {
-                self.backend.checkout(&dest, r)?;
+                self.backend.checkout(&dest, r, lock_ctx)?;
             }
         } else {
-            self.backend.clone(&child.url, &dest, effective_ref)?;
+            self.backend.clone(&child.url, &dest, effective_ref, lock_ctx)?;
         }
         Ok(dest)
     }
@@ -379,9 +385,14 @@ pub fn dest_has_git_repo(dest: &Path) -> bool {
 /// but no `.grex/pack.yaml`. See
 /// `openspec/changes/feat-v1.1.1-plain-git-children/design.md`.
 pub fn synthesize_plain_git_manifest(child: &ChildRef) -> PackManifest {
+    // v1.2.0: when `child.path:` carries `/` separators the synthesised
+    // pack.name must equal the LAST segment so it satisfies the bare-
+    // name regex `^[a-z][a-z0-9-]*$` (and matches `verify_child_name`).
+    let effective = child.effective_path();
+    let name = last_path_segment(&effective).to_string();
     PackManifest {
         schema_version: SchemaVersion::current(),
-        name: child.effective_path(),
+        name,
         r#type: PackType::Scripted,
         version: None,
         depends_on: Vec::new(),
@@ -393,14 +404,35 @@ pub fn synthesize_plain_git_manifest(child: &ChildRef) -> PackManifest {
 }
 
 /// Enforce that the cloned child's pack.yaml name matches what the parent
-/// declared. The parent-side expectation is the child entry's
-/// [`ChildRef::effective_path`] — the directory name in the workspace.
+/// declared. The parent-side expectation is the LAST segment of the
+/// child entry's [`ChildRef::effective_path`] — i.e. the on-disk
+/// directory the pack actually lives in.
+///
+/// v1.2.0: when `child.path:` carries `/` separators (e.g. `tools/foo`)
+/// the last segment is the pack's home directory; intermediate
+/// segments (`tools/`) are mount-point scaffolding that the pack itself
+/// does not own. The pack-name regex `^[a-z][a-z0-9-]*$` forbids `/`,
+/// so comparing the cloned manifest's `name:` against the FULL slash
+/// path would be unsatisfiable for any legal pack — splitting on `/`
+/// and comparing against the last segment matches the runtime
+/// invariant `id = file_name(dest)` already enforced by Phase 1's
+/// dry-run recorder and the lockfile id convention.
 fn verify_child_name(got: &str, child: &ChildRef, dest: &Path) -> Result<(), TreeError> {
-    let expected = child.effective_path();
+    let effective = child.effective_path();
+    let expected = last_path_segment(&effective).to_string();
     if got == expected {
         return Ok(());
     }
     Err(TreeError::PackNameMismatch { got: got.to_string(), expected, path: dest.to_path_buf() })
+}
+
+/// Last `/`-separated segment of a (POSIX) child path. For a bare name
+/// the input is returned unchanged; for `tools/foo` the result is
+/// `foo`. Empty / trailing-`/` inputs are caller-side validation
+/// failures (they never reach this helper after `validate_children_paths`),
+/// so the fallback simply returns the original string.
+fn last_path_segment(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 /// Resolve a `depends_on` entry (URL or bare name) against nodes already
@@ -1007,7 +1039,7 @@ fn phase1_handle_child(
             // pins the invariant.
             if opts.dry_run {
                 fill_dry_run_record(&mut out, &dest, child, opts);
-            } else if let Err(e) = phase1_clone(backend, child, &dest, opts) {
+            } else if let Err(e) = phase1_clone(backend, meta_dir, child, &dest, opts) {
                 out.error = Some(e);
             }
         }
@@ -1018,7 +1050,7 @@ fn phase1_handle_child(
             // children that would be touched), but no fetch fires.
             if opts.dry_run {
                 fill_dry_run_record(&mut out, &dest, child, opts);
-            } else if let Err(e) = phase1_fetch(backend, child, &dest, opts) {
+            } else if let Err(e) = phase1_fetch(backend, meta_dir, child, &dest, opts) {
                 out.error = Some(e);
             }
         }
@@ -1081,8 +1113,13 @@ fn fill_dry_run_record(
 /// dest's parent (`meta_dir`) for the duration of the clone — distinct
 /// children clone serially within a meta to keep the scheduler-tier
 /// model honest. Sibling parallelism is a 1.j follow-up.
+///
+/// v1.3.2 B11 — backend-lock ctx threads `(meta_dir, child.effective_path())`
+/// through to the backend so the per-repo lock lands at
+/// `<meta_dir>/.grex/locks/<child_path>.backend.lock` (parent-owned).
 fn phase1_clone(
     backend: &dyn GitBackend,
+    meta_dir: &Path,
     child: &ChildRef,
     dest: &Path,
     opts: &SyncMetaOptions,
@@ -1097,21 +1134,28 @@ fn phase1_clone(
             TreeError::ManifestRead(format!("failed to mkdir parent {}: {e}", parent.display()))
         })?;
     }
-    backend.clone(&child.url, dest, effective_ref)?;
+    let child_path = child.effective_path();
+    let lock_ctx = crate::git::BackendLockCtx::new(meta_dir, &child_path);
+    backend.clone(&child.url, dest, effective_ref, lock_ctx)?;
     Ok(())
 }
 
 /// Phase 1 fetch helper. Same locking discipline as `phase1_clone`.
+///
+/// v1.3.2 B11 — see `phase1_clone` for the backend-lock-ctx contract.
 fn phase1_fetch(
     backend: &dyn GitBackend,
+    meta_dir: &Path,
     child: &ChildRef,
     dest: &Path,
     opts: &SyncMetaOptions,
 ) -> Result<(), TreeError> {
-    backend.fetch(dest)?;
+    let child_path = child.effective_path();
+    let lock_ctx = crate::git::BackendLockCtx::new(meta_dir, &child_path);
+    backend.fetch(dest, lock_ctx)?;
     let effective_ref = opts.ref_override.as_deref().or(child.r#ref.as_deref());
     if let Some(r) = effective_ref {
-        backend.checkout(dest, r)?;
+        backend.checkout(dest, r, lock_ctx)?;
     }
     Ok(())
 }
@@ -1832,6 +1876,7 @@ mod tests {
             url: &str,
             dest: &Path,
             r#ref: Option<&str>,
+            _lock_ctx: crate::git::BackendLockCtx<'_>,
         ) -> Result<crate::ClonedRepo, crate::GitError> {
             self.calls.lock().unwrap().push(BackendCall::Clone {
                 url: url.to_string(),
@@ -1843,11 +1888,20 @@ mod tests {
             }
             Ok(crate::ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
         }
-        fn fetch(&self, dest: &Path) -> Result<(), crate::GitError> {
+        fn fetch(
+            &self,
+            dest: &Path,
+            _lock_ctx: crate::git::BackendLockCtx<'_>,
+        ) -> Result<(), crate::GitError> {
             self.calls.lock().unwrap().push(BackendCall::Fetch { dest: dest.to_path_buf() });
             Ok(())
         }
-        fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), crate::GitError> {
+        fn checkout(
+            &self,
+            dest: &Path,
+            r#ref: &str,
+            _lock_ctx: crate::git::BackendLockCtx<'_>,
+        ) -> Result<(), crate::GitError> {
             self.calls
                 .lock()
                 .unwrap()
@@ -2129,9 +2183,12 @@ mod tests {
     fn test_walker_v1_2_0_parent_relative_path_resolution() {
         let tmp = tempfile::tempdir().unwrap();
         let root_dir = tmp.path().to_path_buf();
-        // Note: 1.c's path-segment validator forbids slashes in the
-        // `path:` field, so multi-segment nesting is achieved by
+        // Historical note: prior to v1.2.0 the path-segment validator
+        // forbade slashes, so multi-segment nesting was modelled by
         // chaining single-segment children across recursion frames.
+        // v1.2.0 relaxes the rule (per-segment validation), so a single
+        // slash-bearing `path:` is also legal — this fixture keeps the
+        // chained form for parity with pre-v1.2.0 behaviour.
         let tools_dir = root_dir.join("tools");
         let foo_dir = tools_dir.join("foo");
         make_sub_meta_on_disk(&tools_dir, "tools");
@@ -3200,8 +3257,9 @@ mod tests {
                 url: &str,
                 dest: &Path,
                 r#ref: Option<&str>,
+                lock_ctx: crate::git::BackendLockCtx<'_>,
             ) -> Result<crate::ClonedRepo, crate::GitError> {
-                let res = self.inner.clone(url, dest, r#ref)?;
+                let res = self.inner.clone(url, dest, r#ref, lock_ctx)?;
                 // Also drop a pack.yaml so Phase 3 enters the cycle
                 // check (and not the `Skipped` early-return).
                 std::fs::create_dir_all(dest.join(".grex")).unwrap();
@@ -3212,11 +3270,20 @@ mod tests {
                 std::fs::write(dest.join(".grex/pack.yaml"), yaml).unwrap();
                 Ok(res)
             }
-            fn fetch(&self, dest: &Path) -> Result<(), crate::GitError> {
-                self.inner.fetch(dest)
+            fn fetch(
+                &self,
+                dest: &Path,
+                lock_ctx: crate::git::BackendLockCtx<'_>,
+            ) -> Result<(), crate::GitError> {
+                self.inner.fetch(dest, lock_ctx)
             }
-            fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), crate::GitError> {
-                self.inner.checkout(dest, r#ref)
+            fn checkout(
+                &self,
+                dest: &Path,
+                r#ref: &str,
+                lock_ctx: crate::git::BackendLockCtx<'_>,
+            ) -> Result<(), crate::GitError> {
+                self.inner.checkout(dest, r#ref, lock_ctx)
             }
             fn head_sha(&self, dest: &Path) -> Result<String, crate::GitError> {
                 self.inner.head_sha(dest)
