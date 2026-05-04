@@ -18,7 +18,7 @@ Bugs reproduced verbatim from `.omne/var/dogfood-findings-v1.3.0.md` (severity p
 | # | Severity | Verb / site | Expected | Actual | Fix |
 |---|---|---|---|---|---|
 | B6  | High         | `LockEntry.synthetic`            | Field retired per pack-spec.md §v1.2.0 (untracked = error)                                                            | `synthetic: true` emitted on 6/7 children post-sync                                                | Stop emitting `synthetic`; runtime to enforce "untracked = error" per spec |
-| B11 | **Critical** | Lockfile location                | `.grex-lock`, `.grex.sync.lock`, `.grex-backend-*.lock` under `.grex/` (manifest.md / lockfile.md contract)            | Lockfiles land at workspace root                                                                    | Move lockfile writers under `.grex/` |
+| B11 | **Critical** | Lockfile location                | `.grex-lock`, `.grex.sync.lock`, `.grex-backend-*.lock` under `.grex/` (manifest.md / lockfile.md contract)            | Lockfiles land at workspace root                                                                    | Move per-pack lock + workspace sync sidecar under `.grex/`; relocate per-repo backend lock to parent-owned `<parent_meta>/.grex/locks/<child-path>.backend.lock`. |
 | B13 | High         | Nested `child.path`              | Slash-separated paths supported per pack-spec.md §v1.2.0                                                              | Runtime rejects: "path separators not allowed" — runtime BEHIND spec                                | Support slash-separated paths in walker / manifest loader |
 
 ## § Scope (3 bugs, drift bundle)
@@ -93,11 +93,13 @@ Theorem name + signature proposed in `design.md §B13 Lean obligation` — the m
 - **Changes:** lockfile / sync-lock / backend-lock locations (hard-cut, no fallback). Walker / manifest-loader accept slash paths.
 - **Frozen contracts unchanged.** All 13 STABLE/FROZEN contracts in `freeze-v1.3.0.md` remain intact — lockfile schema (FROZEN) location is not in the freeze table; the schema shape itself is unchanged.
 
-## § Open questions for maintainer
+## § Decisions locked (2026-05-03)
 
-1. **B11 path naming.** Inside `.grex/`, retain bare names (`.grex-lock`, `.grex.sync.lock`, `.grex-backend.lock`) or drop the leading dot (since they no longer need to hide at workspace root)? Design.md proposes retaining bare names for diff minimality and hint-to-operator that they are internal lock files; awaiting maintainer confirmation.
-2. **B13 theorem signature.** Phase-1 proposal lists three candidate names (see design.md §B13). Maintainer picks the final name + canonical statement before Phase 2a Lean dispatch.
-3. **B11 `.grex-backend.lock` placement.** Current sibling-file design (`<dest>.grex-backend.lock` adjacent to `<dest>`) was chosen so the lock survives `<dest>` wipe. Moving inside `<dest>/.grex/` means the lock disappears on a destructive `rm -rf <dest>`. Acceptable per maintainer? Design.md proposes acceptance because v1.2.5 quarantine + v1.3.1 dry-run gates already make destructive wipes cooperative.
+1. **B11 path naming.** Inside `.grex/`, keep dotted bare names (`.grex-lock`, `.grex.sync.lock`, `.grex-backend.lock`). Rationale: diff minimality + operator hint that these are internal lock files.
+
+2. **B13 theorem name.** `Grex.Walker.declarative_nesting_terminates`. Final canonical statement to be ratified at Phase 2a Lean dispatch.
+
+3. **B11 backend-lock placement.** Parent-owned, centralized: `<parent_meta>/.grex/locks/<child-path>.backend.lock`. Path mirrors child dest structure with literal `<child-path>` from manifest; intermediate dirs auto-created on first acquire. Properties: persists across dest wipe, pre-clone safe, no slug encoding. Earlier sibling-file (v1.3.0) and inside-dest (briefly proposed) designs both rejected; sibling-file provenance archived at `.omne/stale/backend-lock-v1.3.0-sibling.md`.
 
 ## § Risks
 

@@ -89,15 +89,24 @@ Three artifacts move under `.grex/`:
 |---|---|---|---|
 | Per-pack pack-lock | `<pack_workdir>/.grex-lock` | `<pack_workdir>/.grex/.grex-lock` | `crates/grex-core/src/concurrency/packlock.rs` (best-effort; confirm Phase 2 — possibly `crates/grex-core/src/fs/lock.rs`) |
 | Workspace sync sidecar | `<workspace>/.grex.sync.lock` | `<workspace>/.grex/.grex.sync.lock` | `crates/grex-core/src/sync/workspace_lock.rs` (best-effort; v1.3.1 B4 dry-run gate already touched `open_workspace_lock`) |
-| Per-repo backend lock | `<dest>.grex-backend.lock` (sibling) | `<dest>/.grex/.grex-backend.lock` | `crates/grex-core/src/backend/git/lock.rs` (best-effort; confirm Phase 2) |
+| Per-repo backend lock | `<dest>.grex-backend.lock` (sibling, v1.3.0) | `<parent_meta>/.grex/locks/<child-path>.backend.lock` | `crates/grex-core/src/backend/git/lock.rs` (best-effort; confirm Phase 2) |
+
+**Per-repo backend lock — design rationale (current truth):**
+The parent meta-pack manages child clone operations (parent declares child in manifest, parent invokes the clone). The backend lock therefore lives in the parent's `.grex/` namespace, not adjacent to or inside the child dest. Path: `<parent_meta>/.grex/locks/<child-path>.backend.lock` where `<child-path>` is the manifest-declared path verbatim (e.g. `tools/foo` → `<parent>/.grex/locks/tools/foo.backend.lock`). Intermediate directories auto-created on first lock acquisition. Properties:
+
+- Persists regardless of dest state — survives `rm -rf <dest>` (manual or cooperative).
+- Pre-clone safe — parent's `.grex/` exists before any child clone (chicken-egg fixed).
+- Path-keyed identity per `manifest.md §v1.2.0 keying` — no collision when two children share `name:` at distinct paths.
+- Centralized — `ls .grex/locks/` shows all backend-lock state in a tree mirroring the dest structure.
+- No slug encoding required — filesystem natively supports nested paths.
 
 Affected files (best-effort; confirm during Phase 2 walk):
-- `crates/grex-core/src/concurrency/packlock.rs` — per-pack lock-path constant or builder.
-- `crates/grex-core/src/sync/workspace_lock.rs` — workspace sidecar lock-path.
-- `crates/grex-core/src/backend/git/lock.rs` — per-repo backend lock-path.
-- `crates/grex-core/src/doctor/findings.rs` — if `grex doctor` reports lock paths in any finding (e.g. stale-lock detection per `cli.md` "stale `.grex-lock` files"), update path strings.
+- `crates/grex-core/src/concurrency/packlock.rs` — per-pack lock-path constant or builder (unchanged target: `<pack_workdir>/.grex/.grex-lock`).
+- `crates/grex-core/src/sync/workspace_lock.rs` — workspace sidecar lock-path (unchanged target: `<workspace>/.grex/.grex.sync.lock`).
+- `crates/grex-core/src/backend/git/lock.rs` — per-repo backend lock-path; rewrite to compute `<parent_meta>/.grex/locks/<child-path>.backend.lock` from the child's manifest-declared path. Acquisition site must `mkdir -p` intermediate dirs.
+- `crates/grex-core/src/doctor/findings.rs` — if `grex doctor` reports lock paths in any finding (e.g. stale-lock detection per `cli.md` "stale `.grex-lock` files"), update path strings + add stale-lock scan under `<parent>/.grex/locks/`.
 - `crates/grex/src/cli/verbs/doctor.rs` — same as above if rendered in CLI output.
-- New test: `crates/grex-core/tests/lockfile_under_grex.rs` — drives a sync, asserts lock files materialize under `.grex/`. Negative test asserts NO lock files appear at old workspace-root or pack-root paths post-sync.
+- New test: `crates/grex-core/tests/lockfile_under_grex.rs` — drives a sync, asserts (a) per-pack lock at `<pack_workdir>/.grex/.grex-lock`, (b) workspace lock at `<workspace>/.grex/.grex.sync.lock`, (c) per-repo backend lock at `<parent_meta>/.grex/locks/<child-path>.backend.lock`. Negative test asserts NO sibling `<dest>.grex-backend.lock`, NO inside-dest `<dest>/.grex/.grex-backend.lock`, NO workspace-root or pack-root paths.
 
 **Hard-cut readers.** No fallback to old workspace-root path — the open path takes the new location ONLY. Justification: v1.3.1 B8 SCHEMA_VERSION hard-cut precedent (no field deployments to migrate). The maintainer locked this posture 2026-05-03.
 
