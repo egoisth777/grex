@@ -60,7 +60,7 @@ Six workers; write-sets disjoint at file granularity. Single reviewer pass over 
 - [ ] Maintainer adds `REAL_SMOKE_SSH_KEY` repo secret out-of-band (not in this PR; documented in 2a README).
 
 ### 2e — SSOT update (separate `grex-inst` repo per Rule 7)
-- [ ] Create `.omne/cfg/real-smoke.md` (G2 frontmatter; `type: design`; canonical reference for the harness contract).
+- [ ] Create `.omne/real-smoke.md` (G2 frontmatter; `type: design`; canonical reference for the harness contract).
 - [ ] Update `.omne/schemas/rules.md` G1 routing table: add row for `cfg/real-smoke.md` (hand-edited, design type).
 - [ ] Run `scripts/build_index.py` to regenerate `.omne/INDEX.yaml`.
 - [ ] Run `scripts/validate.py` (Rule 15) — exit 0 before SSOT commit.
@@ -98,7 +98,7 @@ Infra-only change. No `cargo publish`. No `git tag`. No SemVer label.
 ## Stage 7 — wrap-up
 - [ ] Append `## Endpoint (2026-05-XX, main — feat-real-smoke-harness MERGED)` to `progress.md` (grex repo).
 - [ ] Update top "Where we are" block to note real-smoke is now the gating layer for v1.3.x patch series.
-- [ ] Append section to `.omne/cfg/history.md` (SSOT repo) — infra ship, no version, links to PR.
+- [ ] Append section to `.omne/history.md` (SSOT repo) — infra ship, no version, links to PR.
 - [ ] Carry-forward list to v1.3.1: implement the B4/B11/B12/B14/B8/B7 fixes; verify the corresponding `t_b*` tests turn GREEN.
 
 ## Out of scope (future work)

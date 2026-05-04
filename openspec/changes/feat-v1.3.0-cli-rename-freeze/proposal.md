@@ -18,9 +18,9 @@ v1.2.x finished stabilization. The next cut is the long-planned `--workspace` �
 
 - **CLI `--workspace` → `--pack` rename (carry-forward since v1.0)** — The CLI exposes `--workspace <path>` on `sync`, `serve`, `migrate-lockfile`, `teardown`. The internal noun has shifted from "workspace" to "pack" everywhere except the operator surface (cfg/cli.md §rename-tracker, walker.md §pack-noun). Operator-side rename has been gated until a MINOR cut to preserve SemVer discipline. v1.3.0 ships the rename via clap's `alias` mechanism: `--pack` becomes the canonical flag; `--workspace` continues to work and emits a one-time deprecation warn (warn-once per process). Same dual-emit treatment for JSON envelopes (ls/doctor) and MCP `SyncParams`.
 
-- **Behavior contract freeze (v1.3.0 readiness goal)** — 13 STABLE behavior contracts identified across Round 1-3 of the v1.3.0 arch review. Freezing them in `.omne/cfg/freeze-v1.3.0.md` (4-column table: contract, surface, semver-class, owner) gives downstream Rust consumers + plugin authors + operators a stable target to code against. Plugin-API stays UNSTABLE deliberately — v1.4.0 freezes it once cap-std `Dir` capability handles harden plugin sandboxing.
+- **Behavior contract freeze (v1.3.0 readiness goal)** — 13 STABLE behavior contracts identified across Round 1-3 of the v1.3.0 arch review. Freezing them in `.omne/var/freeze-v1.3.0.md` (4-column table: contract, surface, semver-class, owner) gives downstream Rust consumers + plugin authors + operators a stable target to code against. Plugin-API stays UNSTABLE deliberately — v1.4.0 freezes it once cap-std `Dir` capability handles harden plugin sandboxing.
 
-- **Migration doc** — `.omne/cfg/migration-v1.3.0.md` ships alongside the freeze table with two operator-facing sections (CLI flag rename + JSON envelope key migration) and one consumer-facing section (Rust API additive surface for `pack` field on `ExecCtx` + `SyncParams`).
+- **Migration doc** — `.omne/var/migration-v1.3.0.md` ships alongside the freeze table with two operator-facing sections (CLI flag rename + JSON envelope key migration) and one consumer-facing section (Rust API additive surface for `pack` field on `ExecCtx` + `SyncParams`).
 
 Each item is small and additive at every layer (CLI, JSON wire, MCP wire, file format, behavior). Together they satisfy the v1.3.0 readiness AC defined in v1.2.4 and confirmed across v1.2.5/6.
 
@@ -48,8 +48,8 @@ Locked Round 4 design (synthesizing R1+R2+R3):
    - C13: Quarantine GC + restore semantics (v1.2.5 semantics frozen)
    - **Plugin-API explicitly stays UNSTABLE** — v1.4.0 freeze candidate.
 6. **Deprecation deferrals to v1.4.0** — `PackLock::acquire` (sync variant), `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const removal all DEFERRED. v1.3.0 lands warn-once deprecation diagnostics; v1.4.0 deletes.
-7. **NEW SSOT files** — `.omne/cfg/freeze-v1.3.0.md` (4-column freeze table) + `.omne/cfg/migration-v1.3.0.md` (operator + Rust consumer migration doc). Ship through SSOT repo per Rule 7.
-8. **Plugin-API UNSTABLE marker** — add UNSTABLE callout to `plugin/mod.rs` lib doc-comment, `Cargo.toml` description suffix on `grex-plugins-builtin`, and `.omne/cfg/plugin-api.md` WARNING callout.
+7. **NEW SSOT files** — `.omne/var/freeze-v1.3.0.md` (4-column freeze table) + `.omne/var/migration-v1.3.0.md` (operator + Rust consumer migration doc). Ship through SSOT repo per Rule 7.
+8. **Plugin-API UNSTABLE marker** — add UNSTABLE callout to `plugin/mod.rs` lib doc-comment, `Cargo.toml` description suffix on `grex-plugins-builtin`, and `.omne/plugin-api.md` WARNING callout.
 9. **e2e smoke extension** — extend existing `e2e_v1_3_0_readiness_smoke` (added v1.2.4) with deprecation warn-once assertion: invoke `grex sync --workspace <path>` twice, assert deprecation diagnostic emitted exactly once.
 10. **MSRV unchanged** — workspace MSRV stays 1.79 per Cargo.toml:14. No language-feature dependency added.
 
@@ -82,7 +82,7 @@ No public API removal. New CLI flag (`--pack`) is additive alias; new JSON keys 
 9. **Local gates clean:** `cargo fmt --all -- --check`, `cargo doc --no-deps --workspace -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cd proof && lake build`, axiom-policy check (Bridge ≤ 12 unchanged).
 10. **CI gate.** Existing `#print axioms` smoke check covers the 5 headline theorems; v1.3.0 adds nothing new (no new theorem). Drift fails CI.
 11. **Versioning.** Workspace version 1.2.6 → 1.3.0 in workspace `Cargo.toml`, `crates/xtask/Cargo.toml` path-dep pin, `crates/xtask/tests/version_test.rs` `EXPECTED_WORKSPACE_VERSION`. Man pages regenerated via `cargo xtask gen-man` — expect `<workspace>` → `<pack>` doc-noun changes in all 4 affected manpages.
-12. **Changelog/history.** `CHANGELOG.md [1.3.0]` entry + `.omne/cfg/history.md` v1.3.0 MILESTONE entry (separate SSOT repo per Rule 7) + `.omne/cfg/freeze-v1.3.0.md` + `.omne/cfg/migration-v1.3.0.md` new files (also SSOT repo).
+12. **Changelog/history.** `CHANGELOG.md [1.3.0]` entry + `.omne/history.md` v1.3.0 MILESTONE entry (separate SSOT repo per Rule 7) + `.omne/var/freeze-v1.3.0.md` + `.omne/var/migration-v1.3.0.md` new files (also SSOT repo).
 
 ## v1.3.0 readiness constraint (maintainer directive — now satisfied)
 

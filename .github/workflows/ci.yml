@@ -141,8 +141,8 @@ jobs:
           release-type: patch
 
   # Lean4 proof verification — mechanises invariant I1 (no double lock) per
-  # `.omne/cfg/concurrency.md` §Lean4 invariant. Linux-only is acceptable
-  # per `.omne/cfg/test-plan.md` §Lean4 proof verification — `.olean` is
+  # `.omne/concurrency.md` §Lean4 invariant. Linux-only is acceptable
+  # per `.omne/test-plan.md` §Lean4 proof verification — `.olean` is
   # platform-agnostic, so one successful build proves the invariant
   # everywhere.
   #

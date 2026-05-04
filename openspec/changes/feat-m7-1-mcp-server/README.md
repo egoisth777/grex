@@ -32,7 +32,7 @@ Embed an MCP 2025-06-18 stdio server inside `grex serve` (new crate `crates/grex
 ## Dependencies
 
 - **Prior**: M5 plugin system (PRs #22 + #23, 2026-04-21); M6 scheduler (feat-m6-1); M6 pack-lock (feat-m6-2); M6 Lean proof (feat-m6-3).
-- **SSOT**: [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) (rewritten 2026-04-21, Path B); [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) (lock ordering); [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #2.
+- **SSOT**: [`.omne/mcp.md`](../../../.omne/mcp.md) (rewritten 2026-04-21, Path B); [`.omne/concurrency.md`](../../../.omne/concurrency.md) (lock ordering); [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #2.
 
 ## Delivery plan (8 TDD stages)
 

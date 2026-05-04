@@ -215,7 +215,7 @@ async fn handshake_ok() {
 
 /// L2.2 — sending `tools/list` before `initialize` must be rejected.
 ///
-/// Spec target (`.omne/cfg/mcp.md` §"Error codes"): JSON-RPC error
+/// Spec target (`.omne/mcp.md` §"Error codes"): JSON-RPC error
 /// envelope with code `-32002` and `data.kind == "init_state"`.
 ///
 /// **rmcp 1.5.0 reality**: the framework gates the handshake at
@@ -257,7 +257,7 @@ async fn request_before_init_rejected() {
 
 /// L2.3 — a second `initialize` after a successful one must be rejected.
 ///
-/// Spec target (`.omne/cfg/mcp.md` §"Error codes"): code `-32002`,
+/// Spec target (`.omne/mcp.md` §"Error codes"): code `-32002`,
 /// `data.kind == "init_state"`.
 ///
 /// **rmcp 1.5.0 reality**: after the handshake gate closes, the

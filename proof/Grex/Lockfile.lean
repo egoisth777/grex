@@ -39,8 +39,8 @@ hypothesis required.
 
 ## Source-of-truth links
 
-* `.omne/cfg/lockfile.md` — primary spec for the lockfile schema
-* `.omne/cfg/dogfood-findings-v1.3.0.md` §B14 — bug report
+* `.omne/lockfile.md` — primary spec for the lockfile schema
+* `.omne/var/dogfood-findings-v1.3.0.md` §B14 — bug report
 * `crates/grex-core/src/lockfile/writer.rs` — Rust v1.3.1 implementation
 
 ## Axiom budget (CI gate)

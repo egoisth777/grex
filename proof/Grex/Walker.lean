@@ -23,8 +23,8 @@ The proof follows the same idiom as `Grex.Scheduler`:
   axiomises `fd-lock`'s FIFO queue for the scheduler.
 
 Source-of-truth links:
-* `.omne/cfg/walker.md` — primary spec for v1.2.0 walker
-* `.omne/cfg/architecture.md` §Walker invariants — identifies the eight
+* `.omne/walker.md` — primary spec for v1.2.0 walker
+* `.omne/architecture.md` §Walker invariants — identifies the eight
   properties enumerated below
 * `progress.md` — v1.2.0 milestone tracker
 

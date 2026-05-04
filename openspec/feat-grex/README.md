@@ -13,8 +13,8 @@ openspec/feat-grex/
 - [`spec.md`](./spec.md) — problem, goal, success criteria, acceptance.
 - [`../../progress.md`](../../progress.md) — session-resume snapshot.
 - [`../../milestone.md`](../../milestone.md) — M1-M8 phased delivery + v2 backlog.
-- [`../../.omne/cfg/README.md`](../../.omne/cfg/README.md) — design-doc index (15 topic docs).
-- [`../../.omne/cfg/pack-spec.md`](../../.omne/cfg/pack-spec.md) — `.grex/` dir + `pack.yaml` schema.
+- [`../../.omne/README.md`](../../.omne/README.md) — design-doc index (15 topic docs).
+- [`../../.omne/pack-spec.md`](../../.omne/pack-spec.md) — `.grex/` dir + `pack.yaml` schema.
 
 ## Status
 

@@ -33,7 +33,7 @@ level = 1
 # `openspec/changes/feat-v1.0.1-doc-site/design.md` §"linkcheck preprocessor scope".
 #
 # `exclude` patterns:
-# * `\.omne/cfg/.*`     — agent-readable design-doc tree, git-ignored
+# * `\.omne/.*`     — agent-readable design-doc tree, git-ignored
 #                         (not present on a fresh clone, so linkcheck
 #                         cannot resolve the path even though authors
 #                         have it locally).
@@ -45,7 +45,7 @@ level = 1
 follow-web-links = false
 warning-policy = "warn"
 exclude = [
-    "\\.omne/cfg/.*",
+    "\\.omne/.*",
     "crates/.*",
     "openspec/.*",
 ]

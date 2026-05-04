@@ -11,9 +11,9 @@ depends_on: [feat-v1-3-1, dogfood-findings-v1-3-0, freeze-v1-3-0]
 
 ## § Why
 
-v1.3.0 dogfood (2026-05-02 against `E:\repos\cfg`) surfaced 15 defects (B1–B15) catalogued in `.omne/cfg/dogfood-findings-v1.3.0.md`. v1.3.1 closed the critical-bundle (B2/B4/B7/B8/B12/B14). v1.3.2 = the **contract-drift bundle** — three bugs where the v1.3.0 runtime ships behavior that disagrees with the locked SSOT contracts in `.omne/cfg/lockfile.md`, `.omne/cfg/manifest.md`, and `.omne/cfg/pack-spec.md`.
+v1.3.0 dogfood (2026-05-02 against `E:\repos\cfg`) surfaced 15 defects (B1–B15) catalogued in `.omne/var/dogfood-findings-v1.3.0.md`. v1.3.1 closed the critical-bundle (B2/B4/B7/B8/B12/B14). v1.3.2 = the **contract-drift bundle** — three bugs where the v1.3.0 runtime ships behavior that disagrees with the locked SSOT contracts in `.omne/lockfile.md`, `.omne/manifest.md`, and `.omne/pack-spec.md`.
 
-Bugs reproduced verbatim from `.omne/cfg/dogfood-findings-v1.3.0.md` (severity preserved):
+Bugs reproduced verbatim from `.omne/var/dogfood-findings-v1.3.0.md` (severity preserved):
 
 | # | Severity | Verb / site | Expected | Actual | Fix |
 |---|---|---|---|---|---|
@@ -25,11 +25,11 @@ Bugs reproduced verbatim from `.omne/cfg/dogfood-findings-v1.3.0.md` (severity p
 
 ### B6 — retire `LockEntry.synthetic`
 
-`pack-spec.md §v1.2.0` retired sync-time auto-synthesis: encountering `dest/.git` without `dest/.grex/pack.yaml` is an error (collected per Phase 1, reported at end-of-frame). The companion `LockEntry.synthetic` field was meant to be retired at the same time but the writer still emits `synthetic: true` on 6/7 children. Fix is purely subtractive: stop writing the field; if any reader still expects it, switch consumption to `serde::Default` and remove the read site too. SSOT contract (`.omne/cfg/lockfile.md` §`LockEntry` schema, `.omne/cfg/walker.md` §`LockEntry.synthetic` deprecation) is the canonical reference — runtime catches up.
+`pack-spec.md §v1.2.0` retired sync-time auto-synthesis: encountering `dest/.git` without `dest/.grex/pack.yaml` is an error (collected per Phase 1, reported at end-of-frame). The companion `LockEntry.synthetic` field was meant to be retired at the same time but the writer still emits `synthetic: true` on 6/7 children. Fix is purely subtractive: stop writing the field; if any reader still expects it, switch consumption to `serde::Default` and remove the read site too. SSOT contract (`.omne/lockfile.md` §`LockEntry` schema, `.omne/walker.md` §`LockEntry.synthetic` deprecation) is the canonical reference — runtime catches up.
 
 ### B11 — lockfile-location migration to `.grex/`
 
-`.omne/cfg/manifest.md` and `.omne/cfg/lockfile.md` both pin the canonical paths under `<meta>/.grex/`. The v1.3.0 runtime still writes the three lock-related artifacts at workspace / pack root. v1.3.2 moves them all under `.grex/`:
+`.omne/manifest.md` and `.omne/lockfile.md` both pin the canonical paths under `<meta>/.grex/`. The v1.3.0 runtime still writes the three lock-related artifacts at workspace / pack root. v1.3.2 moves them all under `.grex/`:
 
 | Artifact | Kind | v1.3.0 path (current) | v1.3.2 path (target) |
 |---|---|---|---|
@@ -46,7 +46,7 @@ Bugs reproduced verbatim from `.omne/cfg/dogfood-findings-v1.3.0.md` (severity p
 ## § Out-of-scope (explicitly deferred)
 
 - B12 no-op shim deletion → v1.4.0 (per `freeze-v1.3.0.md` §"Carry-forward to v1.4.0").
-- B1, B3, B5, B9, B10, B15 → v1.3.3 / v1.3.4 per `.omne/cfg/roadmap.md`.
+- B1, B3, B5, B9, B10, B15 → v1.3.3 / v1.3.4 per `.omne/roadmap.md`.
 - `--workspace` flag removal → v1.4.0 hard deadline.
 - Plugin-API freeze → v1.4.0.
 - Smoke-harness `gix` HTTPS feature → orthogonal infra item, separate v1.3.x lane.

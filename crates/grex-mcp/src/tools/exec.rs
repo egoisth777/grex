@@ -1,6 +1,6 @@
 //! `exec` tool — execute a command across matching packs.
 //!
-//! Agent-safety contract (`.omne/cfg/mcp.md` §Tool catalog): `ExecParams`
+//! Agent-safety contract (`.omne/mcp.md` §Tool catalog): `ExecParams`
 //! has **NO** `shell` field. The CLI keeps `--shell` as an interactive
 //! escape hatch; the MCP surface refuses it because a shell rendition
 //! turns trusted-command execution into arbitrary-code execution. Re-

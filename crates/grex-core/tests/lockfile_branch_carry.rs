@@ -85,7 +85,7 @@ fn branch_ref_main_carried_into_lockfile_entry() {
 
 /// Case 2 — tag ref. `ref: v1.0.0` is a tag, not a branch, but the
 /// lockfile schema records refs verbatim (per
-/// `.omne/cfg/lockfile.md` §"branch field": "ref-as-recorded, may be
+/// `.omne/lockfile.md` §"branch field": "ref-as-recorded, may be
 /// branch / tag / sha"). The carry must be lossless.
 #[test]
 fn tag_ref_v1_0_0_carried_verbatim() {

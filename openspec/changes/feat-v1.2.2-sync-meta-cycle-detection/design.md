@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/walker.md` §"Cycle detection" (canonical algorithm reference) · `proof/Grex/Walker.lean` (proof obligation)
+**SSOT**: `.omne/walker.md` §"Cycle detection" (canonical algorithm reference) · `proof/Grex/Walker.lean` (proof obligation)
 
 ## Why
 
@@ -190,7 +190,7 @@ The bridge axiom count (CI-gated at 9 propositional in `Bridge.lean` + 4 model-p
 - Workspace member `Cargo.toml`s if any pin a non-workspace version (`crates/grex/Cargo.toml`, `crates/grex-core/Cargo.toml`, `crates/grex-mcp/Cargo.toml`, `crates/grex-plugins-builtin/Cargo.toml`, `crates/xtask/Cargo.toml`).
 
 **Changelog/history:**
-- SSOT `.omne/cfg/history.md` — append v1.2.2 entry (separate repo per Rule 7, ships through SSOT).
+- SSOT `.omne/history.md` — append v1.2.2 entry (separate repo per Rule 7, ships through SSOT).
 - `CHANGELOG.md` if grex tracks one (verify during impl).
 
 ## Acceptance criteria

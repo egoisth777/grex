@@ -47,8 +47,8 @@ last_updated: 2026-05-02
 | 2e | `crates/grex/tests/cli_alias.rs` (NEW), `crates/grex/tests/cli_json.rs` (NEW or extend), `crates/grex-mcp/tests/sync_pack.rs` (NEW), `crates/grex/tests/sync_e2e.rs` (extend) | new test files + e2e smoke extension |
 | 2f | `Cargo.toml`, `crates/xtask/Cargo.toml`, `crates/xtask/tests/version_test.rs`, manpages dir (regenerated) | version bump 1.2.6 → 1.3.0 + manpage regen |
 | 2g | `CHANGELOG.md` | CHANGELOG entry + carry-forward deferral note |
-| 2h | `.omne/cfg/freeze-v1.3.0.md` (NEW), `.omne/cfg/migration-v1.3.0.md` (NEW) | SSOT NEW docs (separate repo per Rule 7) |
-| 2i | `.omne/cfg/cli.md`, `.omne/cfg/api-contract.md`, `.omne/cfg/mcp.md`, `.omne/cfg/walker.md`, `.omne/cfg/plugin-api.md` | SSOT existing doc updates per Round 3 gap list (separate repo) |
+| 2h | `.omne/var/freeze-v1.3.0.md` (NEW), `.omne/var/migration-v1.3.0.md` (NEW) | SSOT NEW docs (separate repo per Rule 7) |
+| 2i | `.omne/cli.md`, `.omne/api-contract.md`, `.omne/mcp.md`, `.omne/walker.md`, `.omne/plugin-api.md` | SSOT existing doc updates per Round 3 gap list (separate repo) |
 
 ### 2a — clap alias + warn-once + verb deprecation
 
@@ -84,7 +84,7 @@ last_updated: 2026-05-02
   //! contract is a v1.4.0 freeze candidate. Downstream plugin authors
   //! should expect breaking changes between minor releases until v1.4.0.
   //!
-  //! See `.omne/cfg/plugin-api.md` for the freeze roadmap.
+  //! See `.omne/plugin-api.md` for the freeze roadmap.
   ```
 - [ ] In `crates/grex-plugins-builtin/Cargo.toml`: append "(UNSTABLE — Plugin-API frozen in v1.4.0)" to the `description` field
 
@@ -117,8 +117,8 @@ last_updated: 2026-05-02
 
 ### 2h — SSOT NEW docs (separate repo per Rule 7)
 
-- [ ] In `.omne/cfg/freeze-v1.3.0.md` (NEW, SSOT working tree): G2 frontmatter (`type: design`, `status: active`, `topic: freeze`, `last_updated: 2026-05-02`); body = 4-column freeze table per design.md Table F1 (13 rows + Plugin-API exclusion row); cross-link to `cfg/api-contract.md` and `cfg/migration-v1.3.0.md`
-- [ ] In `.omne/cfg/migration-v1.3.0.md` (NEW, SSOT working tree): G2 frontmatter (`type: migration`, `status: active`, `topic: migration`, `last_updated: 2026-05-02`); body = operator section (Tables M1, M2 from design.md) + Rust consumer section (Table M3); strict-schema consumer note for JSON envelope key addition; cross-link to `cfg/cli.md`, `cfg/mcp.md`, `cfg/freeze-v1.3.0.md`
+- [ ] In `.omne/var/freeze-v1.3.0.md` (NEW, SSOT working tree): G2 frontmatter (`type: design`, `status: active`, `topic: freeze`, `last_updated: 2026-05-02`); body = 4-column freeze table per design.md Table F1 (13 rows + Plugin-API exclusion row); cross-link to `cfg/api-contract.md` and `cfg/migration-v1.3.0.md`
+- [ ] In `.omne/var/migration-v1.3.0.md` (NEW, SSOT working tree): G2 frontmatter (`type: migration`, `status: active`, `topic: migration`, `last_updated: 2026-05-02`); body = operator section (Tables M1, M2 from design.md) + Rust consumer section (Table M3); strict-schema consumer note for JSON envelope key addition; cross-link to `cfg/cli.md`, `cfg/mcp.md`, `cfg/freeze-v1.3.0.md`
 - [ ] Add both new files to G1 routing table in `.omne/schemas/rules.md` (per discipline 11)
 - [ ] Run `.omne/scripts/validate.py` — exit 0 against both new files (frontmatter intact, slug unique, kebab-case)
 - [ ] Run `.omne/scripts/build_index.py` — auto-regenerates `.omne/INDEX.yaml` to include both new files (per discipline 12)
@@ -126,11 +126,11 @@ last_updated: 2026-05-02
 
 ### 2i — SSOT existing doc updates (per Round 3 gap list)
 
-- [ ] In `.omne/cfg/cli.md` (SSOT): update flag descriptions for sync/serve/migrate-lockfile/teardown to use `<pack>` doc-noun; add note that `--workspace` is a deprecated alias (warn-once); cross-link to `cfg/migration-v1.3.0.md`; bump `last_updated`
-- [ ] In `.omne/cfg/api-contract.md` (SSOT): add cross-link to `cfg/freeze-v1.3.0.md`; document the 13-contract freeze; bump `last_updated`
-- [ ] In `.omne/cfg/mcp.md` (SSOT): document `SyncParams::pack` field + `resolved_pack_root()` precedence rule; bump `last_updated`
-- [ ] In `.omne/cfg/walker.md` (SSOT): document `ExecCtx::pack` additive field; note that `workspace` rename is gated to v2; bump `last_updated`
-- [ ] In `.omne/cfg/plugin-api.md` (SSOT): add UNSTABLE WARNING callout at the top of the doc; document v1.4.0 freeze candidate status; bump `last_updated`
+- [ ] In `.omne/cli.md` (SSOT): update flag descriptions for sync/serve/migrate-lockfile/teardown to use `<pack>` doc-noun; add note that `--workspace` is a deprecated alias (warn-once); cross-link to `cfg/migration-v1.3.0.md`; bump `last_updated`
+- [ ] In `.omne/api-contract.md` (SSOT): add cross-link to `cfg/freeze-v1.3.0.md`; document the 13-contract freeze; bump `last_updated`
+- [ ] In `.omne/mcp.md` (SSOT): document `SyncParams::pack` field + `resolved_pack_root()` precedence rule; bump `last_updated`
+- [ ] In `.omne/walker.md` (SSOT): document `ExecCtx::pack` additive field; note that `workspace` rename is gated to v2; bump `last_updated`
+- [ ] In `.omne/plugin-api.md` (SSOT): add UNSTABLE WARNING callout at the top of the doc; document v1.4.0 freeze candidate status; bump `last_updated`
 - [ ] Run `.omne/scripts/validate.py` — exit 0 across all 5 updated docs
 - [ ] Commit + push in SSOT repo (separate from grex per Rule 7)
 
@@ -174,7 +174,7 @@ last_updated: 2026-05-02
 ## Stage 7 — wrap-up (per cfg/workflow.md Phase 5)
 - [ ] Append `## Endpoint (2026-05-XX, main — v1.3.0 SHIPPED MILESTONE)` to progress.md
 - [ ] Update top "Where we are" block — promote v1.3.0 from IN FLIGHT to SHIPPED MILESTONE
-- [ ] Promote draft entry in `.omne/cfg/history.md` to SHIPPED MILESTONE with date + commit SHA (separate SSOT repo per Rule 7)
+- [ ] Promote draft entry in `.omne/history.md` to SHIPPED MILESTONE with date + commit SHA (separate SSOT repo per Rule 7)
 - [ ] Verify SSOT freeze + migration docs published in SSOT repo (separate from grex commit + push)
 - [ ] Commit progress.md (grex) + history.md (SSOT)
 - [ ] Carry-forward list to v1.4.0:

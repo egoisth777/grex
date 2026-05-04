@@ -11,7 +11,7 @@ depends_on: [feat-v1-3-2, dogfood-findings-v1-3-0, lockfile, manifest, walker, p
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/dogfood-findings-v1-3-0.md` (bug catalogue) · `.omne/cfg/lockfile.md` §"File location" + §"Three lock artifacts" · `.omne/cfg/manifest.md` §"events.jsonl event schemas" · `.omne/cfg/walker.md` §"Walker model" + §"Untracked git policy" + §"`LockEntry.synthetic` deprecation" · `.omne/cfg/pack-spec.md` §"v1.2.0 — declarative nested paths (option c)" · `.omne/cfg/concurrency.md` §"Five cooperating mechanisms" · `.omne/cfg/freeze-v1.3.0.md`
+**SSOT**: `.omne/dogfood-findings-v1-3-0.md` (bug catalogue) · `.omne/lockfile.md` §"File location" + §"Three lock artifacts" · `.omne/manifest.md` §"events.jsonl event schemas" · `.omne/walker.md` §"Walker model" + §"Untracked git policy" + §"`LockEntry.synthetic` deprecation" · `.omne/pack-spec.md` §"v1.2.0 — declarative nested paths (option c)" · `.omne/concurrency.md` §"Five cooperating mechanisms" · `.omne/var/freeze-v1.3.0.md`
 
 ## Why
 
@@ -24,7 +24,7 @@ Three v1.3.0 dogfood bugs cluster around **runtime-vs-SSOT contract drift** — 
 
 ## Architectural context
 
-**Bug origins** (from `.omne/cfg/dogfood-findings-v1-3-0.md` and grep over `.omne/cfg/`):
+**Bug origins** (from `.omne/dogfood-findings-v1-3-0.md` and grep over `.omne/`):
 
 - **B6:** lockfile writer still serializes `LockEntry.synthetic` field for v1.2.0+ entries. Per `walker.md §LockEntry.synthetic deprecation` and `pack-spec.md §v1.2.0 — Synthesis policy — RETIRED in v1.2.0`, the field is retired but kept on the struct for backward-compat reads (v1.1.x lockfiles continue to deserialize). The writer should never emit `synthetic: true` under v1.2.0+. Dogfood found `synthetic: true` on 6/7 children — direct contradiction of the SSOT.
 - **B11:** three lock artifacts (per-pack pack-lock, workspace sync-lock, per-repo backend-lock) land at workspace / pack root instead of inside `.grex/`. Per `lockfile.md §File location` and `manifest.md`, both stateful files (`grex.lock.jsonl`, `events.jsonl`) live under `<meta>/.grex/`. Per `concurrency.md §Five cooperating mechanisms`, the file mutexes do not currently follow the same rule — that is the dogfood finding. The maintainer locked the v1.3.2 fix as a hard-cut path move.

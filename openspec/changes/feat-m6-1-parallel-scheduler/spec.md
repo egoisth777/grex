@@ -6,9 +6,9 @@
 
 ## Motivation
 
-Today `sync::run` walks the pack graph and executes packs sequentially. On large meta-trees and/or networked fetches this wastes wall-clock time. `.omne/cfg/concurrency.md` specifies a bounded `tokio::sync::Semaphore` as mechanism (3) of five; this change lands it as its own unit, ahead of the per-pack lock (feat-m6-2) and Lean4 proof (feat-m6-3).
+Today `sync::run` walks the pack graph and executes packs sequentially. On large meta-trees and/or networked fetches this wastes wall-clock time. `.omne/concurrency.md` specifies a bounded `tokio::sync::Semaphore` as mechanism (3) of five; this change lands it as its own unit, ahead of the per-pack lock (feat-m6-2) and Lean4 proof (feat-m6-3).
 
-Correctness is load-bearing — getting a parallel scheduler wrong corrupts the manifest and races `.grex-lock`. The design is constrained by `.omne/cfg/concurrency.md` lock-ordering pseudocode:
+Correctness is load-bearing — getting a parallel scheduler wrong corrupts the manifest and races `.grex-lock`. The design is constrained by `.omne/concurrency.md` lock-ordering pseudocode:
 
 ```
 workspace-sync → semaphore → pack-lock → repo-backend → manifest-lock
@@ -40,7 +40,7 @@ Semantics:
 - `N >= 2` → bounded parallel.
 - Negative / non-numeric → clap rejects at parse.
 
-`GREX_PARALLEL` env var honored only when flag absent (parity with `.omne/cfg/concurrency.md` §Runtime).
+`GREX_PARALLEL` env var honored only when flag absent (parity with `.omne/concurrency.md` §Runtime).
 
 ### `Scheduler` struct
 
@@ -92,7 +92,7 @@ pub struct ExecCtx<'a> {
 | `crates/grex-core/src/execute/ctx.rs` | Add `scheduler: Option<&Arc<Semaphore>>` field. |
 | `crates/grex-core/src/sync/mod.rs` | Construct `Scheduler`; plumb permit handle into `ExecCtx`. |
 | `crates/grex-core/Cargo.toml` | Add `num_cpus` dep (if not already present via workspace). |
-| `.omne/cfg/concurrency.md` | No change — change implements the existing spec. |
+| `.omne/concurrency.md` | No change — change implements the existing spec. |
 
 ## Test plan
 
@@ -129,7 +129,7 @@ pub struct ExecCtx<'a> {
 
 - **No work-stealing**. tokio's multi-thread runtime already distributes tasks; we don't layer a custom scheduler on top.
 - **No dynamic scaling**. Permit count fixed at `Scheduler::new`; no up/down-sizing during a sync.
-- **No per-action-type caps** (e.g. "max 2 concurrent `exec` actions"). Deferred per `.omne/cfg/concurrency.md` §Operational tuning to v1.x.
+- **No per-action-type caps** (e.g. "max 2 concurrent `exec` actions"). Deferred per `.omne/concurrency.md` §Operational tuning to v1.x.
 - **No per-pack `.grex-lock`** — that is feat-m6-2.
 - **No Lean4 proof** — that is feat-m6-3.
 - **No `meta` parallelism**. `MetaPlugin` remains sequential LIFO per M5 R-M5-out-1. Scheduler is plumbed so a future change can parallelize without an API break.
@@ -154,8 +154,8 @@ pub struct ExecCtx<'a> {
 
 ## Source-of-truth links
 
-- [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) — scheduler design, lock ordering, pseudocode (§Scheduler pseudocode).
-- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §concurrency — module layout `crates/grex-core/src/concurrency/{mod,scheduler,packlock}.rs` (this change places the new module at `scheduler.rs` top-level per current repo convention; align if a `concurrency/` submodule is preferred).
-- [`.omne/cfg/test-plan.md`](../../../.omne/cfg/test-plan.md) §Integration — `sync_parallel.rs` 8-pack baseline test already slotted; this change upgrades it to 100 packs.
+- [`.omne/concurrency.md`](../../../.omne/concurrency.md) — scheduler design, lock ordering, pseudocode (§Scheduler pseudocode).
+- [`.omne/architecture.md`](../../../.omne/architecture.md) §concurrency — module layout `crates/grex-core/src/concurrency/{mod,scheduler,packlock}.rs` (this change places the new module at `scheduler.rs` top-level per current repo convention; align if a `concurrency/` submodule is preferred).
+- [`.omne/test-plan.md`](../../../.omne/test-plan.md) §Integration — `sync_parallel.rs` 8-pack baseline test already slotted; this change upgrades it to 100 packs.
 - [`milestone.md`](../../../milestone.md) §M6.
 - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #5 ("`meta` pack with nested children syncs the tree recursively in parallel under the `--parallel N` bound").

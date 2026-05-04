@@ -52,7 +52,7 @@ last_updated: 2026-05-02
 - [ ] Add module-level `#![deny(clippy::disallowed_methods)]` at `tree/walker.rs`, `tree/quarantine.rs`, `tree/consent.rs` (or via `clippy.toml` scoped pattern); update `clippy.toml` to add `std::fs::read_dir`, `std::fs::remove_dir_all`, `std::fs::remove_file`, `std::fs::remove_dir`, `std::fs::symlink_metadata`, `std::fs::copy` to the disallowed list scoped to those modules. Forces future code to use cap-std.
 
 ### 2c — Stale manifest.md rewrite (SSOT repo per Rule 7)
-- [ ] In `.omne/cfg/manifest.md` (separate SSOT repo working tree): extend the `events.jsonl` event catalog (line 60-77) with the v1.0.x action-bracket events (`action_started`, `action_completed`, `action_halted`) — already described in body but missing from the catalog summary
+- [ ] In `.omne/manifest.md` (separate SSOT repo working tree): extend the `events.jsonl` event catalog (line 60-77) with the v1.0.x action-bracket events (`action_started`, `action_completed`, `action_halted`) — already described in body but missing from the catalog summary
 - [ ] Append v1.2.x quarantine events to the catalog: `QuarantineStart`, `QuarantineComplete`, `QuarantineFailed` (v1.2.1) + `QuarantineRestored`, `QuarantineGCSwept` (v1.2.5). Include each event's JSONL example payload matching existing pattern
 - [ ] Extend the example sequence at line 200-205 with the action-bracket events (canonical reproducer for v1.0.x action-bracket schema)
 - [ ] Add a normative paragraph to the lockfile schema section (line 100-108) clarifying `commit_sha` semantics: walker-probed HEAD SHA mixed into `actions_hash`; not serialized to disk; cross-references walker.md §M4
@@ -104,7 +104,7 @@ last_updated: 2026-05-02
 
 ### 2h — CHANGELOG + history
 - [ ] CHANGELOG.md: promote v1.2.5 entry to dated SHIPPED 2026-05-02 if not already; add v1.2.6 entry per design.md "Migration note for changelog"
-- [ ] `.omne/cfg/history.md`: append v1.2.6 draft section (separate SSOT repo per Rule 7 — ships through grex-inst)
+- [ ] `.omne/history.md`: append v1.2.6 draft section (separate SSOT repo per Rule 7 — ships through grex-inst)
 
 ### 2i — v1.3.0 readiness regression (maintainer directive)
 - [ ] Verify existing `e2e_v1_3_0_readiness_smoke` (added v1.2.4) in `crates/grex/tests/sync_e2e.rs` still passes — meta-pack + 1 sub-pack acyclic sync returns `Ok`, `report.errors.is_empty()`, `metas_visited >= 2`, no `CycleDetected` in any error path
@@ -153,7 +153,7 @@ last_updated: 2026-05-02
 ## Stage 7 — wrap-up (per cfg/workflow.md Phase 5)
 - [ ] Append `## Endpoint (2026-05-XX, main — v1.2.6 SHIPPED)` to progress.md
 - [ ] Update top "Where we are" block
-- [ ] Promote draft entry in `.omne/cfg/history.md` to SHIPPED with date + commit SHA (separate SSOT repo per Rule 7)
+- [ ] Promote draft entry in `.omne/history.md` to SHIPPED with date + commit SHA (separate SSOT repo per Rule 7)
 - [ ] Commit progress.md (grex) + history.md (SSOT)
 - [ ] Carry-forward list to v1.3.0: `--workspace` → `--pack` CLI rename, behavior contract freeze, MINOR cut, dead-code removal (`PackLock::acquire` sync variant, `Scheduler::permits`, `DEFAULT_MANAGED_GITIGNORE_PATTERNS` const)
 - [ ] Verify drift fix held across the full feat-v1.2.6 cycle: any fresh fossil that re-appears during dev would indicate the cleanup is incomplete — investigate before marking SHIPPED

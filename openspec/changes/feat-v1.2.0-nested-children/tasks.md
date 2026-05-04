@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`design.md`](./design.md)
-**SSOT**: `.omne/cfg/walker.md` (canonical algorithm) · `proof/Grex/Walker.lean` (proof) · [`rust-design-decisions.md`](./rust-design-decisions.md) (in-flight; mechanism choices)
+**SSOT**: `.omne/walker.md` (canonical algorithm) · `proof/Grex/Walker.lean` (proof) · [`rust-design-decisions.md`](./rust-design-decisions.md) (in-flight; mechanism choices)
 
 Markdown-only openspec PR first; implementation lands on a separate branch off post-merge `main`.
 
@@ -11,7 +11,7 @@ Markdown-only openspec PR first; implementation lands on a separate branch off p
 ## Stage 0 — openspec PR (this branch)
 
 - [ ] 0.1 Land openspec triplet under `openspec/changes/feat-v1.2.0-nested-children/` (proposal + design + tasks).
-- [ ] 0.2 Cross-link `.omne/cfg/walker.md` → this triplet, and confirm walker.md acceptance-criteria block points back to `proposal.md`.
+- [ ] 0.2 Cross-link `.omne/walker.md` → this triplet, and confirm walker.md acceptance-criteria block points back to `proposal.md`.
 - [ ] 0.3 Update `progress.md` with the v1.2.0 openspec endpoint + refreshed "Where we are" block.
 - [ ] 0.4 Confirm `proof/Grex/Walker.lean` builds clean under `lake build` and 14 theorems are present (W1–W8 + I1 + no_deadlock + V1/C1/C2/F1), 9 bridge axioms (Bridge.lean), zero sorry/admit.
 - [ ] 0.5 PR description references the locked decisions: parent-relative resolution; distributed lockfile; rayon cargo-parallel (M6 reuse); synthesis retired with keep-legacy `~` glyph; hybrid `openat2(RESOLVE_BENEATH)` + `cap-std` TOCTOU; Lean4 hard-gate before any Rust impl; default-OFF lockfile auto-migrate; SemVer MINOR per maintainer override.

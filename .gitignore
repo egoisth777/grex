@@ -27,7 +27,7 @@ grex.jsonl
 .DS_Store
 Thumbs.db
 
-# Lean4 build artifacts (proof/ — see .omne/cfg/concurrency.md §Lean4 invariant)
+# Lean4 build artifacts (proof/ — see .omne/concurrency.md §Lean4 invariant)
 proof/build/
 proof/.lake/
 proof/lake-packages/

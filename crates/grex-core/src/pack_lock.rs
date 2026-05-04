@@ -59,7 +59,7 @@ use fd_lock::{RwLock, RwLockWriteGuard};
 // thread_id)` tuples currently held. The set is consulted from rayon
 // worker threads inside `phase3_recurse` (walker.rs) at the entry of
 // every parallel-iter closure to assert the lock-acquisition order
-// documented in `.omne/cfg/concurrency.md` §"Five cooperating
+// documented in `.omne/concurrency.md` §"Five cooperating
 // mechanisms" — namely that a `PackLock` is never held by a thread
 // while that same thread enters a nested `pool.install` closure. The
 // v1.2.4 design used a `thread_local!` here, but rayon's work-stealing
@@ -134,7 +134,7 @@ fn register_held_lock(path: &Path) {
         "pool deadlock guard: attempted to acquire PackLock({}) while \
          inside a `pool.install` boundary — this risks the rayon \
          re-entrancy deadlock pinned by feat-v1.2.5 design.md §A3 \
-         (see .omne/cfg/concurrency.md §\"Five cooperating mechanisms\")",
+         (see .omne/concurrency.md §\"Five cooperating mechanisms\")",
         path.display()
     );
     let tid = std::thread::current().id();
@@ -491,7 +491,7 @@ impl PackLock {
     /// past the cancel point, until the syscall returns**. Callers
     /// that immediately re-attempt acquire on the same path may see
     /// transient contention until that thread drains. See
-    /// `.omne/cfg/mcp.md` §Cancellation.
+    /// `.omne/mcp.md` §Cancellation.
     ///
     /// # Errors
     ///
@@ -737,7 +737,7 @@ impl Drop for PackLockHold {
 // Lock-ordering enforcement (debug builds).
 // ---------------------------------------------------------------------------
 
-/// Lock tier ordinals matching `.omne/cfg/concurrency.md`. Acquisitions
+/// Lock tier ordinals matching `.omne/concurrency.md`. Acquisitions
 /// must strictly increase; reversed order risks the deadlock class the
 /// feat-m6-3 Lean proof rules out.
 #[non_exhaustive]
@@ -867,7 +867,7 @@ pub(crate) mod tier {
                 assert!(
                     next > top,
                     "lock tier violation: trying to acquire {next:?} while already holding {top:?} \
-                     (tiers must be strictly increasing — see .omne/cfg/concurrency.md)"
+                     (tiers must be strictly increasing — see .omne/concurrency.md)"
                 );
             }
             s.push(next);

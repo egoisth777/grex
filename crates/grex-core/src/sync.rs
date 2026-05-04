@@ -623,7 +623,7 @@ pub fn run(
     // leave `opts.parallel == None` default to `num_cpus::get()` here
     // (clamped `>= 1`) so the scheduler slot is always populated —
     // `ctx.scheduler` being `None` would strand acquire-sites into
-    // unbounded concurrency. See `.omne/cfg/concurrency.md` §Scheduler.
+    // unbounded concurrency. See `.omne/concurrency.md` §Scheduler.
     let resolved_parallel: usize = opts.parallel.unwrap_or_else(|| num_cpus::get().max(1));
     let scheduler = Arc::new(Scheduler::new(resolved_parallel));
     run_actions(

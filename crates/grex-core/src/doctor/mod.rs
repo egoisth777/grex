@@ -858,7 +858,7 @@ fn is_housekeeping_dir(name: &str) -> bool {
 }
 
 /// Check 4 — config lint (opt-in). Parses `openspec/config.yaml` if
-/// present; walks `.omne/cfg/*.md` for basic syntax validity (we just
+/// present; walks `.omne/*.md` for basic syntax validity (we just
 /// read them to prove they're valid UTF-8 — the spec calls out "basic
 /// markdown parse", not a full markdown lint). Missing files/dirs are
 /// no-ops (not findings).
@@ -892,7 +892,7 @@ fn check_openspec_config_yaml(workspace: &Path, findings: &mut Vec<Finding>) {
     }
 }
 
-/// `.omne/cfg/*.md` half of [`check_config_lint`] — proves each file
+/// `.omne/*.md` half of [`check_config_lint`] — proves each file
 /// is valid UTF-8. Absent dir is a no-op.
 fn check_omne_cfg_markdown(workspace: &Path, findings: &mut Vec<Finding>) {
     let cfg_dir = workspace.join(".omne").join("cfg");
@@ -907,7 +907,7 @@ fn check_omne_cfg_markdown(workspace: &Path, findings: &mut Vec<Finding>) {
         }
         if let Err(e) = std::fs::read_to_string(&path) {
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
-            findings.push(config_lint_warning(format!(".omne/cfg/{name} unreadable: {e}")));
+            findings.push(config_lint_warning(format!(".omne/{name} unreadable: {e}")));
         }
     }
 }

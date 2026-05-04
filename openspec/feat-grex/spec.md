@@ -31,7 +31,7 @@ Ship a Rust CLI `grex` that orchestrates **packs** — git repos bearing a `.gre
 
 ## Architecture summary
 
-Single crate `grex` (bin + lib). CLI verbs dispatch into the library. Data flow: CLI parse → manifest load (fold JSONL events) → pack tree walk (parse `.grex/pack.yaml` under each registered path, recurse through children) → pack-type plugin dispatch (`install`/`update`/`teardown`/`sync`) → action plugin registry execution → lockfile write → gitignore managed-block sync. Concurrency: tokio multi-thread runtime with a bounded semaphore, per-pack `.grex-lock` file via `fd-lock`, global manifest lock. Extensibility: in-process trait-object registries for `ActionPlugin` + `PackTypePlugin` + `Fetcher`; v2 adds external loading. Full module layout in [../../.omne/cfg/architecture.md](../../.omne/cfg/architecture.md).
+Single crate `grex` (bin + lib). CLI verbs dispatch into the library. Data flow: CLI parse → manifest load (fold JSONL events) → pack tree walk (parse `.grex/pack.yaml` under each registered path, recurse through children) → pack-type plugin dispatch (`install`/`update`/`teardown`/`sync`) → action plugin registry execution → lockfile write → gitignore managed-block sync. Concurrency: tokio multi-thread runtime with a bounded semaphore, per-pack `.grex-lock` file via `fd-lock`, global manifest lock. Extensibility: in-process trait-object registries for `ActionPlugin` + `PackTypePlugin` + `Fetcher`; v2 adds external loading. Full module layout in [../../.omne/architecture.md](../../.omne/architecture.md).
 
 ## Out of scope v1
 

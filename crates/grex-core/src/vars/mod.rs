@@ -18,7 +18,7 @@
 //!
 //! Backslash escapes (`\$`, `\%`) are **not** recognised; the backslash
 //! passes through literally. See the authoritative spec in
-//! `.omne/cfg/actions.md` §Variable expansion and `openspec/feat-grex/spec.md`
+//! `.omne/actions.md` §Variable expansion and `openspec/feat-grex/spec.md`
 //! §"M3 Stage B — Variable expansion".
 //!
 //! # Non-recursive

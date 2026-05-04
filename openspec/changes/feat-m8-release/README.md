@@ -12,7 +12,7 @@ Ship v1.0.0: cargo-dist cross-platform binaries + crates.io publish + mdBook doc
 
 - **M8-1** — cargo-dist wiring: `[workspace.metadata.dist]`, `.github/workflows/release.yml`, Win/Linux/macOS × x86_64 + aarch64 matrix (6 cells), shell + powershell installer scripts.
 - **M8-2** — crates.io publish: name audit (`grex` or fallback), `[workspace.package].version = "1.0.0"` inheritance across all 4 crates, per-crate dry-runs, publish order `grex-core` → `grex-mcp` → `grex`.
-- **M8-3** — mdBook docs site: build from `.omne/cfg/*.md`, deploy to GitHub Pages via `.github/workflows/docs.yml`, `[package.metadata.docs.rs]` on lib crates for canonical API docs.
+- **M8-3** — mdBook docs site: build from `.omne/*.md`, deploy to GitHub Pages via `.github/workflows/docs.yml`, `[package.metadata.docs.rs]` on lib crates for canonical API docs.
 - **M8-4** — `grex-pack-template` reference repo: separate `grex-org/grex-pack-template` GitHub repo with minimal pack skeleton, linked from main README + docs, installable via `grex add <url>`.
 - **M8-5** — CHANGELOG + SemVer policy: `CHANGELOG.md` (Keep-a-Changelog 1.1.0 format) rolling up M1-M7, `docs/semver.md` defining MAJOR/MINOR/PATCH discipline for manifest / pack.yaml / CLI / MCP surfaces.
 

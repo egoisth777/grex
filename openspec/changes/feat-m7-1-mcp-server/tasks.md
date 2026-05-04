@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`spec.md`](./spec.md)
-**SSOT**: [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md), [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md)
+**SSOT**: [`.omne/mcp.md`](../../../.omne/mcp.md), [`.omne/concurrency.md`](../../../.omne/concurrency.md)
 
 Tests-first per stage. A stage is "done" only when its listed tests exist, run red before code lands, and run green after. No stage may skip ahead; cross-stage refactors are explicit sub-items.
 
@@ -95,7 +95,7 @@ Tests first (red), then implementation. Covers the `spawn_blocking` leak-window 
 - [ ] 4.3 Implement:
   - [ ] `pub enum PackLockErrorOrCancelled { Cancelled, Lock(PackLockError) }`
   - [ ] `acquire_cancellable(self, cancel: &CancellationToken) -> Result<PackLockHold, PackLockErrorOrCancelled>` — consumes `self` to match existing `acquire_async(self)` at `pack_lock.rs:179`; reuses the boxed-fd + `transmute` lifetime dance. Uses `tokio::task::spawn_blocking` wrapping the existing `fd_lock::write()` call; outer `tokio::select!` between `cancel.cancelled()` and the `JoinHandle`.
-  - [ ] Inline doc-comment describing the "OS thread held past cancel until syscall returns" contract, linking to `.omne/cfg/mcp.md` §Cancellation.
+  - [ ] Inline doc-comment describing the "OS thread held past cancel until syscall returns" contract, linking to `.omne/mcp.md` §Cancellation.
 - [ ] 4.4 Re-run tests: all green.
 - [ ] 4.5 Verify `cargo clippy -p grex-core -- -D warnings`.
 

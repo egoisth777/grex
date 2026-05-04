@@ -42,7 +42,7 @@ Three independent signals all point to the same defect: the runtime currently ap
 
 - [`grex-doc/src/concepts/pack-spec.md`](../../../grex-doc/src/concepts/pack-spec.md) — already says bare-name; add an explicit *"children resolve as flat siblings of the parent pack root"* sentence.
 - [`grex-doc/src/guides/migration.md`](../../../grex-doc/src/guides/migration.md) — already correct; verify the steps end-to-end after the refactor.
-- [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) — mirror update. (The agent-side mirror at `.omne/cfg/pack-spec.md` is in the distro layer — not in this repo — and is regenerated from the canonical `man/` copy.)
+- [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) — mirror update. (The agent-side mirror at `.omne/pack-spec.md` is in the distro layer — not in this repo — and is regenerated from the canonical `man/` copy.)
 - [`crates/grex/src/cli/args.rs`](../../../crates/grex/src/cli/args.rs) — `--workspace` help text drops the `.grex/workspace` reference; states the default is the pack root itself.
 
 ### 4d. Workspace version bump 1.0.3 → 1.1.0 + version-test bump + CHANGELOG

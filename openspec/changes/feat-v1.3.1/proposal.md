@@ -11,7 +11,7 @@ depends_on: [dogfood-findings-v1-3-0, freeze-v1-3-0]
 
 ## § Why
 
-v1.3.0 dogfood (2026-05-02 against `E:\repos\cfg`) surfaced 15 defects (B1–B15) catalogued in `.omne/cfg/dogfood-findings-v1.3.0.md`. v1.3.x patch series fixes them in tiered batches. v1.3.1 = critical bundle.
+v1.3.0 dogfood (2026-05-02 against `E:\repos\cfg`) surfaced 15 defects (B1–B15) catalogued in `.omne/var/dogfood-findings-v1.3.0.md`. v1.3.x patch series fixes them in tiered batches. v1.3.1 = critical bundle.
 
 ## § SemVer
 
@@ -31,7 +31,7 @@ PATCH. Strictly additive + bug-only. Exit codes, JSON envelopes, lockfile schema
 ## § Deferred (NOT in this release)
 
 - B11 (lockfile path move `.grex-lock` → `.grex/grex.lock`) → v1.3.2 with B6, B13 (contract drift bundle). Reason: maintainer chose to defer.
-- B1, B3, B5, B6, B9, B10, B13, B15 → v1.3.2/3/4 per `.omne/cfg/roadmap.md`.
+- B1, B3, B5, B6, B9, B10, B13, B15 → v1.3.2/3/4 per `.omne/roadmap.md`.
 
 ## § Lean obligations (rule 8 gate)
 
@@ -57,7 +57,7 @@ Fail set: t_b03, t_b05, t_b06, t_b10, t_b11, t_b13, t_b15.
 - Adds: `events.jsonl schema_version=2` field (hard-cut). doctor advisory finding for parent-gitignore visibility.
 - Removes: `grex sync` writes to `.gitignore` (was undocumented behavior, treated as bug; not part of frozen 13 contracts).
 - Changes: `grex sync` cwd default behavior. Lockfile `branch` field now non-empty.
-- Frozen contracts unchanged (per `.omne/cfg/freeze-v1.3.0.md`).
+- Frozen contracts unchanged (per `.omne/var/freeze-v1.3.0.md`).
 
 ## § Open questions resolved (this release)
 
@@ -67,7 +67,7 @@ Fail set: t_b03, t_b05, t_b06, t_b10, t_b11, t_b13, t_b15.
 
 ## § Risks
 
-- B12 removal may surprise dogfood operators who relied on auto-add. Mitigation: `grex doctor` advisory finding + migration note in `.omne/cfg/migration-v1.3.1.md` (added in this release).
+- B12 removal may surprise dogfood operators who relied on auto-add. Mitigation: `grex doctor` advisory finding + migration note in `.omne/var/migration-v1.3.1.md` (added in this release).
 - B8 schema_version bump may surprise readers. Mitigation: writers pin schema_version=2; readers v1.3.1+ accept v2 only. v1.2.x readers will not consume v1.3.1 logs (acceptable per maintainer).
 
 ## § Ship plan

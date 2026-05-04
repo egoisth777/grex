@@ -9,11 +9,11 @@ last_updated: 2026-05-02
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/real-smoke.md` (canonical reference, to be created in grex-inst repo per Rule 7) · `.omne/cfg/dogfood-findings-v1.3.0.md` (origin post-mortem)
+**SSOT**: `.omne/real-smoke.md` (canonical reference, to be created in grex-inst repo per Rule 7) · `.omne/var/dogfood-findings-v1.3.0.md` (origin post-mortem)
 
 ## Why
 
-The dogfood post-mortem (`.omne/cfg/dogfood-findings-v1.3.0.md`) enumerates 11 reasons the existing test layer missed B1–B15. Three of them are structural: in-memory fixtures, same-process round-trips, and an env-blocked CI runner. No amount of additional unit tests under the same fixtures would have caught the bugs — the *substrate* is the gap. This design specifies the new substrate.
+The dogfood post-mortem (`.omne/var/dogfood-findings-v1.3.0.md`) enumerates 11 reasons the existing test layer missed B1–B15. Three of them are structural: in-memory fixtures, same-process round-trips, and an env-blocked CI runner. No amount of additional unit tests under the same fixtures would have caught the bugs — the *substrate* is the gap. This design specifies the new substrate.
 
 ## Architecture (textual diagram)
 

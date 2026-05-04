@@ -62,8 +62,8 @@ Bundle W2+W4 into single worker (events.rs shared). 5 workers total.
 - [ ] All 4 crate Cargo.toml: version `1.3.0` → `1.3.1`
 - [ ] `cargo update -w` regen Cargo.lock
 - [ ] `crates/real-smoke/src/fixtures/`: 6 fixture expectations flipped FAIL → PASS
-- [ ] `.omne/cfg/manifest.md`: schema_version 2 spec (SSOT, separate repo)
-- [ ] `.omne/cfg/migration-v1.3.1.md`: B12 migration notice (SSOT, separate repo)
+- [ ] `.omne/manifest.md`: schema_version 2 spec (SSOT, separate repo)
+- [ ] `.omne/var/migration-v1.3.1.md`: B12 migration notice (SSOT, separate repo)
 
 ## § Phase 2R — Reviewer pass
 - [ ] cavecrew-reviewer pass on full diff
@@ -103,5 +103,5 @@ Bundle W2+W4 into single worker (events.rs shared). 5 workers total.
 ## § Phase 6 — Endpoint
 - [ ] Append `## Endpoint (2026-05-02, main — v1.3.1 SHIPPED)` to `progress.md`
 - [ ] Update top `## Where we are` block: bump to v1.3.1
-- [ ] Update `.omne/cfg/dogfood-findings-v1.3.0.md`: mark B2/B4/B7/B8/B12/B14 as RESOLVED in v1.3.1 (SSOT, separate repo)
-- [ ] Update `.omne/cfg/roadmap.md`: B11 → v1.3.2 (SSOT, separate repo)
+- [ ] Update `.omne/var/dogfood-findings-v1.3.0.md`: mark B2/B4/B7/B8/B12/B14 as RESOLVED in v1.3.1 (SSOT, separate repo)
+- [ ] Update `.omne/roadmap.md`: B11 → v1.3.2 (SSOT, separate repo)

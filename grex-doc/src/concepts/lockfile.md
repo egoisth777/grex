@@ -2,7 +2,7 @@
 
 `grex.lock.jsonl` — the resolved-state snapshot that pins each pack's last-synced commit, ref, install timestamp, and `actions_hash`. Companion to but distinct from the `events.jsonl` intent/audit log (see [manifest](./manifest.md)).
 
-> Canonical source: [.omne/cfg/lockfile.md](../../.omne/cfg/lockfile.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection.
+> Canonical source: [.omne/lockfile.md](../../.omne/lockfile.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection.
 
 ## Concept: pack.yaml = INTENT, lockfile = STATE
 

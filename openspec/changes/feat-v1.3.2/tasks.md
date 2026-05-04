@@ -107,14 +107,14 @@ Dispatch ALL THREE workers in parallel ONLY after Phase 2a Lean is green. Phase 
 All Phase 5 tasks land in the SSOT repo (`grex-inst`, mounted at `.omne/`). Per rule 7, these never appear in grex's git history. Per rule 16, they MUST land in the SAME session as the ship.
 
 - [ ] `cd .omne/` → all subsequent edits in the SSOT working tree  → verify: `pwd` ends in `.omne` and `git remote -v` shows `grex-inst`
-- [ ] `.omne/cfg/history.md`: append per-release entry for v1.3.2 (one line minimum + body)  → verify: history.md has new entry with commit SHA + tag + crates URLs
-- [ ] `.omne/cfg/dogfood-findings-v1.3.0.md`: mark B6 / B11 / B13 as RESOLVED in v1.3.2 with commit refs  → verify: bug rows show "RESOLVED v1.3.2 (commit `<sha>`)" + brief fix description
-- [ ] `.omne/cfg/roadmap.md`: shift active backlog (v1.3.3 = B3/B5/B10; v1.3.4 = B1/B9/B15; v1.4.0 unchanged)  → verify: roadmap reflects v1.3.2 as SHIPPED, v1.3.3 as next
-- [ ] `.omne/cfg/lockfile.md`: confirm canonical paths under `.grex/` for the 3 lock artifacts (path move now in runtime, doc was already correct)  → verify: lockfile.md §"File location" + §"Three lock artifacts" reads coherent with new runtime
-- [ ] `.omne/cfg/pack-spec.md`: §v1.2.0 slash-path support — add note "RUNTIME ALIGNED v1.3.2" if helpful  → verify: pack-spec.md no longer reads as forward-looking on slash paths
-- [ ] `.omne/cfg/manifest.md`: if `LockEntry.synthetic` referenced anywhere, mark the field as RETIRED v1.3.2 (writer no longer emits)  → verify: manifest.md `synthetic` references coherent with new runtime
-- [ ] `.omne/cfg/freeze-v1.3.0.md`: add `## § v1.3.2 follow-up (2026-05-03)` section mirroring the v1.3.1 follow-up; confirm 13 frozen contracts intact  → verify: freeze-v1.3.0.md has new section asserting intact-status with per-row check
-- [ ] `.omne/cfg/migration-v1.3.2.md`: NEW file with operator migration recipe for B11 stale lock orphans (per discipline rule 16, only required if release introduces operator-visible behavior change — B11 qualifies)  → verify: file exists with one-liner `mv` / `rm` recipe; G1 routing table updated
+- [ ] `.omne/history.md`: append per-release entry for v1.3.2 (one line minimum + body)  → verify: history.md has new entry with commit SHA + tag + crates URLs
+- [ ] `.omne/var/dogfood-findings-v1.3.0.md`: mark B6 / B11 / B13 as RESOLVED in v1.3.2 with commit refs  → verify: bug rows show "RESOLVED v1.3.2 (commit `<sha>`)" + brief fix description
+- [ ] `.omne/roadmap.md`: shift active backlog (v1.3.3 = B3/B5/B10; v1.3.4 = B1/B9/B15; v1.4.0 unchanged)  → verify: roadmap reflects v1.3.2 as SHIPPED, v1.3.3 as next
+- [ ] `.omne/lockfile.md`: confirm canonical paths under `.grex/` for the 3 lock artifacts (path move now in runtime, doc was already correct)  → verify: lockfile.md §"File location" + §"Three lock artifacts" reads coherent with new runtime
+- [ ] `.omne/pack-spec.md`: §v1.2.0 slash-path support — add note "RUNTIME ALIGNED v1.3.2" if helpful  → verify: pack-spec.md no longer reads as forward-looking on slash paths
+- [ ] `.omne/manifest.md`: if `LockEntry.synthetic` referenced anywhere, mark the field as RETIRED v1.3.2 (writer no longer emits)  → verify: manifest.md `synthetic` references coherent with new runtime
+- [ ] `.omne/var/freeze-v1.3.0.md`: add `## § v1.3.2 follow-up (2026-05-03)` section mirroring the v1.3.1 follow-up; confirm 13 frozen contracts intact  → verify: freeze-v1.3.0.md has new section asserting intact-status with per-row check
+- [ ] `.omne/migration-v1.3.2.md`: NEW file with operator migration recipe for B11 stale lock orphans (per discipline rule 16, only required if release introduces operator-visible behavior change — B11 qualifies)  → verify: file exists with one-liner `mv` / `rm` recipe; G1 routing table updated
 - [ ] `.omne/schemas/rules.md`: G1 routing table — add `cfg/migration-v1.3.2.md` row (hand-edited)  → verify: routing table grep shows new row
 - [ ] `.omne/INDEX.yaml` regenerated via `python .omne/scripts/build_index.py` (per rule 12)  → verify: build_index.py exit 0; INDEX.yaml shows new migration-v1.3.2 entry + bumped feat-v1-3-2 triplet
 - [ ] `.omne/schemas/rules.md`: bump `last_updated` if any rule text or G1 routing-table row changed (per rule 16)  → verify: rules.md frontmatter `last_updated: 2026-05-03`
@@ -126,4 +126,4 @@ All Phase 5 tasks land in the SSOT repo (`grex-inst`, mounted at `.omne/`). Per 
 - [ ] Append `## Endpoint (2026-05-03, main — v1.3.2 SHIPPED)` to grex `progress.md`  → verify: progress.md has new endpoint section mirroring the v1.3.1 endpoint structure (state, what shipped, Lean obligations, validation gate, real-smoke status, crates URLs, v1.3.x backlog state, decisions locked)
 - [ ] Update top `## Where we are` block in `progress.md`: bump to v1.3.2  → verify: top block reflects v1.3.2 as SHIPPED on main, v1.3.3 next
 - [ ] Commit progress.md update on main (or via PR if branch protection)  → verify: main advances with the endpoint commit
-- [ ] Session-complete check: rule 16 SSOT update bundle MUST be green BEFORE marking complete  → verify: both grex `progress.md` and `.omne/cfg/history.md` reflect v1.3.2 SHIPPED in coherent state
+- [ ] Session-complete check: rule 16 SSOT update bundle MUST be green BEFORE marking complete  → verify: both grex `progress.md` and `.omne/history.md` reflect v1.3.2 SHIPPED in coherent state

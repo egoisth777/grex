@@ -22,7 +22,7 @@ pub type PackId = String;
 /// * The action-audit variants ([`Event::ActionStarted`],
 ///   [`Event::ActionCompleted`], [`Event::ActionHalted`]) renamed their
 ///   pack-id field from `pack` to `id` so every event variant uses the
-///   same `id` discriminant per `.omne/cfg/manifest.md` §"events schema
+///   same `id` discriminant per `.omne/manifest.md` §"events schema
 ///   v2" reader contract. Each of those three variants now also carries
 ///   a `schema_version: String` field so consumers can disambiguate v1
 ///   vs v2 records line-by-line during the migration window (no field

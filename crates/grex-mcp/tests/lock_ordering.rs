@@ -15,7 +15,7 @@
 //! 6.T10 — `pack_lock_acquired_after_permit_not_before`. Tracing-span
 //!         ordering test: acquire a permit, then acquire a pack lock,
 //!         and assert the spans nest in that order. Spec-mandated lock
-//!         ordering invariant from `.omne/cfg/concurrency.md` (5-tier).
+//!         ordering invariant from `.omne/concurrency.md` (5-tier).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

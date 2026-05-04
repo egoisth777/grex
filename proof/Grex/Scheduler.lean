@@ -19,8 +19,8 @@ user-facing guarantees (`no_double_lock`, `no_deadlock`) from them with
 zero `sorry` / zero `admit`.
 
 Source-of-truth links:
-* `.omne/cfg/concurrency.md` §Lean4 invariant — primary spec
-* `.omne/cfg/architecture.md` §Runtime invariants — identifies I1
+* `.omne/concurrency.md` §Lean4 invariant — primary spec
+* `.omne/architecture.md` §Runtime invariants — identifies I1
 * `openspec/changes/feat-m6-3-lean4-proof/spec.md` — this change's contract
 -/
 
@@ -59,7 +59,7 @@ held by the current OS thread when the closure enters at
 `pool_install_depth >= 2`, the assertion fires (matching the v1.2.2
 R#1 MED reviewer's theoretical re-entrancy deadlock pattern). The
 release build compiles the assertion out — the documented
-lock-acquisition order in `.omne/cfg/concurrency.md` plus this Lean
+lock-acquisition order in `.omne/concurrency.md` plus this Lean
 theorem are the contract.
 
 The model below mechanises the contract by a different (but equivalent)

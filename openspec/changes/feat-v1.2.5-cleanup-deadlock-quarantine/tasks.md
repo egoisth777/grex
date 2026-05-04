@@ -74,7 +74,7 @@ last_updated: 2026-05-02
 
 ### 2g — CHANGELOG + history
 - [ ] CHANGELOG.md: promote v1.2.4 entry to dated SHIPPED 2026-05-02 if not already; add v1.2.5 entry (Added: doctor subcommands + sync flag + event variants; Changed: cyclic-input cleanup behavior; Internal: pool deadlock guard; Tests: 6 new)
-- [ ] `.omne/cfg/history.md`: append v1.2.5 draft section (separate SSOT repo per Rule 7 — ships through grex-inst)
+- [ ] `.omne/history.md`: append v1.2.5 draft section (separate SSOT repo per Rule 7 — ships through grex-inst)
 
 ### 2h — v1.3.0 readiness regression (maintainer directive)
 - [ ] Verify existing `e2e_v1_3_0_readiness_smoke` (added v1.2.4) in `crates/grex/tests/sync_e2e.rs` still passes — meta-pack + 1 sub-pack acyclic sync returns `Ok`, `report.errors.is_empty()`, `metas_visited >= 2`, no `CycleDetected` in any error path
@@ -114,7 +114,7 @@ last_updated: 2026-05-02
 ## Stage 7 — wrap-up (per cfg/workflow.md Phase 5)
 - [ ] Append `## Endpoint (2026-05-XX, main — v1.2.5 SHIPPED)` to progress.md
 - [ ] Update top "Where we are" block
-- [ ] Promote draft entry in `.omne/cfg/history.md` to SHIPPED with date + commit SHA (separate SSOT repo per Rule 7)
+- [ ] Promote draft entry in `.omne/history.md` to SHIPPED with date + commit SHA (separate SSOT repo per Rule 7)
 - [ ] Commit progress.md (grex) + history.md (SSOT)
 - [ ] Carry-forward list to v1.2.6: TreeError variant split, cap-std snapshot hardening, stale `manifest.md` doc cleanup, working-tree drift root cause investigation
 - [ ] Carry-forward list to v1.3.0: `--workspace` → `--pack` CLI rename, behavior contract freeze, MINOR cut
@@ -122,7 +122,7 @@ last_updated: 2026-05-02
 ## Out of scope (defer to v1.2.6+)
 - TreeError variant split (separate `CycleDetected` from `DepthCapExceeded` from `UntrackedGitRepos`) → v1.2.6
 - cap-std snapshot hardening (replace ambient `std::fs::copy` in `quarantine.rs` with cap-std bounded variants) → v1.2.6
-- Stale `.omne/cfg/manifest.md` doc cleanup → v1.2.6
+- Stale `.omne/manifest.md` doc cleanup → v1.2.6
 - Working-tree drift root cause investigation (statusline-probe.txt, `crates/grex/.grex/` runtime artifact) → v1.2.6 spike
 - `--workspace` → `--pack` CLI rename → v1.3.0
 - v1.3.0 contract freeze + MINOR cut → v1.3.0

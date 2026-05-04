@@ -53,7 +53,7 @@ No public API change, no rename of exported items, no architecture change beyond
 6. Local gates clean: `cargo fmt --all -- --check`, `cargo doc --no-deps --workspace -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cd proof && lake build`, axiom-policy check.
 7. CI smoke check verifies `#print axioms` output for both theorems equals `[propext]` only OR `[propext, <new_bridge_axiom_name>]` if a single bridge axiom is justified. Drift to any other axiom set fails CI.
 8. Workspace version bumped 1.2.3 → 1.2.4 in workspace root `Cargo.toml`, `crates/xtask/Cargo.toml` path-dep pin, and `crates/xtask/tests/version_test.rs` `EXPECTED_WORKSPACE_VERSION`.
-9. CHANGELOG `[1.2.4]` entry + SSOT `.omne/cfg/history.md` v1.2.4 entry (separate SSOT repo per Rule 7).
+9. CHANGELOG `[1.2.4]` entry + SSOT `.omne/history.md` v1.2.4 entry (separate SSOT repo per Rule 7).
 
 ## v1.3.0 readiness constraint (maintainer directive)
 

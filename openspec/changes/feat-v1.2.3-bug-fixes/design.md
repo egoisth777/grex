@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/walker.md` §"Cycle detection" (canonical algorithm reference) · `proof/Grex/Walker.lean` (Rule 8 obligation)
+**SSOT**: `.omne/walker.md` §"Cycle detection" (canonical algorithm reference) · `proof/Grex/Walker.lean` (Rule 8 obligation)
 
 ## Why
 
@@ -230,7 +230,7 @@ Bridge axiom counts unchanged: 9 in `Bridge.lean`, 4 in `Types.lean`. CI gate at
 **Changelog/history:**
 
 - `CHANGELOG.md` — promote `[1.2.2] - pending` to its release date and append a new `[1.2.3] - 2026-05-XX` section. Update the `[Unreleased]` and tag-link footnotes.
-- SSOT `.omne/cfg/history.md` — append v1.2.3 entry (separate repo per Rule 7, ships through SSOT).
+- SSOT `.omne/history.md` — append v1.2.3 entry (separate repo per Rule 7, ships through SSOT).
 
 ## Acceptance criteria
 

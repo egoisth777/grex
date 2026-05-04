@@ -135,7 +135,7 @@ Every tool in `tools/list` declares both `annotations.readOnlyHint` and `annotat
 
 MCP tool handlers share one `Arc<Scheduler>` for the server lifetime — concurrent `tools/call` invocations respect `--parallel` exactly like local CLI invocations. Manifest cache is reused across requests. `ExecCtx` is built fresh per call, borrowing the shared scheduler + registry handles.
 
-**5-tier lock ordering invariant (M6).** Tool handlers MUST acquire concurrency primitives in the fixed order documented in `.omne/cfg/concurrency.md`:
+**5-tier lock ordering invariant (M6).** Tool handlers MUST acquire concurrency primitives in the fixed order documented in `.omne/concurrency.md`:
 
 1. workspace-sync lock
 2. scheduler semaphore permit
