@@ -42,3 +42,7 @@ claude-statusline-probe.txt
 # Real-smoke fixture local clones (created by scripts/provision-real-smoke-fixtures.ps1)
 scripts/real-smoke-fixtures/*/.git/
 scripts/real-smoke-fixtures/*/.git
+
+# legacy pack-lock artifact (pre-v1.3.2 path, retained ignore for safety)
+.grex-lock
+**/.grex-lock
