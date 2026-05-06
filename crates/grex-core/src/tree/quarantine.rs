@@ -344,43 +344,52 @@ fn cap_copy_dir_contents(src_dir: &cap_std::fs::Dir, dst: &Path) -> io::Result<(
     for entry in src_dir.entries()? {
         let entry = entry?;
         let name = entry.file_name();
-        let name_path = std::path::PathBuf::from(&name);
-        let child_dst = dst.join(&name);
-        let child_meta = src_dir.symlink_metadata(&name_path)?;
-        let ft = child_meta.file_type();
-        if ft.is_symlink() {
-            // Read the link target through the capability. Use
-            // `read_link_contents` (NOT `read_link`) so absolute targets
-            // are preserved verbatim — a quarantine snapshot is for
-            // forensic reconstruction; a symlink that points outside
-            // its own directory is legitimate operator data and must
-            // be copied as-is, not rewritten or rejected.
-            let target = src_dir.read_link_contents(&name_path)?;
-            copy_symlink_with_target(&target, &child_dst)?;
-            continue;
-        }
-        if ft.is_dir() {
-            fs::create_dir_all(&child_dst)?;
-            let child_src_dir = src_dir.open_dir(&name_path)?;
-            cap_copy_dir_contents(&child_src_dir, &child_dst)?;
-            continue;
-        }
-        if ft.is_file() {
-            // Copy file bytes through the capability so the source side
-            // is bound to the cap-std root. Use `open` + `std::io::copy`
-            // since cap-std's `Dir::copy` only supports same-Dir copies.
-            use std::io::Write;
-            let mut src_file = src_dir.open(&name_path)?;
-            let mut dst_file = fs::File::create(&child_dst)?;
-            io::copy(&mut src_file, &mut dst_file)?;
-            dst_file.flush()?;
-            continue;
-        }
-        tracing::warn!(
-            entry = %name.to_string_lossy(),
-            "quarantine: skipping non-regular, non-symlink, non-directory entry"
-        );
+        cap_copy_dir_entry(src_dir, dst, name)?;
     }
+    Ok(())
+}
+
+fn cap_copy_dir_entry(
+    src_dir: &cap_std::fs::Dir,
+    dst: &Path,
+    name: std::ffi::OsString,
+) -> io::Result<()> {
+    let name_path = std::path::PathBuf::from(&name);
+    let child_dst = dst.join(&name);
+    let child_meta = src_dir.symlink_metadata(&name_path)?;
+    let ft = child_meta.file_type();
+    if ft.is_symlink() {
+        // Read the link target through the capability. Use
+        // `read_link_contents` (NOT `read_link`) so absolute targets
+        // are preserved verbatim - a quarantine snapshot is for
+        // forensic reconstruction; a symlink that points outside
+        // its own directory is legitimate operator data and must
+        // be copied as-is, not rewritten or rejected.
+        let target = src_dir.read_link_contents(&name_path)?;
+        copy_symlink_with_target(&target, &child_dst)?;
+        return Ok(());
+    }
+    if ft.is_dir() {
+        fs::create_dir_all(&child_dst)?;
+        let child_src_dir = src_dir.open_dir(&name_path)?;
+        cap_copy_dir_contents(&child_src_dir, &child_dst)?;
+        return Ok(());
+    }
+    if ft.is_file() {
+        // Copy file bytes through the capability so the source side
+        // is bound to the cap-std root. Use `open` + `std::io::copy`
+        // since cap-std's `Dir::copy` only supports same-Dir copies.
+        use std::io::Write;
+        let mut src_file = src_dir.open(&name_path)?;
+        let mut dst_file = fs::File::create(&child_dst)?;
+        io::copy(&mut src_file, &mut dst_file)?;
+        dst_file.flush()?;
+        return Ok(());
+    }
+    tracing::warn!(
+        entry = %name.to_string_lossy(),
+        "quarantine: skipping non-regular, non-symlink, non-directory entry"
+    );
     Ok(())
 }
 
