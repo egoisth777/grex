@@ -127,7 +127,17 @@ impl GitBackend for GixBackend {
 /// - Pre-clone safe — parent's `.grex/` exists before any child clone.
 /// - Path-keyed identity — no collision when two children share `name:`
 ///   at distinct paths.
-fn repo_lock_path(lock_ctx: BackendLockCtx<'_>) -> PathBuf {
+fn repo_lock_path(lock_ctx: BackendLockCtx<'_>) -> Result<PathBuf, GitError> {
+    if lock_ctx.child_path.is_empty()
+        || lock_ctx.child_path.ends_with('/')
+        || lock_ctx.child_path.ends_with('\\')
+    {
+        return Err(GitError::Internal(
+            "repo_lock_path: child_path must be non-empty and must not end with a separator"
+                .to_string(),
+        ));
+    }
+
     let mut p = lock_ctx.parent_meta.join(".grex").join("locks");
     // Use a relative `Path::new(child_path)` so forward-slash separators
     // in the literal manifest path translate to OS-native separators
@@ -139,7 +149,7 @@ fn repo_lock_path(lock_ctx: BackendLockCtx<'_>) -> PathBuf {
         p.file_name().map_or_else(std::ffi::OsString::new, std::ffi::OsStr::to_os_string);
     filename.push(".backend.lock");
     p.set_file_name(filename);
-    p
+    Ok(p)
 }
 
 /// Run `op` while holding the per-repo filesystem lock for `(parent_meta, child_path)`.
@@ -158,7 +168,7 @@ fn with_repo_lock<T, F>(lock_ctx: BackendLockCtx<'_>, op: F) -> Result<T, GitErr
 where
     F: FnOnce() -> Result<T, GitError>,
 {
-    let lock_path = repo_lock_path(lock_ctx);
+    let lock_path = repo_lock_path(lock_ctx)?;
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             GitError::Internal(format!("create lock dir {}: {e}", parent.display()))
@@ -376,5 +386,34 @@ pub fn file_url_from_path(path: &Path) -> String {
         format!("file://{s}")
     } else {
         format!("file:///{s}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_lock_path_rejects_empty_child_path() {
+        let err = repo_lock_path(BackendLockCtx::new(Path::new("parent"), ""))
+            .expect_err("empty child_path should be rejected");
+
+        assert!(matches!(
+            err,
+            GitError::Internal(ref msg)
+                if msg == "repo_lock_path: child_path must be non-empty and must not end with a separator"
+        ));
+    }
+
+    #[test]
+    fn repo_lock_path_rejects_trailing_slash() {
+        let err = repo_lock_path(BackendLockCtx::new(Path::new("parent"), "tools/foo/"))
+            .expect_err("trailing slash child_path should be rejected");
+
+        assert!(matches!(
+            err,
+            GitError::Internal(ref msg)
+                if msg == "repo_lock_path: child_path must be non-empty and must not end with a separator"
+        ));
     }
 }

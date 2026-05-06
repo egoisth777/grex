@@ -302,6 +302,7 @@ jobs:
           #print axioms Grex.Scheduler.pool_deadlock_guard_terminates
           #print axioms Grex.Walker.dry_run_no_side_effects
           #print axioms Grex.Lockfile.lockfile_branch_mirrors_manifest_ref
+          #print axioms Grex.Walker.declarative_nesting_terminates
           EOF
           # Run the probe via `lake env lean --run` semantics: plain
           # `lake env lean <file>` elaborates the file and prints all
@@ -319,6 +320,7 @@ jobs:
             "Grex.Scheduler.pool_deadlock_guard_terminates"
             "Grex.Walker.dry_run_no_side_effects"
             "Grex.Lockfile.lockfile_branch_mirrors_manifest_ref"
+            "Grex.Walker.declarative_nesting_terminates"
           )
           fail=0
           for thm in "${theorems[@]}"; do

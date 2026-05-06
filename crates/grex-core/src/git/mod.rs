@@ -94,16 +94,16 @@ impl BackendLockCtxOwned {
     /// Derive a lock context from a flat `dest` path. Used by tests that
     /// don't otherwise carry a parent-meta — `dest.parent()` plays the
     /// role of `parent_meta` and `dest.file_name()` the role of
-    /// `child_path`. Falls back to `"."` and `"repo"` respectively when
-    /// either component is absent.
+    /// `child_path`. Falls back to `"."` when the parent component is
+    /// absent. A missing filename becomes an empty `child_path`, which the
+    /// backend lock path validator rejects instead of silently routing to a
+    /// generic `"repo"` lock.
     #[must_use]
     pub fn from_dest(dest: &Path) -> Self {
         let parent_meta =
             dest.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-        let child_path = dest
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map_or_else(|| "repo".to_string(), str::to_string);
+        let child_path =
+            dest.file_name().and_then(|s| s.to_str()).map_or_else(String::new, str::to_string);
         Self { parent_meta, child_path }
     }
 
@@ -193,4 +193,16 @@ pub trait GitBackend: Send + Sync {
     /// [`GitError::NotARepository`] when `dest` is not a git repo;
     /// [`GitError::Internal`] wraps any unexpected head-resolution failure.
     fn head_sha(&self, dest: &Path) -> Result<String, GitError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_lock_ctx_owned_from_dest_does_not_fallback_to_repo() {
+        let ctx = BackendLockCtxOwned::from_dest(Path::new("/"));
+
+        assert_eq!(ctx.child_path, "");
+    }
 }
