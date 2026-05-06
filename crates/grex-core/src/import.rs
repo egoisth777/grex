@@ -216,8 +216,7 @@ fn classify_entry(
     // untrue: bad rows landed as `Event::Add` rows that only failed
     // at sync time. Fail-fast at import is a much friendlier signal.
     if let Some(reason) = reject_reason(&path) {
-        plan.failed
-            .push(ImportFailure { path, error: format!("invalid `path`: {reason}") });
+        plan.failed.push(ImportFailure { path, error: format!("invalid `path`: {reason}") });
         return;
     }
     // NOTE: PackId currently aliases path (identity derivation), so
