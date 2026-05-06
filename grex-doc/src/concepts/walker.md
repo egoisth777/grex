@@ -2,7 +2,7 @@
 
 How `grex sync` traverses your nested meta-pack tree under v1.2.0+ — phase by phase, with the rules that decide what to clone, what to recurse into, and what to refuse.
 
-> Canonical source: [.omne/cfg/walker.md](../../.omne/cfg/walker.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection; the SSOT is normative for behaviour.
+> Canonical source: [.omne/walker.md](../../.omne/walker.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection; the SSOT is normative for behaviour.
 
 ## What is a meta pack?
 

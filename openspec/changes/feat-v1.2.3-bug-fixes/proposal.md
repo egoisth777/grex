@@ -53,7 +53,7 @@ No architecture change, no rename, no refactor. v1.2.3 is bug fixes only.
 7. Local gates clean: `cargo fmt --all -- --check`, `cargo doc --no-deps --workspace -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cd proof && lake build`, axiom-policy check.
 8. Workspace version bumped 1.2.2 → 1.2.3 in workspace root `Cargo.toml`, `crates/xtask/Cargo.toml` path-dep pin, and `crates/xtask/tests/version_test.rs` `EXPECTED_WORKSPACE_VERSION`.
 9. Man pages regenerated via `cargo xtask gen-man`.
-10. CHANGELOG `[1.2.3]` entry + SSOT `.omne/cfg/history.md` v1.2.3 entry (separate SSOT repo per Rule 7).
+10. CHANGELOG `[1.2.3]` entry + SSOT `.omne/history.md` v1.2.3 entry (separate SSOT repo per Rule 7).
 
 ## SemVer
 

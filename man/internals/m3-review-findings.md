@@ -142,6 +142,6 @@ Grouped for triage when M4 planning starts:
 ## Cross-refs
 
 - `progress.md` — "Decisions locked during M3 review series" mirrors the decisions captured in the PR descriptions.
-- `.omne/cfg/concurrency.md` — updated to document workspace + repo fd-lock contract.
-- `.omne/cfg/manifest.md` — updated to document `ActionStarted` / `ActionCompleted` / `ActionHalted` event brackets.
-- `.omne/cfg/actions.md` — updated to document symlink backup-rollback, `kind: auto` missing-src error, and exec stderr truncation.
+- `.omne/concurrency.md` — updated to document workspace + repo fd-lock contract.
+- `.omne/manifest.md` — updated to document `ActionStarted` / `ActionCompleted` / `ActionHalted` event brackets.
+- `.omne/actions.md` — updated to document symlink backup-rollback, `kind: auto` missing-src error, and exec stderr truncation.

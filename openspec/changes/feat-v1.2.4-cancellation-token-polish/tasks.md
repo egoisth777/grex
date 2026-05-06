@@ -51,7 +51,7 @@ last_updated: 2026-05-02
 
 ### 2f — CHANGELOG + history
 - [ ] CHANGELOG.md: promote v1.2.3 entry to dated SHIPPED 2026-05-02; add v1.2.4 entry (Added: cancellation, polish renames, proptest, CI axiom check; Changed: cyclic-input behavior — siblings stop on first cycle)
-- [ ] `.omne/cfg/history.md`: append v1.2.4 draft section
+- [ ] `.omne/history.md`: append v1.2.4 draft section
 
 ### 2g — v1.3.0 readiness smoke test (maintainer directive)
 - [ ] Add `e2e_v1_3_0_readiness_smoke` in `crates/grex/tests/sync_e2e.rs`
@@ -92,7 +92,7 @@ last_updated: 2026-05-02
 ## Stage 7 — wrap-up (per cfg/workflow.md Phase 5)
 - [ ] Append `## Endpoint (2026-05-02, main — v1.2.4 SHIPPED)` to progress.md
 - [ ] Update top "Where we are" block
-- [ ] Promote draft entry in `.omne/cfg/history.md` to SHIPPED with date + commit SHA
+- [ ] Promote draft entry in `.omne/history.md` to SHIPPED with date + commit SHA
 - [ ] Commit progress.md (grex) + history.md (SSOT)
 - [ ] Carry-forward list to v1.2.5: A2 partial-clone cleanup, A3 pool deadlock guard, T3 chain index strengthen, v1.2.0 follow-ups, drift root cause
 

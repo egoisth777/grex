@@ -25,7 +25,7 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 - Real-smoke harness (`crates/real-smoke/`) — black-box CLI regression
   suite running against stable GH fixture repos via SSH + git
   worktrees. 15 regression gates locking the v1.3.0 dogfood bugs
-  (B1-B15 per `.omne/cfg/dogfood-findings-v1.3.0.md`).
+  (B1-B15 per `.omne/var/dogfood-findings-v1.3.0.md`).
 - `scripts/provision-real-smoke-fixtures.ps1` — idempotent fixture
   provisioning + `-Check` audit mode.
 - `.github/workflows/real-smoke.yml` — dedicated CI workflow (manual
@@ -61,10 +61,10 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
   `pack.or(workspace)`).
 - `pack: &'a Path` additive field on `ExecCtx<'a>` (mirrors `workspace`).
 - Plugin-API UNSTABLE marker in plugin/mod.rs lib doc-comment.
-- Behavior contract freeze table at `.omne/cfg/freeze-v1.3.0.md`
+- Behavior contract freeze table at `.omne/var/freeze-v1.3.0.md`
   (13 STABLE contracts).
 - Operator + Rust-consumer migration guide at
-  `.omne/cfg/migration-v1.3.0.md`.
+  `.omne/var/migration-v1.3.0.md`.
 - Deprecation warn-once helper
   `crate::cli::deprecation::warn_workspace_alias_used()` (tracing target
   `grex::cli::deprecation`).
@@ -139,7 +139,7 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
   `#[non_exhaustive]`. cap-std migration is implementation-internal.
 - MSRV unchanged at 1.79 (carry-forward from v1.2.5; required for
   symlink-secure `remove_dir_all` + cap-std v3 compat).
-- `.omne/cfg/manifest.md` rewritten in the SSOT repo (separate from grex
+- `.omne/manifest.md` rewritten in the SSOT repo (separate from grex
   per Rule 7) — events catalog now lists v1.0.x action-bracket events
   + v1.2.x quarantine events; lockfile schema clarifies `commit_sha`
   semantics.
@@ -486,7 +486,7 @@ changes — surface and metadata only.
 ### Fixed
 
 - Five 404s on the live doc-site caused by markdown links into repo-only
-  paths (`.omne/cfg/*`, `openspec/changes/...`) that mdBook rendered as
+  paths (`.omne/*`, `openspec/changes/...`) that mdBook rendered as
   `.html` siblings. Rewritten as `https://github.com/.../blob/main/...`
   source links so they resolve regardless of where the page is rendered.
 

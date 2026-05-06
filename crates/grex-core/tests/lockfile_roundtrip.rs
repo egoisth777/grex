@@ -83,9 +83,15 @@ fn malformed_lockfile_returns_err() {
     assert!(matches!(result, Err(LockfileError::Corruption { .. })));
 }
 
-/// v1.1.1 — `LockEntry::synthetic = true` survives a JSONL round-trip.
+/// v1.3.2 (W1) — `LockEntry::synthetic = true` is NOT round-tripped:
+/// the writer always skips the field, so a fresh on-disk lockfile
+/// carries no `synthetic` key and the read-back entry deserialises with
+/// `synthetic = false` via `#[serde(default)]`. This is the documented
+/// retirement contract — `pack-spec.md §v1.2.0` retired sync-time
+/// auto-synthesis, and v1.3.2 stops emitting the lockfile field that
+/// tracked it.
 #[test]
-fn synthetic_field_roundtrips() {
+fn synthetic_field_is_dropped_on_write() {
     let dir = tempdir().unwrap();
     let p = dir.path().join("grex.lock.jsonl");
     let ts = Utc.with_ymd_and_hms(2026, 4, 27, 10, 0, 0).unwrap();
@@ -95,9 +101,15 @@ fn synthetic_field_roundtrips() {
     let mut map = HashMap::new();
     map.insert(entry.id.clone(), entry.clone());
     write_lockfile(&p, &map).unwrap();
+
+    let raw = fs::read_to_string(&p).unwrap();
+    assert!(!raw.contains("synthetic"), "writer must not emit `synthetic` key, got: {raw}",);
+
     let back = read_lockfile(&p).unwrap();
-    assert_eq!(back.get("plain-git-child"), Some(&entry));
-    assert!(back.get("plain-git-child").unwrap().synthetic);
+    assert!(
+        !back.get("plain-git-child").unwrap().synthetic,
+        "round-trip drops `synthetic = true` (writer skips, reader defaults to false)",
+    );
 }
 
 /// v1.1.1 forward-compat — a v1.1.0-shaped JSONL line (no `synthetic`

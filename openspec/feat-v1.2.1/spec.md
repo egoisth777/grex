@@ -34,7 +34,7 @@ These were sealed at v1.2.1 kickoff. No deferral inside the PATCH cycle.
 2. **Quarantine layout = `<meta>/.grex/trash/<ISO8601_timestamp>/<basename>/`.** Per-meta scope (each meta gets its own quarantine bucket inside its `.grex/`). Recursive snapshot — full subtree contents, not just the top dir. Audit-log entry to `<meta>/.grex/events.jsonl` BEFORE the copy fires (with `fsync`). Snapshot failure aborts the prune (no delete). The on-disk folder name is `trash/`; the conceptual feature name remains "quarantine" (Lean4 theorem, flag name, prose).
 3. **Lean4 proof-first for item 5.** Theorem name: `Grex.Walker.quarantine_snapshot_precedes_delete`. The theorem must compile (`lake build` green, zero `sorry`, zero `admit`) BEFORE any `--quarantine` Rust code lands. Bridge axiom may be added if needed; documented in SSOT (`.omne/proof/impl-axiom-bridge.md`, separate `grex-inst` repo).
 4. **Rayon scheduler = no new Lean4 theorem.** Covered by the existing `sync_disjoke_commutes` axiom (M6) + the single-permit semaphore + per-meta `.grex-lock` shipped in v1.2.0. The axiom proves disjoint-pack work commutes; rayon's work-stealing pool is a scheduling-strategy refinement under the same proof. No new bridge axiom required.
-5. **mdbook scope split across two repos.** The `grex-doc/src/concepts/*.md` and `man/concepts/*.md` updates land in this `grex` branch (item 1). NEW SSOT files `.omne/cfg/force-prune.md` and `.omne/cfg/toctou.md` are authored in the SSOT (`grex-inst`/`grex-ssot`) repo and ship through that repo's separate commit channel — NOT in this `feat/v1.2.1` branch (per Rule 7: SSOT lives in a separate repo). Existing `.omne/cfg/walker.md`, `.omne/cfg/lockfile.md`, `.omne/cfg/concurrency.md` are canonical sources; mdbook content derives from them.
+5. **mdbook scope split across two repos.** The `grex-doc/src/concepts/*.md` and `man/concepts/*.md` updates land in this `grex` branch (item 1). NEW SSOT files `.omne/force-prune.md` and `.omne/toctou.md` are authored in the SSOT (`grex-inst`/`grex-ssot`) repo and ship through that repo's separate commit channel — NOT in this `feat/v1.2.1` branch (per Rule 7: SSOT lives in a separate repo). Existing `.omne/walker.md`, `.omne/lockfile.md`, `.omne/concurrency.md` are canonical sources; mdbook content derives from them.
 
 ## Sub-features
 
@@ -49,12 +49,12 @@ These were sealed at v1.2.1 kickoff. No deferral inside the PATCH cycle.
 - Mirror each chapter to `man/concepts/*.md` (man-page concept variants).
 
 **Scope (separate SSOT-repo commit, NOT this branch):**
-- New `.omne/cfg/force-prune.md` — canonical SSOT prose; mdbook chapter derives from it.
-- New `.omne/cfg/toctou.md` — canonical SSOT prose; mdbook chapter derives from it.
+- New `.omne/force-prune.md` — canonical SSOT prose; mdbook chapter derives from it.
+- New `.omne/toctou.md` — canonical SSOT prose; mdbook chapter derives from it.
 
 **Acceptance:**
 - `mdbook build grex-doc/` exits 0; new chapters appear in nav.
-- Each `grex-doc/src/concepts/*.md` chapter cites the corresponding `.omne/cfg/*.md` SSOT (link or "see SSOT" reference).
+- Each `grex-doc/src/concepts/*.md` chapter cites the corresponding `.omne/*.md` SSOT (link or "see SSOT" reference).
 - `man/concepts/*.md` byte-equivalent (or path-rewritten copy) of `grex-doc/src/concepts/*.md`.
 
 **Files touched (estimate):** 5 new + 3 updated in `grex-doc/src/concepts/`, parallel set in `man/concepts/`. ~600 lines of prose total. No code change.
@@ -203,12 +203,12 @@ Per Rule 6: SemVer label is the maintainer's call. PATCH is the maintainer's rul
 ## Cross-references
 
 - **Canonical algorithms (SSOT, separate `grex-inst` repo, mounted at `.omne/`):**
-  - `.omne/cfg/walker.md` — parent-relative walker (v1.2.0).
-  - `.omne/cfg/lockfile.md` — distributed lockfile schema.
-  - `.omne/cfg/concurrency.md` — M6 + v1.2.0 concurrency primitives.
-  - `.omne/cfg/force-prune.md` — NEW in v1.2.1, separate SSOT-repo commit.
-  - `.omne/cfg/toctou.md` — NEW in v1.2.1, separate SSOT-repo commit.
+  - `.omne/walker.md` — parent-relative walker (v1.2.0).
+  - `.omne/lockfile.md` — distributed lockfile schema.
+  - `.omne/concurrency.md` — M6 + v1.2.0 concurrency primitives.
+  - `.omne/force-prune.md` — NEW in v1.2.1, separate SSOT-repo commit.
+  - `.omne/toctou.md` — NEW in v1.2.1, separate SSOT-repo commit.
 - **Lean4 proof:** `proof/Grex/Walker.lean` (existing 14 theorems + new `quarantine_snapshot_precedes_delete`); `proof/Grex/Bridge.lean` (existing 9 bridge axioms + 1 new if needed for quarantine).
-- **History context:** `.omne/cfg/history.md` — v1.2.0 ship + v1.2.1 deferred-items pickup.
+- **History context:** `.omne/history.md` — v1.2.0 ship + v1.2.1 deferred-items pickup.
 - **v1.2.0 endpoint:** `progress.md` "## Endpoint (2026-04-30, main — v1.2.0 SHIPPED)" — origin of the 5 deferred items.
 - **Per Rule 7:** `.omne/**` edits land in the SSOT repo, NOT in this `feat/v1.2.1` grex branch. SSOT changes ship through a separate commit channel.

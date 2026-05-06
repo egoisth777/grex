@@ -9,7 +9,7 @@ last_updated: 2026-05-02
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/walker.md` §"Cleanup semantics" (canonical algorithm reference) · `.omne/cfg/concurrency.md` §"Five cooperating mechanisms" (lock acquisition order) · `.omne/cfg/quarantine.md` §"Retention and recovery" (canonical retention spec) · `proof/Grex/Walker.lean` + `proof/Grex/Scheduler.lean` (Rule 8 obligations)
+**SSOT**: `.omne/walker.md` §"Cleanup semantics" (canonical algorithm reference) · `.omne/concurrency.md` §"Five cooperating mechanisms" (lock acquisition order) · `.omne/quarantine.md` §"Retention and recovery" (canonical retention spec) · `proof/Grex/Walker.lean` + `proof/Grex/Scheduler.lean` (Rule 8 obligations)
 
 ## Why
 
@@ -387,7 +387,7 @@ Target ZERO new axioms. Conservative budget:
 **Changelog/history:**
 
 - `CHANGELOG.md` — append a new `[1.2.5] - 2026-05-XX` section.
-- `.omne/cfg/history.md` — append v1.2.5 entry (separate repo per Rule 7, ships through SSOT).
+- `.omne/history.md` — append v1.2.5 entry (separate repo per Rule 7, ships through SSOT).
 
 ## Acceptance criteria
 

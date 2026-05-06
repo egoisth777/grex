@@ -254,9 +254,10 @@ fn sync_with_workspace_override_targets_meta_at_override_dir() {
         );
     }
     // Workspace lock lives under the override (which IS the meta dir).
+    // v1.3.2 B11: under `<override>/.grex/.grex.sync.lock`.
     assert!(
-        override_ws.join(".grex.sync.lock").exists(),
-        "workspace lock must live under the --workspace meta dir",
+        override_ws.join(".grex").join(".grex.sync.lock").exists(),
+        "workspace lock must live under the --workspace meta dir at .grex/.grex.sync.lock",
     );
 }
 
@@ -312,10 +313,11 @@ fn import_writes_manifest_and_sync_walks_flat_siblings() {
         "v1.1.0 must NOT create .grex/workspace/ — found one at {}",
         legacy_workspace.display(),
     );
-    let lockfile = layout.root.join(".grex.sync.lock");
+    // v1.3.2 B11: workspace lock now lives under `.grex/`.
+    let lockfile = layout.root.join(".grex").join(".grex.sync.lock");
     assert!(
         lockfile.exists(),
-        "workspace lock must live at <pack_root>/.grex.sync.lock; expected: {}",
+        "workspace lock must live at <pack_root>/.grex/.grex.sync.lock; expected: {}",
         lockfile.display(),
     );
 }

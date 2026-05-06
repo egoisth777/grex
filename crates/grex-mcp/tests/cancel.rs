@@ -15,7 +15,7 @@
 //!    verbs that return a `not_implemented` envelope synchronously) OR
 //!    a `-32800 RequestCancelled` error (if cancel won the race —
 //!    realistic for `sync` against a live pack). Both outcomes are
-//!    MCP-valid per `.omne/cfg/mcp.md` §Cancellation.
+//!    MCP-valid per `.omne/mcp.md` §Cancellation.
 //!
 //! 2. **`cancel_permit_released_under_budget`** — installs the
 //!    `block_until_cancelled` hook so a `sync` call parks indefinitely

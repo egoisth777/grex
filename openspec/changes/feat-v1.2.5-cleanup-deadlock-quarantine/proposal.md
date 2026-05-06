@@ -63,7 +63,7 @@ No public API removal. Two new doctor subcommand flags (`--prune-quarantine`, `-
 9. **Local gates clean:** `cargo fmt --all -- --check`, `cargo doc --no-deps --workspace -D warnings`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cd proof && lake build`, axiom-policy check (Bridge ≤ 12 if both new axioms needed; ≤ 11 if only one; ≤ 10 if neither).
 10. **CI gate.** `#print axioms` smoke check (added v1.2.4) extended to cover both new theorems. Drift fails CI.
 11. **Versioning.** Workspace version 1.2.4 → 1.2.5 in workspace `Cargo.toml`, `crates/xtask/Cargo.toml` path-dep pin, `crates/xtask/tests/version_test.rs` `EXPECTED_WORKSPACE_VERSION`. Man pages regenerated via `cargo xtask gen-man`.
-12. **Changelog/history.** `CHANGELOG.md [1.2.5]` entry + `.omne/cfg/history.md` v1.2.5 entry (separate SSOT repo per Rule 7).
+12. **Changelog/history.** `CHANGELOG.md [1.2.5]` entry + `.omne/history.md` v1.2.5 entry (separate SSOT repo per Rule 7).
 
 ## v1.3.0 readiness constraint (maintainer directive)
 

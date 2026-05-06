@@ -27,8 +27,8 @@ realising the pipeline).
 
 Source-of-truth links:
 * `openspec/feat-v1.2.1/spec.md` §5 — quarantine layout + ordering spec
-* `.omne/cfg/walker.md` — Phase 2 prune contract (force-prune + quarantine)
-* `.omne/cfg/concurrency.md` §Per-pack `PackLock` — quarantine runs under
+* `.omne/walker.md` — Phase 2 prune contract (force-prune + quarantine)
+* `.omne/concurrency.md` §Per-pack `PackLock` — quarantine runs under
   the per-pack lock (so single-writer to `.grex/events.jsonl`)
 
 ## Axioms introduced (v1.2.1 Item 5a)

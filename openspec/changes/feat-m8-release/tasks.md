@@ -65,7 +65,7 @@ Name audit first; everything else gates on its outcome.
 
 - [ ] 3.1 `cargo install mdbook` in a dev container / local env.
 - [ ] 3.2 Create `docs/book/book.toml` with `[book]` pointing `src = "../../.omne/cfg"` and `title = "grex"`.
-- [ ] 3.3 Add `.omne/cfg/SUMMARY.md` listing chapter order. Only net-new file under `.omne/cfg/`.
+- [ ] 3.3 Add `.omne/SUMMARY.md` listing chapter order. Only net-new file under `.omne/`.
 - [ ] 3.4 Run `mdbook build docs/book` locally; verify zero warnings and working internal links.
 - [ ] 3.5 Create `.github/workflows/docs.yml` — checkout, install mdbook, build, deploy via `actions/deploy-pages@v4` to `gh-pages` branch. Trigger: push to `main`.
 - [ ] 3.6 Enable GitHub Pages in repo settings: source = "GitHub Actions".
@@ -95,7 +95,7 @@ This stage spans two repos. Most work lives outside `grex` main.
 - [ ] 4.4 Commit `README.md` with (a) purpose statement, (b) `grex add https://github.com/grex-org/grex-pack-template` demo, (c) "How to fork this for your own pack" section.
 - [ ] 4.5 Commit `LICENSE-MIT`, `LICENSE-APACHE`, `LICENSE` (pointer) — copy from main grex repo.
 - [ ] 4.6 Commit `.gitignore` respecting the M6 managed-block contract.
-- [ ] 4.7 In **main grex repo**: add `.omne/cfg/pack-template.md` — narrative walkthrough chapter.
+- [ ] 4.7 In **main grex repo**: add `.omne/pack-template.md` — narrative walkthrough chapter.
 - [ ] 4.8 In **main grex repo**: append "Getting Started" section to `README.md` linking to the template repo, installer scripts (M8-1), and docs site (M8-3).
 - [ ] 4.9 Record the template repo's first-commit SHA in the main repo's `CHANGELOG.md` `[1.0.0]` entry for traceability.
 

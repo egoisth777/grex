@@ -46,7 +46,7 @@ Two PRs: this one (openspec only, no code) + the implementation PR that lands af
 - [x] 4c.1 [`grex-doc/src/concepts/pack-spec.md`](../../../grex-doc/src/concepts/pack-spec.md) — add explicit "children resolve as flat siblings of the parent pack root" sentence near the `children[].path` rule.
 - [x] 4c.2 [`grex-doc/src/guides/migration.md`](../../../grex-doc/src/guides/migration.md) — verify end-to-end after the refactor; no copy edits expected (it already describes the intended workflow).
 - [x] 4c.3 [`man/concepts/pack-spec.md`](../../../man/concepts/pack-spec.md) — mirror update for 4c.1.
-- [x] 4c.4 [`.omne/cfg/pack-spec.md`](../../../.omne/cfg/pack-spec.md) — mirror update for 4c.1.
+- [x] 4c.4 [`.omne/pack-spec.md`](../../../.omne/pack-spec.md) — mirror update for 4c.1.
 - [x] 4c.5 [`crates/grex/src/cli/args.rs`](../../../crates/grex/src/cli/args.rs) — `--workspace` help text drops `.grex/workspace` reference; new copy: "Override the workspace root. Defaults to the parent pack's root directory; children resolve as flat siblings."
 - [x] 4c.6 `cargo run -p xtask -- gen-man` to regenerate man pages reflecting the new help text.
 

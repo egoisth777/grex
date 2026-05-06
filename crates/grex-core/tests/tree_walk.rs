@@ -97,7 +97,13 @@ impl GitBackend for MockGitBackend {
         "mock-git"
     }
 
-    fn clone(&self, url: &str, dest: &Path, r#ref: Option<&str>) -> Result<ClonedRepo, GitError> {
+    fn clone(
+        &self,
+        url: &str,
+        dest: &Path,
+        r#ref: Option<&str>,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<ClonedRepo, GitError> {
         self.calls.lock().unwrap().push(BackendCall::Clone {
             url: url.to_string(),
             dest: dest.to_path_buf(),
@@ -109,12 +115,17 @@ impl GitBackend for MockGitBackend {
         Ok(ClonedRepo { path: dest.to_path_buf(), head_sha: "0".repeat(40) })
     }
 
-    fn fetch(&self, dest: &Path) -> Result<(), GitError> {
+    fn fetch(&self, dest: &Path, _lock_ctx: grex_core::BackendLockCtx<'_>) -> Result<(), GitError> {
         self.calls.lock().unwrap().push(BackendCall::Fetch { dest: dest.to_path_buf() });
         Ok(())
     }
 
-    fn checkout(&self, dest: &Path, r#ref: &str) -> Result<(), GitError> {
+    fn checkout(
+        &self,
+        dest: &Path,
+        r#ref: &str,
+        _lock_ctx: grex_core::BackendLockCtx<'_>,
+    ) -> Result<(), GitError> {
         self.calls
             .lock()
             .unwrap()
@@ -269,7 +280,10 @@ fn walker_rejects_parent_traversal_in_child_path_pre_clone() {
     match err {
         TreeError::ChildPathInvalid { path, reason, .. } => {
             assert_eq!(path, "../escape");
-            assert!(reason.contains("separator"), "reason: {reason}");
+            // v1.2.0: slash-paths accepted, but `..` segments still
+            // rejected. The diagnostic now leads with the dot-segment
+            // failure mode rather than the (now-relaxed) separator rule.
+            assert!(reason.contains(".."), "reason: {reason}");
         }
         other => panic!("wrong variant: {other:?}"),
     }

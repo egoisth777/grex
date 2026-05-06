@@ -495,6 +495,21 @@ mod tests {
         e
     }
 
+    /// Write a v1.1.x-shaped lockfile line carrying `synthetic: true` for
+    /// the given pack at `<meta_dir>/.grex/grex.lock.jsonl`. v1.3.2 W1
+    /// retired the writer side of the field (`write_meta_lockfile` always
+    /// strips it on emit), so the raw write is required to exercise the
+    /// preserved legacy `~`-glyph carryover path.
+    fn write_legacy_synthetic_lockfile(meta_dir: &Path, id: &str, path: &str) {
+        let dir = meta_dir.join(".grex");
+        fs::create_dir_all(&dir).unwrap();
+        let line = format!(
+            r#"{{"id":"{id}","path":"{path}","sha":"deadbeef","branch":"main","installed_at":"2026-04-29T10:00:00Z","actions_hash":"h","schema_version":"1","synthetic":true}}
+"#,
+        );
+        fs::write(dir.join("grex.lock.jsonl"), line).unwrap();
+    }
+
     /// AC: a v1.2.0 nested meta tree (root → meta-child → grandchild)
     /// renders every level. Each level's manifest is real (no on-disk
     /// synthesis), so the rendered tree exercises the recursive
@@ -559,8 +574,10 @@ mod tests {
             "schema_version: \"1\"\nname: legacy\ntype: scripted\n",
         )
         .unwrap();
-        // Legacy lockentry: synthetic=true.
-        write_meta_lockfile(root, &[entry_with_path("legacy", "legacy", true)]).unwrap();
+        // Legacy v1.1.x-shaped lockentry: synthetic=true. Writer strips
+        // the field on emit (W1), so seed the line raw to pin the
+        // carryover branch.
+        write_legacy_synthetic_lockfile(root, "legacy", "legacy");
 
         let tree = build_ls_tree(root).expect("root manifest loads");
         let child = &tree.tree[0].children[0];
@@ -615,8 +632,9 @@ mod tests {
             "schema_version: \"1\"\nname: root\ntype: meta\nchildren:\n  - url: file:///dev/null\n    path: alpha\n",
         )
         .unwrap();
-        // root lockfile: alpha is legacy synthetic.
-        write_meta_lockfile(root, &[entry_with_path("alpha", "alpha", true)]).unwrap();
+        // root lockfile: alpha is legacy synthetic (v1.1.x-shaped raw
+        // line, since the v1.3.2 writer strips the field on emit).
+        write_legacy_synthetic_lockfile(root, "alpha", "alpha");
 
         fs::create_dir_all(root.join("alpha/.grex")).unwrap();
         fs::write(

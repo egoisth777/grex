@@ -9,7 +9,7 @@ last_updated: 2026-05-02
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/walker.md` §"Cancellation token" (canonical algorithm reference) · `proof/Grex/Walker.lean` (Rule 8 obligation)
+**SSOT**: `.omne/walker.md` §"Cancellation token" (canonical algorithm reference) · `proof/Grex/Walker.lean` (Rule 8 obligation)
 
 ## Why
 
@@ -222,7 +222,7 @@ The proof reuses `acyclic_path` and `sync_meta_no_cycle_infinite_clone` as lemma
 **Changelog/history:**
 
 - `CHANGELOG.md` — append a new `[1.2.4] - 2026-05-XX` section. Update the `[Unreleased]` and tag-link footnotes.
-- `.omne/cfg/history.md` — append v1.2.4 entry (separate repo per Rule 7, ships through SSOT).
+- `.omne/history.md` — append v1.2.4 entry (separate repo per Rule 7, ships through SSOT).
 
 ## Acceptance criteria
 

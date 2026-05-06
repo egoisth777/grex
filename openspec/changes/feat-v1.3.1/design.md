@@ -11,7 +11,7 @@ depends_on: [feat-v1-3-1, dogfood-findings-v1-3-0, walker, lockfile, manifest, c
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/dogfood-findings-v1-3-0.md` (bug catalogue) · `.omne/cfg/walker.md` §"dry-run semantics" · `.omne/cfg/lockfile.md` §"branch field" · `.omne/cfg/manifest.md` §"events schema v2" · `.omne/cfg/cli.md` §"cwd default" · `.omne/cfg/doctor.md` §"advisory findings"
+**SSOT**: `.omne/dogfood-findings-v1-3-0.md` (bug catalogue) · `.omne/walker.md` §"dry-run semantics" · `.omne/lockfile.md` §"branch field" · `.omne/manifest.md` §"events schema v2" · `.omne/cli.md` §"cwd default" · `.omne/doctor.md` §"advisory findings"
 
 ## Why
 
@@ -25,7 +25,7 @@ Selection criteria for the 6:
 
 ## Architectural context
 
-**Bug origins** (from `.omne/cfg/dogfood-findings-v1-3-0.md`):
+**Bug origins** (from `.omne/dogfood-findings-v1-3-0.md`):
 - B2: `crates/grex/src/cli/verbs/sync.rs:42` — `--pack` arg defaults to `None`, errors out before checking cwd.
 - B4: `crates/grex-core/src/tree/walker.rs:Phase 3` — `ctx.dry_run` consulted only for top-level emit, not for child clone subprocess nor `.gitignore` mutation nor lockfile write.
 - B7: `crates/grex/src/cli/main.rs` tracing subscriber writes via default (`stdout`); `Op` enum lacks `Display`, so trace lines render `op=Discriminant(3)`.
@@ -33,7 +33,7 @@ Selection criteria for the 6:
 - B12: walker auto-writes `<parent>/.gitignore` to add the pack folder. Side-effect on parent repo, no consent.
 - B14: `LockEntry::from_resolved` writes `branch: String::new()` regardless of manifest `ref:` value.
 
-**Frozen contract status**: All 6 fixes are PATCH-additive per `.omne/cfg/freeze-v1.3.0.md`:
+**Frozen contract status**: All 6 fixes are PATCH-additive per `.omne/var/freeze-v1.3.0.md`:
 - B2: behavior addition (cwd default) — no existing invocation breaks.
 - B4: bug fix — dry-run was always documented as side-effect-free.
 - B7: bug fix — stdout pollution was never contractual.
@@ -77,7 +77,7 @@ Bundled because both touch `crates/grex-core/src/audit/events.rs`. Single worker
   - add new variant `Event::DryRunWouldClone { id, ref_, url }`.
 - `crates/grex-core/tests/walker_dry_run.rs` — new test. Asserts: dry_run=true → no clone subprocess invoked, no FS write under `<dest>/.git/`, no lockfile write, audit emits exactly N `DryRunWouldClone` events for N manifest children.
 - `crates/grex-core/tests/events_schema_v2.rs` — new test. Asserts: each emitted JSONL line has `schema_version:2`, `id` non-empty, `ref` non-empty for action_started/completed; `id` equals `Path::file_name(pack_dir)`.
-- `.omne/cfg/manifest.md` — SSOT update (separate repo; staged via `cd .omne/` first). Schema v2 spec.
+- `.omne/manifest.md` — SSOT update (separate repo; staged via `cd .omne/` first). Schema v2 spec.
 
 Walker gate sketch:
 ```rust
@@ -185,7 +185,7 @@ cavecrew-reviewer + code-reviewer parallel pass on full diff. Required findings:
 
 1. Public API surface drift = 0 (PATCH-additive). Compare exported symbols in `grex-core::lib.rs` and `grex-cli::lib.rs` pre/post.
 2. No `Co-Authored-By` in any commit message or PR body (rule 13).
-3. Frozen contract violations (per `.omne/cfg/freeze-v1.3.0.md`) = 0.
+3. Frozen contract violations (per `.omne/var/freeze-v1.3.0.md`) = 0.
 4. Worker desync: W2/W4 events.rs merge clean. W2/W5/W6 walker mutation gates aligned (all gated on same `if !dry_run`).
 5. Test coverage delta: each worker adds at least one new test file; cumulative 6+ new test files.
 6. clippy/rustfmt deltas: zero new lints.
@@ -219,8 +219,8 @@ Both must report identical: 8 pass / 7 fail. Pass set: `t_b01, t_b02, t_b04, t_b
 
 ## Open risks
 
-- **B12 removal**: operators relied on auto-add → migration note in `.omne/cfg/migration-v1.3.1.md`. Doctor advisory finding (W5) is the documented replacement path.
-- **B8 schema_version bump**: v1.2.x readers cannot consume v1.3.1 logs (acceptable per maintainer 2026-05-02). Migration note + reader-compat matrix in `.omne/cfg/manifest.md` schema v2 section.
+- **B12 removal**: operators relied on auto-add → migration note in `.omne/var/migration-v1.3.1.md`. Doctor advisory finding (W5) is the documented replacement path.
+- **B8 schema_version bump**: v1.2.x readers cannot consume v1.3.1 logs (acceptable per maintainer 2026-05-02). Migration note + reader-compat matrix in `.omne/manifest.md` schema v2 section.
 - **W2/W4 file-share**: enforced at dispatch — single bundle worker for `events.rs`. Reviewer check #4 catches any accidental split.
-- **B14 SHA-ref edge case**: `branch: <40-char-sha>` is technically not a branch name. Lockfile schema doc (`.omne/cfg/lockfile.md`) clarifies field semantics: "ref-as-recorded, may be branch / tag / sha".
+- **B14 SHA-ref edge case**: `branch: <40-char-sha>` is technically not a branch name. Lockfile schema doc (`.omne/lockfile.md`) clarifies field semantics: "ref-as-recorded, may be branch / tag / sha".
 - **Cargo.toml version bump race**: 4 crate manifests + Cargo.lock. Single worker owns version bump after parallel work merges; W1–W6 must NOT touch version fields.

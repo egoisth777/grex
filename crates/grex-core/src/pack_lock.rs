@@ -1,7 +1,7 @@
-//! Per-pack `.grex-lock` file lock — feat-m6-2.
+//! Per-pack `.grex-lock` file lock — feat-m6-2 (path moved under `.grex/` in v1.3.2 W2/B11).
 //!
-//! Acquires an exclusive `fd-lock` guard on `<pack_path>/.grex-lock` for the
-//! full duration of a pack-type plugin lifecycle method. Prevents two
+//! Acquires an exclusive `fd-lock` guard on `<pack_path>/.grex/.grex-lock` for
+//! the full duration of a pack-type plugin lifecycle method. Prevents two
 //! concurrent tasks (in-process) or processes (cross-process) from operating
 //! on the same pack at the same time.
 //!
@@ -9,10 +9,10 @@
 //!
 //! The spec fixes the global acquire order as:
 //!
-//! 1. workspace-sync lock (`<workspace>/.grex.sync.lock`)
+//! 1. workspace-sync lock (`<workspace>/.grex/.grex.sync.lock`)
 //! 2. scheduler semaphore permit (feat-m6-1)
-//! 3. **per-pack `.grex-lock`** — this module
-//! 4. per-repo backend lock (`<dest>.grex-backend.lock`)
+//! 3. **per-pack `.grex-lock`** — this module (`<pack_path>/.grex/.grex-lock`)
+//! 4. per-repo backend lock (`<parent_meta>/.grex/locks/<child-path>.backend.lock`)
 //! 5. manifest RW lock (`.grex/events.jsonl` sidecar)
 //!
 //! Plugins acquire tier 2 (permit) and tier 3 (pack lock) in that order
@@ -59,7 +59,7 @@ use fd_lock::{RwLock, RwLockWriteGuard};
 // thread_id)` tuples currently held. The set is consulted from rayon
 // worker threads inside `phase3_recurse` (walker.rs) at the entry of
 // every parallel-iter closure to assert the lock-acquisition order
-// documented in `.omne/cfg/concurrency.md` §"Five cooperating
+// documented in `.omne/concurrency.md` §"Five cooperating
 // mechanisms" — namely that a `PackLock` is never held by a thread
 // while that same thread enters a nested `pool.install` closure. The
 // v1.2.4 design used a `thread_local!` here, but rayon's work-stealing
@@ -134,7 +134,7 @@ fn register_held_lock(path: &Path) {
         "pool deadlock guard: attempted to acquire PackLock({}) while \
          inside a `pool.install` boundary — this risks the rayon \
          re-entrancy deadlock pinned by feat-v1.2.5 design.md §A3 \
-         (see .omne/cfg/concurrency.md §\"Five cooperating mechanisms\")",
+         (see .omne/concurrency.md §\"Five cooperating mechanisms\")",
         path.display()
     );
     let tid = std::thread::current().id();
@@ -221,9 +221,18 @@ pub(crate) fn unregister_pack_lock_for_test(path: &Path) {
     }
 }
 
-/// Stable name of the per-pack lock file created inside every pack root.
-/// Exported so the managed-gitignore writer can hide it from `git status`.
+/// Stable basename of the per-pack lock file. The file lives at
+/// `<pack_path>/.grex/.grex-lock` (the leading `.grex/` segment is enforced
+/// by [`PACK_LOCK_REL_PATH`]); this constant is the bare filename, kept
+/// public for backward-compatible diagnostics that match against
+/// `Path::file_name`.
 pub const PACK_LOCK_FILE_NAME: &str = ".grex-lock";
+
+/// Pack-relative location of the per-pack lock file:
+/// `<pack_path>/.grex/.grex-lock` (v1.3.2 B11 hard-cut from
+/// `<pack_path>/.grex-lock`). Joined to the pack root by [`PackLock::open`];
+/// the parent `.grex/` directory is auto-created on first acquire.
+pub const PACK_LOCK_REL_PATH: &str = ".grex/.grex-lock";
 
 /// Error surfaced by [`PackLock::open`], [`PackLock::acquire`], and
 /// [`PackLock::try_acquire`].
@@ -236,7 +245,7 @@ pub enum PackLockError {
     /// I/O error opening or locking the sidecar file.
     #[error("pack lock i/o on `{}`: {source}", path.display())]
     Io {
-        /// Resolved `<pack_path>/.grex-lock` path.
+        /// Resolved `<pack_path>/.grex/.grex-lock` path.
         path: PathBuf,
         /// Underlying OS error.
         #[source]
@@ -318,7 +327,7 @@ fn canonical_or_raw(path: &Path) -> PathBuf {
 /// Per-pack file lock wrapper.
 ///
 /// Construction via [`PackLock::open`] creates (or re-opens) the sidecar
-/// `<pack_path>/.grex-lock` but does **not** acquire the lock — call
+/// `<pack_path>/.grex/.grex-lock` but does **not** acquire the lock — call
 /// [`PackLock::acquire_async`] for the async-safe blocking path or
 /// [`PackLock::try_acquire`] for a fail-fast probe.
 ///
@@ -332,15 +341,15 @@ pub struct PackLock {
 }
 
 impl PackLock {
-    /// Open (and create if missing) the sidecar `<pack_path>/.grex-lock`.
+    /// Open (and create if missing) the sidecar `<pack_path>/.grex/.grex-lock`.
     /// Does **not** acquire the lock.
     ///
     /// # Errors
     ///
     /// Returns [`PackLockError::Io`] if the sidecar cannot be opened or
-    /// its parent directory cannot be created.
+    /// its parent directory (`<pack_path>/.grex/`) cannot be created.
     pub fn open(pack_path: &Path) -> Result<Self, PackLockError> {
-        let path = pack_path.join(PACK_LOCK_FILE_NAME);
+        let path = pack_path.join(PACK_LOCK_REL_PATH);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|source| PackLockError::Io { path: path.clone(), source })?;
@@ -491,7 +500,7 @@ impl PackLock {
     /// past the cancel point, until the syscall returns**. Callers
     /// that immediately re-attempt acquire on the same path may see
     /// transient contention until that thread drains. See
-    /// `.omne/cfg/mcp.md` §Cancellation.
+    /// `.omne/mcp.md` §Cancellation.
     ///
     /// # Errors
     ///
@@ -647,7 +656,7 @@ impl PackLock {
         }
     }
 
-    /// Sidecar path — `<pack_path>/.grex-lock`.
+    /// Sidecar path — `<pack_path>/.grex/.grex-lock`.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
@@ -737,19 +746,21 @@ impl Drop for PackLockHold {
 // Lock-ordering enforcement (debug builds).
 // ---------------------------------------------------------------------------
 
-/// Lock tier ordinals matching `.omne/cfg/concurrency.md`. Acquisitions
+/// Lock tier ordinals matching `.omne/concurrency.md`. Acquisitions
 /// must strictly increase; reversed order risks the deadlock class the
 /// feat-m6-3 Lean proof rules out.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// Workspace sync lock — `<workspace>/.grex.sync.lock`.
+    /// Workspace sync lock — `<workspace>/.grex/.grex.sync.lock`.
     WorkspaceSync = 0,
     /// Scheduler semaphore permit — feat-m6-1.
     Semaphore = 1,
-    /// Per-pack `.grex-lock` — feat-m6-2 (this module).
+    /// Per-pack `.grex-lock` — feat-m6-2 (this module). v1.3.2 B11: lives at
+    /// `<pack_path>/.grex/.grex-lock`.
     PerPack = 2,
-    /// Per-repo backend lock — `<dest>.grex-backend.lock`.
+    /// Per-repo backend lock — `<parent_meta>/.grex/locks/<child-path>.backend.lock`
+    /// (v1.3.2 B11: parent-owned, formerly sibling-of-dest).
     Backend = 3,
     /// Manifest RW lock — `.grex/events.jsonl` sidecar.
     Manifest = 4,
@@ -867,7 +878,7 @@ pub(crate) mod tier {
                 assert!(
                     next > top,
                     "lock tier violation: trying to acquire {next:?} while already holding {top:?} \
-                     (tiers must be strictly increasing — see .omne/cfg/concurrency.md)"
+                     (tiers must be strictly increasing — see .omne/concurrency.md)"
                 );
             }
             s.push(next);
@@ -912,7 +923,9 @@ mod tests {
         let expected = plock.path().to_path_buf();
         let _guard = plock.acquire().unwrap();
         assert!(expected.exists(), "open must create the sidecar file");
-        assert_eq!(expected, dir.path().join(PACK_LOCK_FILE_NAME));
+        assert_eq!(expected, dir.path().join(PACK_LOCK_REL_PATH));
+        // v1.3.2 B11: lock lives under `<pack>/.grex/`, not at `<pack>/`.
+        assert!(!dir.path().join(PACK_LOCK_FILE_NAME).exists(), "legacy bare path forbidden");
     }
 
     #[test]
@@ -924,7 +937,7 @@ mod tests {
         let err = second.try_acquire().unwrap_err();
         match err {
             PackLockError::Busy { path } => {
-                assert_eq!(path, dir.path().join(PACK_LOCK_FILE_NAME));
+                assert_eq!(path, dir.path().join(PACK_LOCK_REL_PATH));
             }
             other => panic!("expected Busy, got {other:?}"),
         }
@@ -947,7 +960,9 @@ mod tests {
         let plock = PackLock::open(dir.path()).unwrap();
         let p = plock.path();
         assert!(p.starts_with(dir.path()));
+        // Basename is `.grex-lock`, parent dir is `<pack>/.grex/`.
         assert_eq!(p.file_name().and_then(|s| s.to_str()), Some(PACK_LOCK_FILE_NAME));
+        assert_eq!(p.parent().and_then(|d| d.file_name()).and_then(|s| s.to_str()), Some(".grex"));
     }
 
     #[test]

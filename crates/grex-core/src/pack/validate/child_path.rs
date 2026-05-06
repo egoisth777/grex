@@ -1,10 +1,13 @@
-//! Bare-name validator for `children[].path`.
+//! Per-segment validator for `children[].path`.
 //!
-//! Per the pack-spec (`man/concepts/pack-spec.md` §"Validation rules"):
-//! `children[].path` must be a bare name — no path separators, no
-//! `.` / `..`, no empty string. The same regex as the pack `name` field
-//! is enforced: `^[a-z][a-z0-9-]*$` (letter-led, lowercase, hyphens
-//! allowed).
+//! Per the pack-spec §"Validation rules" + §"v1.2.0 declarative nested
+//! paths": `children[].path` MAY be a relative POSIX path with `/`
+//! separators (e.g. `tools/foo`, `courses/cpp/cpp-grammar`). Each
+//! segment must individually satisfy the same regex as the pack
+//! `name:` field — `^[a-z][a-z0-9-]*$` (letter-led, lowercase, digits
+//! and hyphens allowed). Absolute paths, `..` segments, empty segments
+//! (consecutive `/`), trailing `/`, and Windows-style `\` separators
+//! remain rejected.
 //!
 //! # Why enforce now
 //!
@@ -141,11 +144,19 @@ impl Validator for DupChildPathValidator {
 }
 
 /// Reject `path` with a one-line reason string when it violates the
-/// bare-name rule. Returns `None` when the path is acceptable.
+/// per-segment bare-name rule. Returns `None` when the path is
+/// acceptable.
 ///
 /// Exposed at `pub(crate)` so the tree walker can run the same
 /// rejection logic before any clone fires (closing the path-traversal
 /// window between manifest load and `walker.resolve_destination`).
+///
+/// v1.2.0 §"declarative nested paths": `child.path:` MAY be a relative
+/// path with `/` separators (e.g. `tools/foo`, `courses/cpp/cpp-grammar`).
+/// Each segment must individually satisfy the bare-name regex
+/// `^[a-z][a-z0-9-]*$`. Absolute paths, `..` segments, empty segments
+/// (consecutive `/`), trailing `/`, and Windows-style `\` separators
+/// remain rejected.
 ///
 /// Order matters for the message — the most specific failure mode wins
 /// so authors get a useful diagnostic instead of "regex did not match".
@@ -153,16 +164,27 @@ pub(crate) fn reject_reason(path: &str) -> Option<&'static str> {
     if path.is_empty() {
         return Some("empty string is not a valid child path");
     }
-    if path.contains('/') || path.contains('\\') {
-        return Some("path separators are not allowed (children[].path must be a bare name)");
+    if path.contains('\\') {
+        return Some("path must use POSIX `/` separator (no `\\`)");
     }
-    if path == "." || path == ".." {
-        return Some("`.` and `..` are not allowed (children[].path must be a bare name)");
+    if path.starts_with('/') {
+        return Some("absolute paths are not allowed (children[].path must be parent-relative)");
     }
-    if !matches_bare_name_regex(path) {
-        return Some(
-            "must match `^[a-z][a-z0-9-]*$` (letter-led, lowercase, digits and hyphens allowed)",
-        );
+    if path.ends_with('/') {
+        return Some("trailing `/` is not allowed in children[].path");
+    }
+    for segment in path.split('/') {
+        if segment.is_empty() {
+            return Some("empty segment (consecutive `/`) is not allowed in children[].path");
+        }
+        if segment == "." || segment == ".." {
+            return Some("`.` and `..` segments are not allowed in children[].path");
+        }
+        if !matches_bare_name_regex(segment) {
+            return Some(
+                "each segment must match `^[a-z][a-z0-9-]*$` (letter-led, lowercase, digits and hyphens allowed)",
+            );
+        }
     }
     None
 }
@@ -221,30 +243,38 @@ const WINDOWS_RESERVED: &[&str] = &[
 /// gate and exercised directly by this module's tests.
 #[must_use]
 pub(crate) fn boundary_reject_reason(path: &str) -> Option<&'static str> {
-    // 1. Colon — Windows drive separator (`C:`) and ADS marker
-    //    (`name:stream`). Either form opens the boundary.
-    if path.contains(':') {
+    // v1.2.0: per-segment evaluation. A slash-bearing `child.path:`
+    // (e.g. `tools/foo`) must reject when ANY segment trips a boundary
+    // hazard — `con/foo` is just as dangerous as bare `con` since the
+    // `tools/con` segment still resolves through the Win32 device
+    // namespace. Path-level checks (colon, dollar) also apply per
+    // segment so a literal `/` separator between two clean segments is
+    // not misread as a colon/dollar hazard.
+    for segment in path.split('/') {
+        if let Some(reason) = boundary_reject_segment(segment) {
+            return Some(reason);
+        }
+    }
+    None
+}
+
+/// Per-segment boundary-preservation reject. Mirrors the four hazards
+/// historically applied at path level — colon (Windows drive / ADS),
+/// dollar (env-var interpolation), tilde-digit (8.3 short-name), and
+/// Win32 reserved device names — but scoped to a single path component
+/// so multi-segment slash paths are checked correctly.
+#[must_use]
+fn boundary_reject_segment(segment: &str) -> Option<&'static str> {
+    if segment.contains(':') {
         return Some("colon `:` is not allowed in a child path (Windows drive / ADS hazard)");
     }
-    // 2. Dollar — env-var-style interpolation hazard. Forbidden so a
-    //    later release can introduce expansion without re-relaxing the
-    //    schema.
-    if path.contains('$') {
+    if segment.contains('$') {
         return Some("dollar `$` is not allowed in a child path (env-var interpolation hazard)");
     }
-    // 3. Tilde-digit — Windows 8.3 short-name pattern (`FOO~1.TXT`).
-    //    Two distinct long names can collapse onto the same short
-    //    alias, so any `~<digit>` segment is rejected. Tilde NOT
-    //    followed by a digit is left to the bare-name regex (which
-    //    rejects it anyway today; a future regex relaxation that
-    //    permits `~` would still need to forbid the `~\d` class).
-    if has_tilde_digit_pattern(path) {
+    if has_tilde_digit_pattern(segment) {
         return Some("tilde-digit (`~1`/`~9`/...) is not allowed (Windows short-name hazard)");
     }
-    // 4. Windows reserved device names — case-insensitive, with or
-    //    without an extension. The stem (everything before the first
-    //    `.`) is compared.
-    if is_windows_reserved_name(path) {
+    if is_windows_reserved_name(segment) {
         return Some(
             "child path is a Windows reserved device name (CON/PRN/AUX/NUL/COM1-9/LPT1-9)",
         );
@@ -433,12 +463,19 @@ mod tests {
     /// signal.
     #[test]
     fn rejection_table() {
+        // v1.2.0: slash-separated paths are accepted (per-segment
+        // bare-name validation). The cases below cover the rejection
+        // modes that survive the v1.2.0 relaxation: empty / backslash /
+        // absolute / trailing slash / empty segment / `.` / `..` /
+        // charset / letter-led.
         let cases: &[(&str, &str)] = &[
             ("", "empty"),
-            ("foo/bar", "separator"),
-            ("foo\\bar", "separator"),
-            ("/abs", "separator"),
-            ("../escape", "separator"),
+            ("foo\\bar", "POSIX"),
+            ("/abs", "absolute"),
+            ("tools/", "trailing"),
+            ("tools//foo", "empty segment"),
+            ("../escape", "`.` and `..`"),
+            ("tools/..", "`.` and `..`"),
             (".", "`.` and `..`"),
             ("..", "`.` and `..`"),
             ("Foo", "`^[a-z]"),
@@ -462,7 +499,18 @@ mod tests {
 
     #[test]
     fn accept_table() {
-        for ok in ["foo", "a", "algo-leet", "foo-bar", "foo123", "a1-b2"] {
+        // Bare names + v1.2.0 slash-separated nested paths.
+        for ok in [
+            "foo",
+            "a",
+            "algo-leet",
+            "foo-bar",
+            "foo123",
+            "a1-b2",
+            "tools/foo",
+            "courses/cpp/cpp-grammar",
+            "vendor/sub/lib",
+        ] {
             assert!(validate_path(ok).is_empty(), "input {ok:?} should accept");
         }
     }
@@ -520,10 +568,13 @@ mod tests {
 
     #[test]
     fn aggregates_errors_across_multiple_children() {
+        // v1.2.0: `foo/bar` is now ACCEPTED (per-segment validation).
+        // The aggregator still surfaces every other rejection
+        // independently — `..` and `ALSO-BAD` are bad, `good` and
+        // `foo/bar` are fine.
         let pack = pack_with_child_paths(&["good", "foo/bar", "..", "ALSO-BAD"]);
         let errs = ChildPathValidator.check(&pack);
-        // 3 bad: "foo/bar", "..", "ALSO-BAD". "good" is fine.
-        assert_eq!(errs.len(), 3, "errs: {errs:?}");
+        assert_eq!(errs.len(), 2, "errs: {errs:?}");
     }
 
     // ---- DupChildPathValidator ----

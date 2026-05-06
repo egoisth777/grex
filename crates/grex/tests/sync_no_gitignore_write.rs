@@ -52,9 +52,9 @@ fn options(workspace: PathBuf) -> SyncOptions {
 
 /// Build a fixture: a single declarative pack with `x-gitignore:` —
 /// pre-v1.3.1 this would have caused `grex sync` to APPEND a managed
-/// block to `<workspace>/.gitignore` containing `.grex-lock` plus the
-/// authored patterns. Under v1.3.1 the file must be byte-equal
-/// pre-and-post sync.
+/// block to `<workspace>/.gitignore` containing `.grex/` (v1.3.2 B11
+/// changed the default from `.grex-lock`) plus the authored patterns.
+/// Under v1.3.1+ the file must be byte-equal pre-and-post sync.
 struct Fixture {
     _tmp: TempDir,
     root: PathBuf,

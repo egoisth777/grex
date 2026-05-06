@@ -6,7 +6,7 @@
 
 ## Motivation
 
-grex's concurrency story rests on a single invariant (`.omne/cfg/concurrency.md` §Lean4 invariant):
+grex's concurrency story rests on a single invariant (`.omne/concurrency.md` §Lean4 invariant):
 
 > **I1**: for any two concurrent tasks `t1`, `t2` scheduled by `Scheduler`, if `t1.pack_path == t2.pack_path`, their lock-holding windows do NOT overlap in time.
 
@@ -19,7 +19,7 @@ This matches `openspec/feat-grex/spec.md` success criterion #7 ("Lean4 proof com
 1. Scaffold a Lean4 project at `lean/` (repo root, parallel to `crates/`).
 2. Formalize the 5-tier lock hierarchy as an abstract state machine.
 3. State and prove `theorem no_double_lock` with zero holes.
-4. Wire `lake build` into CI (Linux-only job acceptable per `.omne/cfg/test-plan.md` §Lean4 proof verification).
+4. Wire `lake build` into CI (Linux-only job acceptable per `.omne/test-plan.md` §Lean4 proof verification).
 
 ## Design
 
@@ -42,7 +42,7 @@ lean/
 
 ### State machine model
 
-Mirrors the sketch in `.omne/cfg/concurrency.md` §Lean4 invariant with the following refinements:
+Mirrors the sketch in `.omne/concurrency.md` §Lean4 invariant with the following refinements:
 
 ```lean
 namespace Grex.Scheduler
@@ -133,7 +133,7 @@ theorem no_deadlock (t : Task) :
   sorry_free_nat_trichotomy_proof
 ```
 
-Concrete proof text lives in the Lean file; spec documents the shape + intent. The two axioms (`runtime_respects_ordering`, `pack_lock_exclusive`) are the **only** permitted non-theorems in deliverable scope; both are listed in `.omne/cfg/concurrency.md` §Lean4 invariant as model-bridge axioms (v1 acceptable; v2 promotes `pack_lock_exclusive` to a theorem by modelling `fd-lock` FIFO queue semantics in Lean).
+Concrete proof text lives in the Lean file; spec documents the shape + intent. The two axioms (`runtime_respects_ordering`, `pack_lock_exclusive`) are the **only** permitted non-theorems in deliverable scope; both are listed in `.omne/concurrency.md` §Lean4 invariant as model-bridge axioms (v1 acceptable; v2 promotes `pack_lock_exclusive` to a theorem by modelling `fd-lock` FIFO queue semantics in Lean).
 
 ### CI wiring
 
@@ -151,7 +151,7 @@ lean-proof:
     - run: cd lean && lake build
 ```
 
-Linux-only is acceptable per `.omne/cfg/test-plan.md` §Lean4 proof verification — Lean's `.olean` is platform-agnostic; one successful build proves the invariant everywhere.
+Linux-only is acceptable per `.omne/test-plan.md` §Lean4 proof verification — Lean's `.olean` is platform-agnostic; one successful build proves the invariant everywhere.
 
 Job is **required** on `main` branch protection (update branch-protection config in the PR that merges this change).
 
@@ -165,7 +165,7 @@ Job is **required** on `main` branch protection (update branch-protection config
 | `lean/Grex/Scheduler.lean` | New — state machine, axioms, theorems. |
 | `.github/workflows/ci.yml` | Add `lean-proof` job (ubuntu-latest only). |
 | `.gitignore` | `lean/.lake/` + `lean/build/` added to managed ignore. |
-| `.omne/cfg/concurrency.md` | No change — this change implements existing spec. |
+| `.omne/concurrency.md` | No change — this change implements existing spec. |
 
 ## Test plan
 
@@ -187,7 +187,7 @@ Lean's type checker IS the test. The proof either compiles or doesn't. Beyond th
 ### Negative / regression
 
 - PR that adds a new `sorry` anywhere in `lean/Grex/` fails CI. Achieved naturally by `-Dlinter.sorry=true` (Lean default) — `lake build` rejects.
-- Docs note: if a future change legitimately needs an axiom for a new bridge (e.g. modelling tokio's runtime), it must be added here with justification in `.omne/cfg/concurrency.md`.
+- Docs note: if a future change legitimately needs an axiom for a new bridge (e.g. modelling tokio's runtime), it must be added here with justification in `.omne/concurrency.md`.
 
 ### Local validation
 
@@ -196,11 +196,11 @@ Lean's type checker IS the test. The proof either compiles or doesn't. Beyond th
 
 ## Non-goals
 
-- **No proof of I2, I3, I4, I5** from `.omne/cfg/architecture.md` — explicit v2 backlog per `.omne/cfg/concurrency.md` §Deferred.
+- **No proof of I2, I3, I4, I5** from `.omne/architecture.md` — explicit v2 backlog per `.omne/concurrency.md` §Deferred.
 - **No mathlib dependency.**
-- **No Lean4-on-Windows/macOS CI.** Linux-only per `.omne/cfg/test-plan.md`.
+- **No Lean4-on-Windows/macOS CI.** Linux-only per `.omne/test-plan.md`.
 - **No binding of Lean proof artefact into the `grex` binary.** The proof is a build-time artefact, not a runtime component.
-- **No promotion of `pack_lock_exclusive` from axiom to theorem** — that requires modelling `fd-lock` FIFO semantics and is deferred to v2 (stated in `.omne/cfg/concurrency.md` §Lean4 invariant final paragraph).
+- **No promotion of `pack_lock_exclusive` from axiom to theorem** — that requires modelling `fd-lock` FIFO semantics and is deferred to v2 (stated in `.omne/concurrency.md` §Lean4 invariant final paragraph).
 - **No benchmark of proof-compilation time.** As long as < 30 s we accept.
 
 ## Dependencies
@@ -213,15 +213,15 @@ Lean's type checker IS the test. The proof either compiles or doesn't. Beyond th
 
 1. `cd lean && lake build` exits 0 locally and in CI (ubuntu-latest).
 2. `lean/Grex/Scheduler.lean` contains `theorem no_double_lock : ... := by ...` with zero `sorry` / zero `admit` in its body.
-3. Exactly 2 `axiom` declarations in the file; both justified in-file doc-comments pointing to `.omne/cfg/concurrency.md`.
+3. Exactly 2 `axiom` declarations in the file; both justified in-file doc-comments pointing to `.omne/concurrency.md`.
 4. Corollary `theorem no_deadlock` also compiles, hole-free.
 5. `.github/workflows/ci.yml` has a `lean-proof` job; PR green.
 6. No regression on Rust side (feat-m6-1 + feat-m6-2 acceptance invariants still hold).
 
 ## Source-of-truth links
 
-- [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) §Lean4 invariant — primary spec, includes the Lean sketch reused here.
-- [`.omne/cfg/test-plan.md`](../../../.omne/cfg/test-plan.md) §Lean4 proof verification — CI gate specification.
-- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §Runtime invariants I1 — identifies this proof as the v1 formal invariant.
+- [`.omne/concurrency.md`](../../../.omne/concurrency.md) §Lean4 invariant — primary spec, includes the Lean sketch reused here.
+- [`.omne/test-plan.md`](../../../.omne/test-plan.md) §Lean4 proof verification — CI gate specification.
+- [`.omne/architecture.md`](../../../.omne/architecture.md) §Runtime invariants I1 — identifies this proof as the v1 formal invariant.
 - [`milestone.md`](../../../milestone.md) §M6 — "Lean4 project under `lean/`, theorem `Grex.Scheduler.no_double_lock`."
 - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #7 — zero-`sorry` / zero-unresolved-`axiom` contract.

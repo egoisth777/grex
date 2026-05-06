@@ -281,7 +281,15 @@ fn pack_identity_for_child(child: &ChildRef) -> String {
 }
 
 fn verify_child_name(got: &str, child: &ChildRef, dest: &Path) -> Result<(), TreeError> {
-    let expected = child.effective_path();
+    // v1.2.0: slash-separated `child.path:` mounts the pack at a
+    // multi-segment slot, but the pack itself only owns the LAST
+    // segment as its on-disk home. Compare against that last segment
+    // so manifests authored as `name: foo` (mounted at `tools/foo`)
+    // pass — the full slash-path can never satisfy the bare-name
+    // regex. Mirrors `super::walker::verify_child_name` for read-pass
+    // / write-pass parity.
+    let effective = child.effective_path();
+    let expected = effective.rsplit('/').next().unwrap_or(&effective).to_string();
     if got == expected {
         return Ok(());
     }
@@ -297,9 +305,14 @@ fn find_node_id_by_name_or_url(nodes: &[PackNode], dep: &str) -> Option<usize> {
 }
 
 fn synthesize_plain_git_manifest(child: &ChildRef) -> PackManifest {
+    // v1.2.0: name equals the LAST segment of the slash-path mount
+    // point so the synthesised manifest satisfies the pack-name regex.
+    // Mirrors `super::walker::synthesize_plain_git_manifest`.
+    let effective = child.effective_path();
+    let name = effective.rsplit('/').next().unwrap_or(&effective).to_string();
     PackManifest {
         schema_version: SchemaVersion::current(),
-        name: child.effective_path(),
+        name,
         r#type: PackType::Scripted,
         version: None,
         depends_on: Vec::new(),

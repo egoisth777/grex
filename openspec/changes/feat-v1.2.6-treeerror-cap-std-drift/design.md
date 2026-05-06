@@ -9,7 +9,7 @@ last_updated: 2026-05-02
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/walker.md` §"TOCTOU mitigation" (canonical cap-std contract) · `.omne/cfg/manifest.md` (target of the doc rewrite) · `.omne/cfg/toctou.md` (cap-std vs openat2 boundary doc) · `proof/Grex/Walker.lean` (Rule 8 obligation for cap-std hardening)
+**SSOT**: `.omne/walker.md` §"TOCTOU mitigation" (canonical cap-std contract) · `.omne/manifest.md` (target of the doc rewrite) · `.omne/toctou.md` (cap-std vs openat2 boundary doc) · `proof/Grex/Walker.lean` (Rule 8 obligation for cap-std hardening)
 
 ## Why
 
@@ -35,7 +35,7 @@ Each item is small and partitions across parallel workers without write-set conf
 
 cap-std crate provides `Dir` (a directory capability — opaque file descriptor on POSIX, `HANDLE` on Windows) with methods that operate relative to the held handle: `Dir::open`, `Dir::read_dir`, `Dir::remove_dir_all`, etc. Path resolution is bounded by the root the `Dir` was opened from; `..` segments that would escape return `std::io::ErrorKind::PermissionDenied`. Already a workspace dep (`Cargo.toml` per crates/grex-core/Cargo.toml mention in walker.md §326). v1.2.6 threads the meta-root `Dir` handle through the recursion instead of stopping at the boundary check.
 
-**`.omne/cfg/manifest.md`** is the canonical events.jsonl + grex.lock.jsonl schema doc. Drift sources documented in proposal §"Why now".
+**`.omne/manifest.md`** is the canonical events.jsonl + grex.lock.jsonl schema doc. Drift sources documented in proposal §"Why now".
 
 ## TreeError variant split algorithm
 
@@ -298,7 +298,7 @@ Target ZERO new axioms. Conservative budget:
 
 **Doc / SSOT (separate repo per Rule 7):**
 
-- `.omne/cfg/manifest.md` — rewrite per §"Stale manifest.md rewrite" above.
+- `.omne/manifest.md` — rewrite per §"Stale manifest.md rewrite" above.
 
 **Repo hygiene:**
 
@@ -324,7 +324,7 @@ Target ZERO new axioms. Conservative budget:
 **Changelog/history:**
 
 - `CHANGELOG.md` — append `[1.2.6] - 2026-05-XX` section.
-- `.omne/cfg/history.md` — append v1.2.6 entry (separate repo per Rule 7).
+- `.omne/history.md` — append v1.2.6 entry (separate repo per Rule 7).
 
 ## Acceptance criteria
 
@@ -384,7 +384,7 @@ Target ZERO new axioms. Conservative budget:
 
 - No public API change. New TreeError variants are additive under
   `#[non_exhaustive]`. cap-std migration is implementation-internal.
-- `.omne/cfg/manifest.md` rewritten in the SSOT repo (separate from grex
+- `.omne/manifest.md` rewritten in the SSOT repo (separate from grex
   per Rule 7) — events catalog now lists v1.0.x action-bracket events
   + v1.2.x quarantine events; lockfile schema clarifies `commit_sha`
   semantics.

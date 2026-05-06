@@ -49,8 +49,28 @@ pub struct LockEntry {
     /// pre-v1.1.1 lockfiles forward-compatible — a missing field
     /// deserialises to `false`. See
     /// `openspec/changes/feat-v1.1.1-plain-git-children/design.md`.
-    #[serde(default)]
+    ///
+    /// **v1.3.2 retirement (W1):** the field is no longer emitted by the
+    /// writer (`skip_serializing_if = "skip_synthetic_always"` always
+    /// skips). v1.1.x lockfiles that still carry `synthetic: true`
+    /// continue to deserialise via `#[serde(default)]`, so legacy
+    /// readers (doctor's `check_synthetic_packs`, ls's `~` glyph) keep
+    /// working until Phase 2c retires them. Fresh on-disk lockfiles
+    /// produced by v1.3.2+ contain no `synthetic` key for any entry.
+    /// See `pack-spec.md §v1.2.0` (sync-time auto-synthesis retired).
+    #[serde(default, skip_serializing_if = "skip_synthetic_always")]
     pub synthetic: bool,
+}
+
+/// Always-skip predicate for the v1.3.2-retired `LockEntry.synthetic`
+/// field. Returning `true` unconditionally tells `serde` to omit the
+/// field from every serialized entry, regardless of in-memory state.
+/// The field is preserved in the struct so legacy v1.1.x lockfile
+/// reads (which may carry `synthetic: true`) still deserialise cleanly
+/// via `#[serde(default)]`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn skip_synthetic_always(_: &bool) -> bool {
+    true
 }
 
 /// Wire-format shadow used solely for deserialization. Carries `path`

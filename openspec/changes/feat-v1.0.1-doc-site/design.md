@@ -7,19 +7,19 @@
 
 Two competing reservations:
 
-- `docs/` — by org convention reserved for *agent-readable* project descriptions (the spec-style `.omne/cfg/`-adjacent material).
+- `docs/` — by org convention reserved for *agent-readable* project descriptions (the spec-style `.omne/`-adjacent material).
 - `man/` — already the home of generated `*.1` man pages (one per CLI verb).
 
 Both are "documentation"; only the audience differs. The chosen split:
 
 | Directory | Audience | Content |
 |---|---|---|
-| `.omne/cfg/` | LLM agents | Source-of-truth design docs (manifest, MCP, CLI, etc.) |
+| `.omne/` | LLM agents | Source-of-truth design docs (manifest, MCP, CLI, etc.) |
 | `man/` | Humans (CLI users + reading the doc site) | Auto-generated `*.1` + authored markdown reference |
 | `grex-doc/` | Humans (web readers) | Built artefact: mdBook site sourced from `man/` |
 | `docs/` | — (deleted) | n/a |
 
-`docs/` overloaded both roles before this PR. Deleting it removes the conflation; `.omne/cfg/` remains the agent-readable source of truth, `man/` becomes the single human-readable home, and `grex-doc/` is purely a build artefact directory pointing at `man/`.
+`docs/` overloaded both roles before this PR. Deleting it removes the conflation; `.omne/` remains the agent-readable source of truth, `man/` becomes the single human-readable home, and `grex-doc/` is purely a build artefact directory pointing at `man/`.
 
 ## Decision: man/ subfolder layout
 

@@ -1,6 +1,8 @@
 //! feat-m6-2 — `.grex-lock` was historically added to every pack's
 //! managed gitignore block on install so the sidecar file never
-//! appeared in `git status`.
+//! appeared in `git status`. v1.3.2 (B11) — replaced the standalone
+//! `.grex-lock` entry with `.grex/` (single trailing-slash directory
+//! pattern) since the per-pack lock now lives at `<pack>/.grex/.grex-lock`.
 //!
 //! v1.3.1 (B12) — auto-mutation REMOVED. `grex sync` (and the
 //! per-lifecycle plugin install/update/teardown/sync) no longer write
@@ -28,14 +30,16 @@ fn read_gitignore(root: &Path) -> Option<String> {
 
 /// The default-managed-pattern accessor is still public surface for
 /// `grex doctor --fix` (which IS allowed to upsert managed blocks on
-/// operator request). Keep the assertion that `.grex-lock` is in the
-/// list so doctor's heal path stays correct.
+/// operator request). v1.3.2 (B11) — defaults now contain `.grex/`
+/// (single directory entry covering all sidecar artifacts under
+/// `<pack>/.grex/`); the standalone `.grex-lock` entry was retired
+/// because the lock moved under `.grex/`.
 #[test]
-fn default_patterns_includes_grex_lock() {
+fn default_patterns_includes_grex_dir() {
     let patterns = default_managed_gitignore_patterns();
     assert!(
-        patterns.contains(&".grex-lock"),
-        "managed block defaults must include `.grex-lock`: {patterns:?}"
+        patterns.contains(&".grex/"),
+        "managed block defaults must include `.grex/`: {patterns:?}"
     );
 }
 

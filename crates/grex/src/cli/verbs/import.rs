@@ -50,8 +50,8 @@ fn emit_human(plan: &ImportPlan, dry_run: bool) {
     }
     for skip in &plan.skipped {
         let reason = match skip.reason {
-            SkipReason::PathCollision => "path-collision",
-            SkipReason::DuplicateInInput => "duplicate-in-input",
+            SkipReason::PathCollision => "path_collision",
+            SkipReason::DuplicateInInput => "duplicate_in_input",
         };
         eprintln!("skip {:<32} {}", skip.path, reason);
     }

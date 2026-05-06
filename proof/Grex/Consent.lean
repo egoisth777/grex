@@ -15,7 +15,7 @@ skeleton compiles while Stage 1.f lands the actual `recursive_consent_walk`
 discharge in commit D3.
 
 Source-of-truth links:
-* `.omne/cfg/walker.md` §Phase 2 — prune safety + recursive consent
+* `.omne/walker.md` §Phase 2 — prune safety + recursive consent
 * `progress.md` — Stage 1.f (`prune_only_on_clean_consent`) discharge
 -/
 

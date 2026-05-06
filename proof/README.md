@@ -4,7 +4,7 @@ This directory contains the Lean4 formalisation of grex's core concurrency
 invariant **I1 (no double lock)**: no two distinct concurrent tasks
 simultaneously hold the per-pack lock on the same pack path.
 
-See [`.omne/cfg/concurrency.md`](../.omne/cfg/concurrency.md) §Lean4
+See [`.omne/concurrency.md`](../.omne/concurrency.md) §Lean4
 invariant for the primary specification.
 
 ## Layout
@@ -73,7 +73,7 @@ Both theorems compile with zero `sorry` / zero `admit`.
 Do NOT add axioms without updating both:
 
 1. This README (axiom justification section).
-2. [`.omne/cfg/concurrency.md`](../.omne/cfg/concurrency.md) §Lean4
+2. [`.omne/concurrency.md`](../.omne/concurrency.md) §Lean4
    invariant — source-of-truth spec.
 
 The CI job enforces `lake build` success; it does not count axioms. Axiom

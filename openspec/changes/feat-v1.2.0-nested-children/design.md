@@ -105,7 +105,7 @@ Each is a theorem in `proof/Grex/Walker.lean` under `namespace Grex.Walker` (`la
 
 Bridge axioms (9) live in `proof/Grex/Bridge.lean` and link Lean's abstract `Path`/`Manifest`/`LockEntry` to the Rust types. Documented in `.omne/proof/impl-axiom-bridge.md` (SSOT, separate repo).
 
-## Algorithm (lifted from `.omne/cfg/walker.md`)
+## Algorithm (lifted from `.omne/walker.md`)
 
 Phase-structured walker, parent-relative. Pseudocode:
 

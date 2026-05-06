@@ -16,7 +16,7 @@
 
 - [ ] 2.1 Implement `common::new_duplex_server()` — pairs `tokio::io::duplex(4096)`, spawns server via `rmcp` `transport-io` framer on one half, returns client half.
 - [ ] 2.2 Implement `common::Client` with `initialize`, `notify`, `call`, `shutdown` methods (thin JSON-RPC line writer/reader).
-- [ ] 2.3 Make all 5 handshake tests pass. Error-code assertions reference `.omne/cfg/mcp.md` §Error codes — `-32002` / `data.kind = "init_state"` for init-state violations.
+- [ ] 2.3 Make all 5 handshake tests pass. Error-code assertions reference `.omne/mcp.md` §Error codes — `-32002` / `data.kind = "init_state"` for init-state violations.
 - [ ] 2.4 Commit: `feat(m7-2): L2 handshake green — duplex E2E harness`.
 - [ ] 2.5 **Verify**: `cargo test -p grex-mcp --test handshake` — 5 passes, 0 failures.
 

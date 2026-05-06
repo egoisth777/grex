@@ -31,7 +31,7 @@
 - [ ] Write `crates/grex/tests/doctor_cli.rs` — 4 baseline integration tests: `doctor_clean_workspace_exits_zero_and_prints_ok_rows` (3-row default table), `doctor_lint_config_flag_adds_config_row` (opt-in 4th row), `doctor_warn_drift_exits_one`, `doctor_err_missing_pack_exits_two` (all fail).
 - [ ] Replace `crates/grex/src/cli/verbs/doctor.rs` stub with real wrapper; render `DoctorReport` (3-row default table + optional 4th `ConfigLint` row under `--lint-config` + `--json`); map severity to process exit code.
 - [ ] Wire `Doctor` subcommand args in `crates/grex/src/cli/args.rs` (`--fix`, `--lint-config`, `--json`).
-- [ ] Default run (no `--lint-config`) MUST NOT touch `.omne/cfg/` or `openspec/config.yaml` — the config-lint check function is simply not invoked.
+- [ ] Default run (no `--lint-config`) MUST NOT touch `.omne/` or `openspec/config.yaml` — the config-lint check function is simply not invoked.
 - [ ] Verify 4 integration tests pass.
 
 ## Stage 5 — `grex doctor --fix` auto-heal

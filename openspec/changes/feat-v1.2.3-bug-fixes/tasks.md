@@ -2,7 +2,7 @@
 
 **Status**: draft
 **Spec**: [`proposal.md`](./proposal.md) · [`design.md`](./design.md)
-**SSOT**: `.omne/cfg/walker.md` §"Cycle detection" · `proof/Grex/Walker.lean`
+**SSOT**: `.omne/walker.md` §"Cycle detection" · `proof/Grex/Walker.lean`
 **Branch**: `feat/v1.2.3` (cut from `main @ 92ec7fd`, post-v1.2.2 ship)
 **Order of operations** (Rule 8 hard gate): Lean theorem extension proved BEFORE any Rust impl change.
 
@@ -80,7 +80,7 @@ This stage MUST complete before any Rust file is modified.
 
 - [ ] 2h.1 Promote the existing `[1.2.2] - pending` section in `CHANGELOG.md` to its actual release date (verify against `git log --oneline | grep v1.2.2`). Prepend a new `[1.2.3] - 2026-05-XX` section using the migration note from [`design.md`](./design.md) §"Migration note for changelog".
 - [ ] 2h.2 Update the `[Unreleased]` and `[1.2.3]` link footnotes at the bottom of CHANGELOG.md.
-- [ ] 2h.3 Append the equivalent v1.2.3 entry to SSOT `.omne/cfg/history.md` — note this commits to the SSOT repo separately (Rule 7), NOT to grex's git history.
+- [ ] 2h.3 Append the equivalent v1.2.3 entry to SSOT `.omne/history.md` — note this commits to the SSOT repo separately (Rule 7), NOT to grex's git history.
 
 ### 2i — local gates
 
@@ -111,4 +111,4 @@ This stage MUST complete before any Rust file is modified.
 - [ ] 3.5 Verify `crates.io` `max_version: 1.2.3` for all 4.
 - [ ] 3.6 `cargo install grex-cli --force --version 1.2.3`; verify a cyclic fixture under a depth cap still surfaces `CycleDetected` (B1 ship-side smoke test).
 - [ ] 3.7 Update `progress.md` with v1.2.3 SHIPPED endpoint + refresh "Where we are" block.
-- [ ] 3.8 Append v1.2.3 to SSOT `.omne/cfg/history.md` (separate SSOT commit per Rule 7).
+- [ ] 3.8 Append v1.2.3 to SSOT `.omne/history.md` (separate SSOT commit per Rule 7).

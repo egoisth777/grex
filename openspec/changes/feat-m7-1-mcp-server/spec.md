@@ -2,13 +2,13 @@
 
 **Status**: draft
 **Milestone**: M7 (see [`../../../milestone.md`](../../../milestone.md) §M7)
-**Depends on**: M5 plugin system (PRs #22 + #23, closed 2026-04-21); M6 scheduler + per-pack lock (feat-m6-1 / feat-m6-2); `.omne/cfg/mcp.md` (rewritten 2026-04-21, Path B MCP-native).
+**Depends on**: M5 plugin system (PRs #22 + #23, closed 2026-04-21); M6 scheduler + per-pack lock (feat-m6-1 / feat-m6-2); `.omne/mcp.md` (rewritten 2026-04-21, Path B MCP-native).
 
 ## Motivation
 
 Grex has no agent-facing control surface today — every verb is CLI-only. Agents that want programmatic drive must shell-out and re-parse human text, losing typed results, cancellation, and the scheduler state that a single long-lived process would preserve.
 
-`.omne/cfg/mcp.md` now pins the design to **Path B**: embed an MCP 2025-06-18 stdio server inside `grex serve`, speak the wire natively (no custom JSON-RPC dialect), and reuse the library entrypoints the CLI dispatcher already calls. This change lands that server.
+`.omne/mcp.md` now pins the design to **Path B**: embed an MCP 2025-06-18 stdio server inside `grex serve`, speak the wire natively (no custom JSON-RPC dialect), and reuse the library entrypoints the CLI dispatcher already calls. This change lands that server.
 
 The server is load-bearing for `openspec/feat-grex/spec.md` success criterion #2 ("agent-driven control via MCP tools"). M6's lock-ordering invariant must survive the crossing — MCP handlers acquire the same `Scheduler` + `PackLock` primitives the CLI uses, in the same fixed order. Cancellation is new in M7 and drives one additional API pair (`acquire_cancellable`) on both primitives.
 
@@ -81,7 +81,7 @@ rmcp 1.5's `#[tool]` macro + `Parameters<T: JsonSchema>` handlers auto-publish J
 
 ### Agent-safety annotations
 
-Every `#[tool]` declaration sets both `annotations.readOnlyHint` and `annotations.destructiveHint` per the table in `.omne/cfg/mcp.md`. `exec` is advertised **without** the `--shell` field in its `*Params` struct; reintroduction is a future per-session capability opt-in.
+Every `#[tool]` declaration sets both `annotations.readOnlyHint` and `annotations.destructiveHint` per the table in `.omne/mcp.md`. `exec` is advertised **without** the `--shell` field in its `*Params` struct; reintroduction is a future per-session capability opt-in.
 
 ### Cancellable API additions
 
@@ -181,7 +181,7 @@ pub async fn run(ctx: ExecCtx<'_>, opts: ServeOpts) -> Result<(), ServeError> {
 
 ### Error-code overload (`-32002`)
 
-Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
+Per `.omne/mcp.md` §Error codes, `-32002` is dual-use:
 
 1. Envelope-level initialize-state error ("not initialized" / "already initialized") raised by rmcp's state machine — `data.kind = "init_state"`.
 2. Grex pack-op failure raised inside a completed `tools/call` with `isError: true` — `data.kind = "pack_op"`.
@@ -206,7 +206,7 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
 | `crates/grex-core/Cargo.toml` | Add `tokio-util` workspace dep. |
 | `crates/grex/src/cli/verbs/serve.rs` | Replace stub with `GrexMcpServer::run(stdio)`. |
 | `crates/grex/src/cli/verbs/{init,add,rm,ls,status,sync,update,doctor,import,run,exec}.rs` | Pass `&CancellationToken::new()` to core. |
-| `.omne/cfg/mcp.md` | Referenced, NOT modified. |
+| `.omne/mcp.md` | Referenced, NOT modified. |
 
 ## Test plan
 
@@ -280,8 +280,8 @@ Per `.omne/cfg/mcp.md` §Error codes, `-32002` is dual-use:
   - [`feat-m6-3`](../feat-m6-3-lean-proof/spec.md) — `no_double_lock` invariant over the primitives this change re-uses.
   - M5 PRs #22 + #23 — `ActionPlugin` + `PackTypePlugin` registries consumed by tool handlers via `Arc<Registry>`.
 - **SSOT docs**:
-  - [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — wire, tool catalog, error codes, agent-safety annotations.
-  - [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) — 5-tier lock ordering.
+  - [`.omne/mcp.md`](../../../.omne/mcp.md) — wire, tool catalog, error codes, agent-safety annotations.
+  - [`.omne/concurrency.md`](../../../.omne/concurrency.md) — 5-tier lock ordering.
   - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #2.
 - **Crate additions**: `rmcp 1.5`, `tokio-util 0.7` (feature `rt`).
 
@@ -321,8 +321,8 @@ Captured during Stage 5 implementation; relevant for Stages 6-8.
 
 ## Source-of-truth links
 
-- [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — Path B spec (wire, tools, cancellation, errors, session).
-- [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) — lock ordering invariant.
+- [`.omne/mcp.md`](../../../.omne/mcp.md) — Path B spec (wire, tools, cancellation, errors, session).
+- [`.omne/concurrency.md`](../../../.omne/concurrency.md) — lock ordering invariant.
 - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §Success criteria #2 — MCP agent control.
 - [`openspec/changes/feat-m6-1-parallel-scheduler/spec.md`](../feat-m6-1-parallel-scheduler/spec.md) — scheduler API shape, voice reference.
 - [`milestone.md`](../../../milestone.md) §M7.

@@ -2,7 +2,7 @@
 
 The `BoundedDir` primitive — how grex closes the path-swap TOCTOU window between `canonicalize(dest)` and the actual filesystem write. Hybrid `cap-std` (uniform) plus Linux `openat2(RESOLVE_BENEATH)` (internal acceleration).
 
-> Canonical source: forthcoming `.omne/cfg/toctou.md` (SSOT, separate `grex-inst` repo). For now this page derives from `.omne/cfg/walker.md` §Symlink hardening, `.omne/cfg/rust-design-decisions.md` §6, `.omne/proof/impl-axiom-bridge.md` §3 (`sync_local_writes`), and `crates/grex-core/src/fs/boundary.rs` (the implementing module).
+> Canonical source: forthcoming `.omne/toctou.md` (SSOT, separate `grex-inst` repo). For now this page derives from `.omne/walker.md` §Symlink hardening, `.omne/rust-design-decisions.md` §6, `.omne/proof/impl-axiom-bridge.md` §3 (`sync_local_writes`), and `crates/grex-core/src/fs/boundary.rs` (the implementing module).
 
 ## What is TOCTOU?
 
@@ -44,7 +44,7 @@ The module lives at `crates/grex-core/src/fs/boundary.rs`. Visibility is `pub(cr
 
 ## Hybrid strategy: cap-std uniform, openat2 internal
 
-Per design decision §6 in `.omne/cfg/rust-design-decisions.md`:
+Per design decision §6 in `.omne/rust-design-decisions.md`:
 
 | Platform        | What `BoundedDir` actually does                                                              |
 |-----------------|----------------------------------------------------------------------------------------------|

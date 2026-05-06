@@ -22,7 +22,7 @@ rmcp-typed client, this job checks a third-party one.
 | Install path | `actions/checkout` the pinned SHA from the **mirror** into `.mcp-validator/`, then `pip install -r .mcp-validator/requirements.txt`, then run `python -m mcp_testing.stdio.cli` with `PYTHONPATH=.mcp-validator`. |
 | PyPI status | `mcp-validator==0.3.1` is **NOT** published on PyPI (only `0.1.1` is). |
 | `pip install git+URL` | **NOT** supported at this SHA. The upstream repo at tag `v0.3.1` ships neither `setup.py` nor `pyproject.toml`, so pip refuses with `does not appear to be a Python project`. Clone-and-run is the only supported path until upstream adds a packaging file. |
-| Protocol | `2025-06-18` (matches `.omne/cfg/mcp.md` SSOT) |
+| Protocol | `2025-06-18` (matches `.omne/mcp.md` SSOT) |
 | Pin verified | 2026-04-22 via `gh api repos/Janix-ai/mcp-validator/git/refs/tags/v0.3.1` |
 
 ### Bump policy

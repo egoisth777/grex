@@ -4,7 +4,7 @@
 
 5-layer test coverage for the `grex-mcp` server (feat-m7-1). Covers layers **L2 – L5** — E2E handshake, CLI ↔ MCP parity, concurrent stress, cancellation chaos. **L1** (inline unit) belongs to feat-m7-1; **L6 – L8** (Inspector, mcp-validator, fuzz) move to feat-m7-3.
 
-Tests nest under `crates/grex-mcp/tests/` — **no separate `grex-mcp-tests` crate**. That would violate the "sub-crates avoided" rule in `.omne/cfg/architecture.md` §Workspace.
+Tests nest under `crates/grex-mcp/tests/` — **no separate `grex-mcp-tests` crate**. That would violate the "sub-crates avoided" rule in `.omne/architecture.md` §Workspace.
 
 ## Layer-to-file map
 
@@ -43,7 +43,7 @@ Shared fixtures + `normalize()` live in `crates/grex-mcp/tests/common/mod.rs`.
 
 ## Source-of-truth links
 
-- [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — tool catalog, cancellation semantics, stdio discipline.
-- [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) — 5-tier lock order shared across CLI + MCP.
-- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §Workspace — sub-crate prohibition.
-- [`.omne/cfg/test-plan.md`](../../../.omne/cfg/test-plan.md) §MCP coverage — L1 – L8 layering baseline.
+- [`.omne/mcp.md`](../../../.omne/mcp.md) — tool catalog, cancellation semantics, stdio discipline.
+- [`.omne/concurrency.md`](../../../.omne/concurrency.md) — 5-tier lock order shared across CLI + MCP.
+- [`.omne/architecture.md`](../../../.omne/architecture.md) §Workspace — sub-crate prohibition.
+- [`.omne/test-plan.md`](../../../.omne/test-plan.md) §MCP coverage — L1 – L8 layering baseline.

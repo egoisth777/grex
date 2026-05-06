@@ -136,7 +136,7 @@ The CI job **is** the test. Meta-validation:
 
 ## Source-of-truth links
 
-- [`.omne/cfg/mcp.md`](../../../.omne/cfg/mcp.md) — wire spec under test (Path B rewrite).
+- [`.omne/mcp.md`](../../../.omne/mcp.md) — wire spec under test (Path B rewrite).
 - [`.github/workflows/ci.yml`](../../../.github/workflows/ci.yml) — target file.
 - [`milestone.md`](../../../milestone.md) §M7.
 - [`openspec/changes/feat-m7-1-mcp-server/spec.md`](../feat-m7-1-mcp-server/spec.md) — server under test.

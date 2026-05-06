@@ -11,7 +11,7 @@
 //! the 11 verbs below are exposed; `serve` (the transport itself) and
 //! `teardown` (a plugin lifecycle hook invoked from `rm`) are NOT.
 //!
-//! # Annotation matrix (frozen by `.omne/cfg/mcp.md`)
+//! # Annotation matrix (frozen by `.omne/mcp.md`)
 //!
 //! | tool   | read_only_hint | destructive_hint |
 //! |--------|----------------|------------------|

@@ -9,7 +9,7 @@ last_updated: 2026-05-02
 
 **Status**: active
 **Spec**: [`proposal.md`](./proposal.md) · [`tasks.md`](./tasks.md)
-**SSOT**: `.omne/cfg/cli.md` (CLI surface — target of doc-noun rewrite + flag alias) · `.omne/cfg/api-contract.md` (behavior contract surface — gets freeze table cross-link) · `.omne/cfg/mcp.md` (MCP wire — gets SyncParams `pack` field doc) · `.omne/cfg/walker.md` (ExecCtx field doc) · `.omne/cfg/plugin-api.md` (UNSTABLE callout target) · `.omne/cfg/freeze-v1.3.0.md` (NEW — 13-row freeze table) · `.omne/cfg/migration-v1.3.0.md` (NEW — operator + Rust consumer migration guide)
+**SSOT**: `.omne/cli.md` (CLI surface — target of doc-noun rewrite + flag alias) · `.omne/api-contract.md` (behavior contract surface — gets freeze table cross-link) · `.omne/mcp.md` (MCP wire — gets SyncParams `pack` field doc) · `.omne/walker.md` (ExecCtx field doc) · `.omne/plugin-api.md` (UNSTABLE callout target) · `.omne/var/freeze-v1.3.0.md` (NEW — 13-row freeze table) · `.omne/var/migration-v1.3.0.md` (NEW — operator + Rust consumer migration guide)
 
 ## Why
 
@@ -52,7 +52,7 @@ v1.3.0 ADDS `pack: PathBuf` as additive sibling field initialized identically to
 **Plugin-API surface** in `crates/grex-plugins-builtin/src/plugin/mod.rs`:
 - Crate-level rustdoc comment.
 - `Cargo.toml` `description` field.
-- `.omne/cfg/plugin-api.md` (SSOT, separate repo).
+- `.omne/plugin-api.md` (SSOT, separate repo).
 
 v1.3.0 adds an UNSTABLE warning to all three; no API change. Signals to downstream that Plugin-API contract is NOT frozen in v1.3.0 (v1.4.0 freeze candidate).
 
@@ -188,7 +188,7 @@ Both fields coexist. Plugin authors reading `ExecCtx::pack` get future-proof cod
 
 - **Both `--pack` and `--workspace` on same invocation.** clap collapses them to the same field; the LAST one wins per clap's standard semantics. Document in deprecation warning that mixing is undefined-but-deterministic.
 - **Both `pack` and `workspace` in MCP SyncParams JSON.** `pack` wins per `or` precedence; document in MCP doc.
-- **JSON envelope consumers using strict schemas.** Adding a new key (`pack`) to an envelope can break consumers using schema validation with `additionalProperties: false`. Surface this as a known migration in `.omne/cfg/migration-v1.3.0.md` operator section. Mitigation: existing schemas should already use `additionalProperties: true` for forward-compat; if not, the consumer needs a one-line schema update.
+- **JSON envelope consumers using strict schemas.** Adding a new key (`pack`) to an envelope can break consumers using schema validation with `additionalProperties: false`. Surface this as a known migration in `.omne/var/migration-v1.3.0.md` operator section. Mitigation: existing schemas should already use `additionalProperties: true` for forward-compat; if not, the consumer needs a one-line schema update.
 - **Manpage regen drift.** `cargo xtask gen-man` rewrites all 4 affected manpages with `<pack>` doc-noun. Verify diff is rename-only (no flag removal).
 
 ### Idempotence
@@ -244,7 +244,7 @@ Verify post-impl that `#print axioms` for the 5 headline theorems shows the same
 | `grex ls --json` | `{"workspace": "<p>", "metas": [...]}` | `{"workspace": "<p>", "pack": "<p>", "metas": [...]}` | `pack` key added; identical value |
 | `grex doctor --json` | `{"workspace": "<p>", "report": {...}}` | `{"workspace": "<p>", "pack": "<p>", "report": {...}}` | same |
 
-Strict-schema consumers (`additionalProperties: false`) need a one-line schema update to add `pack`. Document in `.omne/cfg/migration-v1.3.0.md`.
+Strict-schema consumers (`additionalProperties: false`) need a one-line schema update to add `pack`. Document in `.omne/var/migration-v1.3.0.md`.
 
 ### Table M3: Rust API migration (downstream consumer-facing)
 
@@ -300,13 +300,13 @@ Strict-schema consumers (`additionalProperties: false`) need a one-line schema u
 
 **Doc / SSOT (separate repo per Rule 7):**
 
-- `.omne/cfg/freeze-v1.3.0.md` (NEW) — 4-column freeze table per Table F1 above; G2 frontmatter (`type: design`, `status: active`); cross-link from `cfg/api-contract.md`.
-- `.omne/cfg/migration-v1.3.0.md` (NEW) — operator section (Tables M1, M2) + Rust consumer section (Table M3); G2 frontmatter (`type: migration`, `status: active`).
-- `.omne/cfg/cli.md` — update doc-noun in flag descriptions; cross-link to migration doc.
-- `.omne/cfg/api-contract.md` — cross-link to freeze table.
-- `.omne/cfg/mcp.md` — document `SyncParams::pack` field + precedence rule.
-- `.omne/cfg/walker.md` — document `ExecCtx::pack` additive field.
-- `.omne/cfg/plugin-api.md` — add UNSTABLE WARNING callout at top of doc.
+- `.omne/var/freeze-v1.3.0.md` (NEW) — 4-column freeze table per Table F1 above; G2 frontmatter (`type: design`, `status: active`); cross-link from `cfg/api-contract.md`.
+- `.omne/var/migration-v1.3.0.md` (NEW) — operator section (Tables M1, M2) + Rust consumer section (Table M3); G2 frontmatter (`type: migration`, `status: active`).
+- `.omne/cli.md` — update doc-noun in flag descriptions; cross-link to migration doc.
+- `.omne/api-contract.md` — cross-link to freeze table.
+- `.omne/mcp.md` — document `SyncParams::pack` field + precedence rule.
+- `.omne/walker.md` — document `ExecCtx::pack` additive field.
+- `.omne/plugin-api.md` — add UNSTABLE WARNING callout at top of doc.
 - `.omne/INDEX.yaml` — auto-regenerated by `scripts/build_index.py` (Rule 12).
 
 **Versioning:**
@@ -323,7 +323,7 @@ Strict-schema consumers (`additionalProperties: false`) need a one-line schema u
 **Changelog/history:**
 
 - `CHANGELOG.md` — append `[1.3.0] - 2026-05-XX` MILESTONE entry.
-- `.omne/cfg/history.md` — append v1.3.0 MILESTONE entry (separate SSOT repo per Rule 7).
+- `.omne/history.md` — append v1.3.0 MILESTONE entry (separate SSOT repo per Rule 7).
 
 ## Acceptance criteria
 
@@ -334,7 +334,7 @@ Strict-schema consumers (`additionalProperties: false`) need a one-line schema u
 5. SemVer label: MINOR (1.2.6 → 1.3.0). Per Rule 6 maintainer has the call; technical reasoning supports MINOR because all changes are additive at API/wire/file-format/behavior layers.
 6. Plugin-API UNSTABLE marker visible: `cargo doc --no-deps -p grex-plugins-builtin` shows the WARNING callout in the lib-level docs; `cargo metadata` shows the description suffix.
 7. Manpage diff after regen: 4 manpages affected (sync, serve, migrate-lockfile, teardown); each shows `<workspace>` → `<pack>` doc-noun rewrite + `--pack` listed as canonical flag with `--workspace` in alias position.
-8. SSOT files committed in separate repo: `.omne/cfg/freeze-v1.3.0.md` + `.omne/cfg/migration-v1.3.0.md` (NEW) + 5 existing doc updates per Round 3 gap list. INDEX.yaml regenerated by aggregator.
+8. SSOT files committed in separate repo: `.omne/var/freeze-v1.3.0.md` + `.omne/var/migration-v1.3.0.md` (NEW) + 5 existing doc updates per Round 3 gap list. INDEX.yaml regenerated by aggregator.
 
 ## Migration note for changelog
 
@@ -360,8 +360,8 @@ Strict-schema consumers (`additionalProperties: false`) need a one-line schema u
   `workspace`. Both fields are initialized identically at construction.
   Plugin authors should prefer `pack` for future-proofing; `workspace`
   removal is planned for v2.
-- New SSOT documents: `.omne/cfg/freeze-v1.3.0.md` (13-row behavior
-  contract freeze table) + `.omne/cfg/migration-v1.3.0.md` (operator +
+- New SSOT documents: `.omne/var/freeze-v1.3.0.md` (13-row behavior
+  contract freeze table) + `.omne/var/migration-v1.3.0.md` (operator +
   Rust consumer migration guide). Both ship through the SSOT repo.
 
 ### Changed
@@ -379,7 +379,7 @@ Strict-schema consumers (`additionalProperties: false`) need a one-line schema u
 
 ### Frozen (behavior contracts)
 
-- 13 STABLE behavior contracts frozen per `.omne/cfg/freeze-v1.3.0.md`:
+- 13 STABLE behavior contracts frozen per `.omne/var/freeze-v1.3.0.md`:
   pack.yaml schema, grex.lock.jsonl schema, events.jsonl variants,
   TreeError variant set, CLI flag set on 4 verbs, JSON envelope keys,
   MCP SyncParams fields, ExecCtx::workspace field, ChildPath validation

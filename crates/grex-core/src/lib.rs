@@ -25,7 +25,7 @@ pub use execute::{
     ActionExecutor, ExecCtx, ExecError, ExecResult, ExecStep, FsExecutor, PlanExecutor, Platform,
     PredicateOutcome, StepKind,
 };
-pub use git::{ClonedRepo, GitBackend, GitError, GixBackend};
+pub use git::{BackendLockCtx, BackendLockCtxOwned, ClonedRepo, GitBackend, GitError, GixBackend};
 #[doc(hidden)]
 pub use log::{ActionLogger, LogLevel, TracingLogger};
 pub use pack::{
@@ -46,7 +46,7 @@ pub use scheduler::{Cancelled, Scheduler};
 
 pub mod pack_lock;
 
-pub use pack_lock::{PackLock, PackLockError, Tier, PACK_LOCK_FILE_NAME};
+pub use pack_lock::{PackLock, PackLockError, Tier, PACK_LOCK_FILE_NAME, PACK_LOCK_REL_PATH};
 
 pub mod plugin;
 

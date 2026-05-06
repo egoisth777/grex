@@ -22,7 +22,7 @@ pub type PackId = String;
 /// * The action-audit variants ([`Event::ActionStarted`],
 ///   [`Event::ActionCompleted`], [`Event::ActionHalted`]) renamed their
 ///   pack-id field from `pack` to `id` so every event variant uses the
-///   same `id` discriminant per `.omne/cfg/manifest.md` §"events schema
+///   same `id` discriminant per `.omne/manifest.md` §"events schema
 ///   v2" reader contract. Each of those three variants now also carries
 ///   a `schema_version: String` field so consumers can disambiguate v1
 ///   vs v2 records line-by-line during the migration window (no field
@@ -386,23 +386,7 @@ impl Event {
     /// v1.3.1 fix-sweep B7: replaces the `op = ?std::mem::discriminant(ev)`
     /// site in `crate::manifest::append::emit_semantic_warnings`.
     pub fn op_name(&self) -> &'static str {
-        match self {
-            Event::Add { .. } => "add",
-            Event::Update { .. } => "update",
-            Event::Rm { .. } => "rm",
-            Event::Sync { .. } => "sync",
-            Event::ActionStarted { .. } => "action_started",
-            Event::ActionCompleted { .. } => "action_completed",
-            Event::ActionHalted { .. } => "action_halted",
-            Event::DryRunWouldClone { .. } => "dry_run_would_clone",
-            Event::ForcePruneExecuted { .. } => "force_prune_executed",
-            Event::QuarantineStart { .. } => "quarantine_start",
-            Event::QuarantineComplete { .. } => "quarantine_complete",
-            Event::QuarantineFailed { .. } => "quarantine_failed",
-            Event::QuarantineRestored { .. } => "quarantine_restored",
-            Event::QuarantineGcSwept { .. } => "quarantine_gc_swept",
-            Event::Unknown => "unknown",
-        }
+        pack_or_action_op_name(self).unwrap_or_else(|| workspace_or_quarantine_op_name(self))
     }
 
     /// Return the pack id the event applies to.
@@ -464,6 +448,33 @@ impl Event {
             // by `ts()` still get a well-defined value.
             Event::Unknown => DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_default(),
         }
+    }
+}
+
+fn pack_or_action_op_name(event: &Event) -> Option<&'static str> {
+    match event {
+        Event::Add { .. } => Some("add"),
+        Event::Update { .. } => Some("update"),
+        Event::Rm { .. } => Some("rm"),
+        Event::Sync { .. } => Some("sync"),
+        Event::ActionStarted { .. } => Some("action_started"),
+        Event::ActionCompleted { .. } => Some("action_completed"),
+        Event::ActionHalted { .. } => Some("action_halted"),
+        Event::DryRunWouldClone { .. } => Some("dry_run_would_clone"),
+        _ => None,
+    }
+}
+
+fn workspace_or_quarantine_op_name(event: &Event) -> &'static str {
+    match event {
+        Event::ForcePruneExecuted { .. } => "force_prune_executed",
+        Event::QuarantineStart { .. } => "quarantine_start",
+        Event::QuarantineComplete { .. } => "quarantine_complete",
+        Event::QuarantineFailed { .. } => "quarantine_failed",
+        Event::QuarantineRestored { .. } => "quarantine_restored",
+        Event::QuarantineGcSwept { .. } => "quarantine_gc_swept",
+        Event::Unknown => "unknown",
+        _ => unreachable!("pack/action event names are handled first"),
     }
 }
 

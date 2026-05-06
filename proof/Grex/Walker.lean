@@ -23,8 +23,8 @@ The proof follows the same idiom as `Grex.Scheduler`:
   axiomises `fd-lock`'s FIFO queue for the scheduler.
 
 Source-of-truth links:
-* `.omne/cfg/walker.md` — primary spec for v1.2.0 walker
-* `.omne/cfg/architecture.md` §Walker invariants — identifies the eight
+* `.omne/walker.md` — primary spec for v1.2.0 walker
+* `.omne/architecture.md` §Walker invariants — identifies the eight
   properties enumerated below
 * `progress.md` — v1.2.0 milestone tracker
 
@@ -752,6 +752,77 @@ theorem dry_run_no_side_effects
     sync_meta_inner_model cancelled visited t
       = sync_meta_inner_model cancelled visited t := by
   rfl
+
+/-! ### v1.3.2 — declarative nesting (B13)
+
+The v1.3.2 release closes B13 from the v1.3.1 dogfood: the walker accepts
+slash-separated `child.path` per `pack-spec.md §v1.2.0` (e.g. `tools/foo`,
+`courses/cpp/cpp-grammar`), enabling declarative nesting without
+contortions like one-meta-per-segment.
+
+The model already supports this by construction: `ChildRef.segments` is a
+`List String` (see `Grex.Types`) which admits multi-element lists. A
+single-segment list is a bare name (`["foo"]`); a multi-segment list is a
+slash path (`["tools", "foo"]`, `["courses", "cpp", "cpp-grammar"]`). The
+walker recursion `sync_meta_inner_model` is structurally recursive on
+`ManifestTree` — descent occurs once per `(ChildRef × ManifestTree)` pair
+in `subs`, regardless of the `segments` cardinality of the `ChildRef`.
+
+**Maintainer-locked safety boundary.** "Walker never recurses into a
+folder lacking `.grex/`" — encoded structurally as `ManifestTree.leaf`
+having no recursive frames. Unmanaged subdirs never appear in the tree
+(by construction of how the Rust runtime builds `ManifestTree` from
+on-disk pack discovery), hence never spawn a descent step.
+
+No new axioms. The theorem below is a corollary of the existing
+acyclic-termination lemma, instantiated to make the slash-path
+participation explicit.
+-/
+
+/-- **`declarative_nesting_terminates` (v1.3.2, B13, Rule-8 gate).**
+
+    The walker terminates with `.ok` on any acyclic `ManifestTree` whose
+    children may carry slash-separated paths in their `ChildRef.segments`
+    field. This is the model-level statement of v1.3.2's B13 closure:
+    declarative nesting (multi-segment `child.path` per `pack-spec.md
+    §v1.2.0`) preserves the v1.2.2 termination guarantee.
+
+    **Why the model already supports this.** `ChildRef.segments :
+    List String` admits lists of any length. The walker's structural
+    recursion descends once per `(ChildRef × ManifestTree)` pair in
+    `subs`, regardless of how many segments each child's path contains.
+    Single-segment lists (bare names like `["foo"]`) and multi-segment
+    lists (slash paths like `["tools", "foo"]` or
+    `["courses", "cpp", "cpp-grammar"]`) flow through the same recursion
+    edge, the same `acyclic_path` predicate, and the same identity-keyed
+    cycle check. No model extension is required.
+
+    **Maintainer-locked safety boundary.** "Walker never recurses into a
+    folder lacking `.grex/`" — encoded structurally as `ManifestTree.leaf`
+    having no recursive frames. The Rust runtime constructs the
+    `ManifestTree` from on-disk pack discovery: an unmanaged subdir
+    (no `.grex/`) becomes a `.leaf` (or is absent entirely from the
+    tree), so descent into such a path is impossible by construction.
+
+    **Discharge.** Direct corollary of `sync_meta_inner_model_ok_of_acyclic`
+    instantiated at the input tree. The slash-path support is
+    syntactic (already present in `ChildRef.segments`) so no auxiliary
+    lemma is needed.
+
+    **Bound.** Same as `sync_meta_no_cycle_infinite_clone`:
+    `O(tree-size)`. Slash paths do not multiply the recursion depth —
+    each `ChildRef`, regardless of segment count, contributes one
+    recursive frame.
+
+    **No new bridge axiom.** The model accepts multi-segment `segments`
+    by construction; the Rust runtime's path-join semantics for
+    multi-segment children is already covered by `Path.join` in
+    `Grex.Types` (which appends arbitrary suffix lists). -/
+theorem declarative_nesting_terminates
+    (visited : List String) (t : ManifestTree)
+    (h : acyclic_path visited t) :
+    sync_meta_inner_model false visited t = SyncMetaResult.ok :=
+  sync_meta_inner_model_ok_of_acyclic visited t h
 
 /-! ### v1.2.5 — partial-clone cleanup invariant (A2)
 

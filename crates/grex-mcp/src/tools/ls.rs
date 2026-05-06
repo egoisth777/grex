@@ -11,7 +11,7 @@
 //! path-traversal / workspace escape is a real hazard when untrusted
 //! agents drive the server, so the tool always uses `state.workspace`
 //! captured at `grex serve` start. Matches the v1 safety model in
-//! `.omne/cfg/mcp.md` (see `doctor.rs` for the same rationale).
+//! `.omne/mcp.md` (see `doctor.rs` for the same rationale).
 //!
 //! # Return value
 //!

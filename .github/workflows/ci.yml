@@ -141,8 +141,8 @@ jobs:
           release-type: patch
 
   # Lean4 proof verification — mechanises invariant I1 (no double lock) per
-  # `.omne/cfg/concurrency.md` §Lean4 invariant. Linux-only is acceptable
-  # per `.omne/cfg/test-plan.md` §Lean4 proof verification — `.olean` is
+  # `.omne/concurrency.md` §Lean4 invariant. Linux-only is acceptable
+  # per `.omne/test-plan.md` §Lean4 proof verification — `.olean` is
   # platform-agnostic, so one successful build proves the invariant
   # everywhere.
   #
@@ -302,6 +302,7 @@ jobs:
           #print axioms Grex.Scheduler.pool_deadlock_guard_terminates
           #print axioms Grex.Walker.dry_run_no_side_effects
           #print axioms Grex.Lockfile.lockfile_branch_mirrors_manifest_ref
+          #print axioms Grex.Walker.declarative_nesting_terminates
           EOF
           # Run the probe via `lake env lean --run` semantics: plain
           # `lake env lean <file>` elaborates the file and prints all
@@ -319,6 +320,7 @@ jobs:
             "Grex.Scheduler.pool_deadlock_guard_terminates"
             "Grex.Walker.dry_run_no_side_effects"
             "Grex.Lockfile.lockfile_branch_mirrors_manifest_ref"
+            "Grex.Walker.declarative_nesting_terminates"
           )
           fail=0
           for thm in "${theorems[@]}"; do

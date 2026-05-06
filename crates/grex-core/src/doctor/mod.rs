@@ -803,9 +803,12 @@ fn collect_manifest_to_disk_findings(
 /// children of `workspace` are walked (no pack interiors). Dotfiles
 /// and housekeeping dirs are skipped.
 ///
-/// Directories matching a synthetic lockfile entry (`lock[name].synthetic
-/// == true`) are also skipped — v1.1.1 plain-git children never appear
-/// in `Event::Add`, so the lockfile is authoritative for them.
+/// Directories matching any lockfile entry are also skipped — the
+/// lockfile is the authoritative registry for packs that don't surface
+/// as `Event::Add` rows (v1.1.1 plain-git children, v1.2.0+ walker-
+/// synthesised leaves). v1.3.2 W1 retired the `LockEntry.synthetic`
+/// writer flag, so the skip predicate is now the entry's mere presence
+/// rather than the obsolete `synthetic == true` discriminator.
 fn collect_disk_to_manifest_findings(
     workspace: &Path,
     registered_paths: &BTreeSet<PathBuf>,
@@ -826,7 +829,7 @@ fn collect_disk_to_manifest_findings(
         if registered_paths.contains(&PathBuf::from(name_str)) {
             continue;
         }
-        if lock.get(name_str).is_some_and(|e| e.synthetic) {
+        if lock.contains_key(name_str) {
             continue;
         }
         findings.push(Finding {
@@ -858,7 +861,7 @@ fn is_housekeeping_dir(name: &str) -> bool {
 }
 
 /// Check 4 — config lint (opt-in). Parses `openspec/config.yaml` if
-/// present; walks `.omne/cfg/*.md` for basic syntax validity (we just
+/// present; walks `.omne/*.md` for basic syntax validity (we just
 /// read them to prove they're valid UTF-8 — the spec calls out "basic
 /// markdown parse", not a full markdown lint). Missing files/dirs are
 /// no-ops (not findings).
@@ -892,7 +895,7 @@ fn check_openspec_config_yaml(workspace: &Path, findings: &mut Vec<Finding>) {
     }
 }
 
-/// `.omne/cfg/*.md` half of [`check_config_lint`] — proves each file
+/// `.omne/*.md` half of [`check_config_lint`] — proves each file
 /// is valid UTF-8. Absent dir is a no-op.
 fn check_omne_cfg_markdown(workspace: &Path, findings: &mut Vec<Finding>) {
     let cfg_dir = workspace.join(".omne").join("cfg");
@@ -907,7 +910,7 @@ fn check_omne_cfg_markdown(workspace: &Path, findings: &mut Vec<Finding>) {
         }
         if let Err(e) = std::fs::read_to_string(&path) {
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
-            findings.push(config_lint_warning(format!(".omne/cfg/{name} unreadable: {e}")));
+            findings.push(config_lint_warning(format!(".omne/{name} unreadable: {e}")));
         }
     }
 }
@@ -1228,7 +1231,7 @@ mod tests {
             let state = packs.get(pack_type).unwrap();
             assert_eq!(
                 expected_patterns_for_pack(d.path(), state),
-                vec![".grex-lock".to_string()],
+                vec![".grex/".to_string()],
                 "pack type: {pack_type}"
             );
         }
@@ -1245,7 +1248,7 @@ mod tests {
                 d.path(),
                 &id,
                 &format!(
-                    "schema_version: \"1\"\nname: {id}\ntype: {pack_type}\nx-gitignore:\n  - \".grex-lock\"\n  - {authored}\n",
+                    "schema_version: \"1\"\nname: {id}\ntype: {pack_type}\nx-gitignore:\n  - \".grex/\"\n  - {authored}\n",
                 ),
             );
             let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
@@ -1253,7 +1256,7 @@ mod tests {
             let state = packs.get(&id).unwrap();
             assert_eq!(
                 expected_patterns_for_pack(d.path(), state),
-                vec![".grex-lock".to_string(), authored],
+                vec![".grex/".to_string(), authored],
                 "pack type: {pack_type}"
             );
         }
@@ -1298,12 +1301,8 @@ mod tests {
             "a",
             "schema_version: \"1\"\nname: a\ntype: declarative\nx-gitignore:\n  - target/\n  - \"*.log\"\n",
         );
-        upsert_managed_block(
-            &d.path().join(".gitignore"),
-            "a",
-            &[".grex-lock", "target/", "*.log"],
-        )
-        .unwrap();
+        upsert_managed_block(&d.path().join(".gitignore"), "a", &[".grex/", "target/", "*.log"])
+            .unwrap();
         let events = manifest::read_all(&d.path().join(".grex/events.jsonl")).unwrap();
         let packs = manifest::fold(events);
         let r = check_gitignore_sync(d.path(), &packs);
@@ -1568,11 +1567,15 @@ mod tests {
     /// pack `a` reports `OK (synthetic)` for it, exits 0, and never
     /// emits a missing-manifest finding even though no `.grex/pack.yaml`
     /// exists on disk for that pack.
+    ///
+    /// v1.3.2 W1 retired the writer side of `LockEntry.synthetic` (the
+    /// `skip_serializing_if` predicate now always omits the field), so
+    /// this test seeds a legacy v1.1.x-shaped JSONL line directly via
+    /// `fs::write` rather than going through `write_lockfile`. The reader
+    /// honours `synthetic: true` via `#[serde(default)]`, exercising the
+    /// preserved legacy-carryover branch in `check_synthetic_packs`.
     #[test]
     fn run_doctor_synthetic_pack_reports_ok_synthetic_and_exits_zero() {
-        use crate::lockfile::{write_lockfile, LockEntry};
-        use std::collections::HashMap;
-
         let d = tempdir().unwrap();
         seed_pack(d.path(), "a");
         upsert_managed_block(
@@ -1582,25 +1585,18 @@ mod tests {
         )
         .unwrap();
 
-        // Hand-write a lockfile with `synthetic: true` for pack `a`.
+        // Hand-write a v1.1.x-shaped lockfile line with `synthetic: true`
+        // for pack `a`. `write_lockfile` strips the field on emit, so the
+        // raw write is required to pin the legacy carryover branch.
         let lock_dir = d.path().join(".grex");
         fs::create_dir_all(&lock_dir).unwrap();
         let lock_path = lock_dir.join("grex.lock.jsonl");
-        let mut lock = HashMap::new();
-        lock.insert(
-            "a".to_string(),
-            LockEntry {
-                id: "a".into(),
-                path: "a".into(),
-                sha: "deadbeef".into(),
-                branch: "main".into(),
-                installed_at: ts(),
-                actions_hash: String::new(),
-                schema_version: "1".into(),
-                synthetic: true,
-            },
-        );
-        write_lockfile(&lock_path, &lock).unwrap();
+        fs::write(
+            &lock_path,
+            br#"{"id":"a","path":"a","sha":"deadbeef","branch":"main","installed_at":"2026-04-22T10:00:00Z","actions_hash":"","schema_version":"1","synthetic":true}
+"#,
+        )
+        .unwrap();
 
         // Note: we deliberately do NOT write `<pack>/.grex/pack.yaml`,
         // matching the v1.1.1 plain-git-child case.

@@ -14,7 +14,7 @@
 //! # Why this exists
 //!
 //! Stage 0 LOCKED decision #1 + Lean axiom `sync_local_writes` + design
-//! decision §6 ([`.omne/cfg/rust-design-decisions.md`](../../.omne/cfg/rust-design-decisions.md))
+//! decision §6 ([`.omne/rust-design-decisions.md`](../../.omne/rust-design-decisions.md))
 //! require every walker write to bind to a dirfd, not a path string.
 //! Without this the walker's existing flow is:
 //!

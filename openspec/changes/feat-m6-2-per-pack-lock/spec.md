@@ -6,13 +6,13 @@
 
 ## Motivation
 
-feat-m6-1 lands the semaphore but leaves pack-level exclusion unsolved. Two parallel tasks on the same `<pack_path>` would race on `.gitignore`, on action side-effects, and on the backend clone/fetch. `.omne/cfg/concurrency.md` §2 specifies `<pack_workdir>/.grex-lock` via `fd-lock::RwLock::write` as the defence; this change lands it plus the enforced acquisition ordering so the full 5-tier chain cannot deadlock.
+feat-m6-1 lands the semaphore but leaves pack-level exclusion unsolved. Two parallel tasks on the same `<pack_path>` would race on `.gitignore`, on action side-effects, and on the backend clone/fetch. `.omne/concurrency.md` §2 specifies `<pack_workdir>/.grex-lock` via `fd-lock::RwLock::write` as the defence; this change lands it plus the enforced acquisition ordering so the full 5-tier chain cannot deadlock.
 
 ## Goal
 
 1. Introduce `PackLock` type wrapping `fd-lock::RwLock` on `<pack_path>/.grex-lock`.
 2. Integrate acquisition inside each `PackTypePlugin` method (`install` / `update` / `sync` / `teardown`) — the plugin owns the acquire, not the caller.
-3. Enforce the fixed 5-tier lock order from `.omne/cfg/concurrency.md`:
+3. Enforce the fixed 5-tier lock order from `.omne/concurrency.md`:
    1. workspace-sync lock (already shipped — M3 review PR #16)
    2. semaphore slot (feat-m6-1)
    3. per-pack `.grex-lock` (**this change**)
@@ -25,7 +25,7 @@ feat-m6-1 lands the semaphore but leaves pack-level exclusion unsolved. Two para
 
 ### `PackLock` type
 
-File: `crates/grex-core/src/concurrency/packlock.rs` (new module; see `.omne/cfg/architecture.md` layout).
+File: `crates/grex-core/src/concurrency/packlock.rs` (new module; see `.omne/architecture.md` layout).
 
 ```rust
 pub struct PackLock {
@@ -39,7 +39,7 @@ impl PackLock {
 }
 ```
 
-Semantics (from `.omne/cfg/concurrency.md`):
+Semantics (from `.omne/concurrency.md`):
 - File at `<pack_path>/.grex-lock`; created on demand (`OpenOptions::create(true).read(true).write(true)`).
 - Exclusive via `RwLock::write`.
 - Non-blocking `try_write` first; on `WouldBlock` yield with exponential backoff (start 1 ms, cap 100 ms) + jitter.
@@ -80,7 +80,7 @@ Same prologue in `update`, `sync`, `teardown`.
 
 ### Acquisition-order enforcement
 
-Pseudocode (straight from `.omne/cfg/concurrency.md` §Scheduler pseudocode, adapted to v1):
+Pseudocode (straight from `.omne/concurrency.md` §Scheduler pseudocode, adapted to v1):
 
 ```
 sync_run(workspace):
@@ -123,7 +123,7 @@ Implementation: `crates/grex-core/src/gitignore/` — add `.grex-lock` to the de
 | `crates/grex-core/src/plugin/pack_types/scripted.rs` | Same. |
 | `crates/grex-core/src/gitignore/mod.rs` | Default block body includes `.grex-lock`. |
 | `crates/grex-core/Cargo.toml` | `fd-lock` already present (used in M2 manifest); confirm feature-gates. |
-| `.omne/cfg/concurrency.md` | No change — this change implements the existing spec. |
+| `.omne/concurrency.md` | No change — this change implements the existing spec. |
 
 ## Test plan
 
@@ -161,7 +161,7 @@ Implementation: `crates/grex-core/src/gitignore/` — add `.grex-lock` to the de
 
 ## Non-goals
 
-- **No `grex doctor` auto-prune** of stale `.grex-lock` (PID-based). Carry-forward per `.omne/cfg/concurrency.md` §Per-pack `PackLock`.
+- **No `grex doctor` auto-prune** of stale `.grex-lock` (PID-based). Carry-forward per `.omne/concurrency.md` §Per-pack `PackLock`.
 - **No lock contention telemetry beyond `tracing` spans**. Per-pack wait-time histogram deferred to v1.x.
 - **No retry policy exposed to users**. Backoff constants (1 ms start, 100 ms cap, 5 s budget) are internal.
 - **No cross-process fairness guarantees**. `fd-lock` is FIFO-ish on Linux, not guaranteed on Windows. Proof (feat-m6-3) models FIFO-per-path; deviation documented.
@@ -183,8 +183,8 @@ Implementation: `crates/grex-core/src/gitignore/` — add `.grex-lock` to the de
 
 ## Source-of-truth links
 
-- [`.omne/cfg/concurrency.md`](../../../.omne/cfg/concurrency.md) §Per-pack `PackLock` + §Lock acquisition order — primary spec.
-- [`.omne/cfg/architecture.md`](../../../.omne/cfg/architecture.md) §Workspace — module layout places `packlock.rs` under `src/concurrency/`.
-- [`.omne/cfg/test-plan.md`](../../../.omne/cfg/test-plan.md) §Concurrency tests — baseline.
+- [`.omne/concurrency.md`](../../../.omne/concurrency.md) §Per-pack `PackLock` + §Lock acquisition order — primary spec.
+- [`.omne/architecture.md`](../../../.omne/architecture.md) §Workspace — module layout places `packlock.rs` under `src/concurrency/`.
+- [`.omne/test-plan.md`](../../../.omne/test-plan.md) §Concurrency tests — baseline.
 - [`milestone.md`](../../../milestone.md) §M6 — "Per-pack `<path>/.grex-lock` file (fd-lock) prevents same-pack double-exec."
 - [`openspec/feat-grex/spec.md`](../../feat-grex/spec.md) §M5 R-M5-08 (gitignore managed block) — extended here.

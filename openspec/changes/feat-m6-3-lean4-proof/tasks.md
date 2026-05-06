@@ -44,7 +44,7 @@
 
 ## Stage 6 — Polish + acceptance
 
-- [ ] Doc pass: top of `Grex/Scheduler.lean` has module docstring summarising the theorem + linking to `.omne/cfg/concurrency.md`.
+- [ ] Doc pass: top of `Grex/Scheduler.lean` has module docstring summarising the theorem + linking to `.omne/concurrency.md`.
 - [ ] Axiom doc-comments justify each axiom explicitly as a model-bridge.
 - [ ] `lake build` wall-time < 30 s on CI (warm). If over: simplify model.
 - [ ] Manual check: introduce a rogue `sorry` in a feature branch, confirm CI fails, revert.
