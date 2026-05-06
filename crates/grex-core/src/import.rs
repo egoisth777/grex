@@ -159,78 +159,82 @@ pub fn import_from_repos_json(
     // between the snapshot and the commit loop. Lock sidecar lives next to
     // the event log at `<ws>/.grex/events.lock` (parent dir created lazily
     // because ManifestLock::open does not auto-create like ScopedLock).
+    let lock_path = prepare_lock_path(manifest_path)?;
+    let mut lock = ManifestLock::open(manifest_path, &lock_path)
+        .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
+
+    lock.write(|| {
+        let existing = existing_paths(manifest_path)?;
+        let plan = compute_plan(raw, &existing, opts.dry_run);
+        if !opts.dry_run {
+            commit_plan(&plan, manifest_path)?;
+        }
+        Ok(plan)
+    })
+    .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?
+}
+
+fn prepare_lock_path(manifest_path: &Path) -> Result<PathBuf, ImportError> {
     let lock_path = manifest_path
         .parent()
         .map(|p| p.join("events.lock"))
         .unwrap_or_else(|| PathBuf::from(".grex/events.lock"));
     if let Some(parent) = lock_path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|source| ImportError::Lock {
-                path: lock_path.clone(),
-                source,
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
         }
     }
-    let mut lock = ManifestLock::open(manifest_path, &lock_path)
-        .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
+    Ok(lock_path)
+}
 
-    let plan_result: Result<ImportPlan, ImportError> = lock
-        .write(|| {
-            let existing = existing_paths(manifest_path)?;
+fn compute_plan(
+    raw: Vec<RawEntry>,
+    existing: &std::collections::HashSet<String>,
+    dry_run: bool,
+) -> ImportPlan {
+    let mut plan = ImportPlan::default();
+    let mut seen_in_input: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in raw {
+        classify_entry(entry, existing, &mut seen_in_input, &mut plan, dry_run);
+    }
+    plan
+}
 
-            let mut plan = ImportPlan::default();
-            let mut seen_in_input: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-
-            for entry in raw {
-                let path = entry.path.clone();
-                // Bare-name validation BEFORE any manifest write — refuses to
-                // ingest a `path` that would later trip
-                // `ChildPathValidator` (separators, `.` / `..`, regex
-                // mismatch, empty). Without this gate, `migration.md`'s
-                // promise that import "validates" was untrue: bad rows
-                // landed as `Event::Add` rows that only failed at sync
-                // time. Fail-fast at import is a much friendlier signal.
-                if let Some(reason) = reject_reason(&path) {
-                    plan.failed.push(ImportFailure {
-                        path,
-                        error: format!("invalid `path`: {reason}"),
-                    });
-                    continue;
-                }
-                // NOTE: PackId currently aliases path (identity derivation), so
-                // path-dedup also catches PackId collisions. When PackId
-                // derivation diverges from path (future change), add a
-                // parallel `existing_ids` set + dedup pass. Tracked in
-                // openspec/changes/feat-v1.3.2/design.md review-delta CR1.
-                if existing.contains(&path) {
-                    plan.skipped
-                        .push(ImportSkip { path, reason: SkipReason::PathCollision });
-                    continue;
-                }
-                if !seen_in_input.insert(path.clone()) {
-                    plan.skipped
-                        .push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
-                    continue;
-                }
-                let kind = classify(&entry.url);
-                plan.imported.push(ImportEntry {
-                    path,
-                    url: entry.url,
-                    kind,
-                    would_dispatch: opts.dry_run,
-                });
-            }
-
-            if !opts.dry_run {
-                commit_plan(&plan, manifest_path)?;
-            }
-
-            Ok(plan)
-        })
-        .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
-
-    plan_result
+fn classify_entry(
+    entry: RawEntry,
+    existing: &std::collections::HashSet<String>,
+    seen_in_input: &mut std::collections::HashSet<String>,
+    plan: &mut ImportPlan,
+    dry_run: bool,
+) {
+    let path = entry.path.clone();
+    // Bare-name validation BEFORE any manifest write — refuses to
+    // ingest a `path` that would later trip `ChildPathValidator`
+    // (separators, `.` / `..`, regex mismatch, empty). Without this
+    // gate, `migration.md`'s promise that import "validates" was
+    // untrue: bad rows landed as `Event::Add` rows that only failed
+    // at sync time. Fail-fast at import is a much friendlier signal.
+    if let Some(reason) = reject_reason(&path) {
+        plan.failed
+            .push(ImportFailure { path, error: format!("invalid `path`: {reason}") });
+        return;
+    }
+    // NOTE: PackId currently aliases path (identity derivation), so
+    // path-dedup also catches PackId collisions. When PackId
+    // derivation diverges from path (future change), add a parallel
+    // `existing_ids` set + dedup pass. Tracked in
+    // openspec/changes/feat-v1.3.2/design.md review-delta CR1.
+    if existing.contains(&path) {
+        plan.skipped.push(ImportSkip { path, reason: SkipReason::PathCollision });
+        return;
+    }
+    if !seen_in_input.insert(path.clone()) {
+        plan.skipped.push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
+        return;
+    }
+    let kind = classify(&entry.url);
+    plan.imported.push(ImportEntry { path, url: entry.url, kind, would_dispatch: dry_run });
 }
 
 fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportError> {

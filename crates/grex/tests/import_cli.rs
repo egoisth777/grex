@@ -156,14 +156,8 @@ fn import_json_output_emits_structured_plan() {
     let imported = value["imported"].as_array().unwrap();
     assert_eq!(imported.len(), 3);
     assert_eq!(value["skipped"].as_array().unwrap().len(), 0);
-    let cfg = imported
-        .iter()
-        .find(|o| o["path"] == "cfg")
-        .expect("cfg entry");
-    let scripts = imported
-        .iter()
-        .find(|o| o["path"] == "scripts")
-        .expect("scripts entry");
+    let cfg = imported.iter().find(|o| o["path"] == "cfg").expect("cfg entry");
+    let scripts = imported.iter().find(|o| o["path"] == "scripts").expect("scripts entry");
     assert_eq!(cfg["kind"], "scripted");
     assert_eq!(scripts["kind"], "declarative");
     assert_eq!(cfg["would_dispatch"], true);
