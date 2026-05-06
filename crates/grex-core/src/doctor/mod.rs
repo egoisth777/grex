@@ -806,7 +806,7 @@ fn collect_manifest_to_disk_findings(
 /// Directories matching any lockfile entry are also skipped — the
 /// lockfile is the authoritative registry for packs that don't surface
 /// as `Event::Add` rows (v1.1.1 plain-git children, v1.2.0+ walker-
-/// synthesised leafs). v1.3.2 W1 retired the `LockEntry.synthetic`
+/// synthesised leaves). v1.3.2 W1 retired the `LockEntry.synthetic`
 /// writer flag, so the skip predicate is now the entry's mere presence
 /// rather than the obsolete `synthetic == true` discriminator.
 fn collect_disk_to_manifest_findings(
