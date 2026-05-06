@@ -277,3 +277,43 @@ When the smoke harness lands HTTPS support, the v1.3.2 fixture deltas would targ
 | Slash-path id collision | B13 Lean theorem | Phase 2a Lean worker |
 | Hidden `synthetic` reader | Phase 2 grep before W1 lands | W1 worker |
 | Worker file-share | Phase 2 walk; bundle if shared | Dispatcher |
+
+## Review-delta (post-CodeRabbit)
+
+CodeRabbit + Copilot review on PR #75 surfaced 5 follow-up items now bundled into v1.3.2 scope. Each is a runtime catch-up; no public contract change.
+
+### M1 — `file://` URL classification
+**Where:** `crates/grex-core/src/import.rs` `classify()` (~lines 106–123).
+**Fix:** route `file://`-prefixed URLs to `Scripted`; bare relative paths remain `Declarative` (intentional).
+**Tests:** `classify_file_url_is_scripted`, `classify_relative_path_is_declarative`.
+
+### CR1 — PackId collision detection (deferred, documented)
+**Status:** No-op under current encoding.
+**Where:** `crates/grex-core/src/import.rs` plan-build phase (~lines 164–170).
+**Finding:** CodeRabbit suggested folded `existing_ids: HashSet<PackId>` set alongside path set.
+**Decision:** PackId derivation today is identity over path (`PackId::from(path)` is identity), so path dedup also catches PackId collisions. Adding a parallel id set is a no-op without test coverage that can pass.
+**Forward compat:** inline comment marks the spot for the next maintainer to re-enable when PackId derivation diverges from path. No code emitted in v1.3.2.
+
+### CR2 — ManifestLock wraps read+append
+**Where:** `crates/grex-core/src/import.rs` (collision detection ~line 146 + commit_plan loop ~lines 188–201).
+**Fix:** acquire single `ManifestLock` at start of plan-application phase; hold across `existing_paths()` snapshot, collision computation, and per-entry `add_pack()` calls. Closes TOCTOU window.
+**Reason:** prevents race where manifest mutates between read and append.
+
+### CR3 — Skip-reason canonical form
+**Where:** `crates/grex/src/cli/verbs/import.rs` stderr formatter (~lines 52–55) + JSON serializer (~lines 92–95).
+**Decision:** canonical = `snake_case` (matches JSON event convention). Update stderr to emit `path_collision`, `duplicate_in_input`, etc. Drop kebab variants. Update test fixtures.
+
+### CR4 — `current_dir()` error context (no-op, already in place)
+**Where:** `crates/grex/src/cli/verbs/import.rs:22`.
+**Finding:** CodeRabbit flagged silent `.unwrap_or_else()` fallback.
+**Status:** Verified during fix pass — call site already uses `.context("resolve cwd for workspace root")?`. No change needed.
+
+### Dropped findings
+- CR7 (progress.md MD022) — current file already complies; finding stale.
+- M3 (bare-name validation) — already shipped pre-review via `child_path::reject_reason()` + 2 tests.
+
+### Test rename (M2)
+`import_real_run_matches_shared_add_event_fields` → `import_event_shape_matches_add_run` (spec name). Body untouched.
+
+### Scope note
+All 5 items are pure runtime fixes. Lean theorem `slash_path_walker_terminates` and frozen-contract table unchanged.

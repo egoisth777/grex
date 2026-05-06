@@ -153,11 +153,20 @@ fn import_json_output_emits_structured_plan() {
         .clone();
     let stdout = String::from_utf8(out).unwrap();
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("stdout is JSON");
-    assert_eq!(value["imported"].as_array().unwrap().len(), 3);
+    let imported = value["imported"].as_array().unwrap();
+    assert_eq!(imported.len(), 3);
     assert_eq!(value["skipped"].as_array().unwrap().len(), 0);
-    assert_eq!(value["imported"][0]["kind"], "scripted");
-    assert_eq!(value["imported"][2]["kind"], "declarative");
-    assert_eq!(value["imported"][0]["would_dispatch"], true);
+    let cfg = imported
+        .iter()
+        .find(|o| o["path"] == "cfg")
+        .expect("cfg entry");
+    let scripts = imported
+        .iter()
+        .find(|o| o["path"] == "scripts")
+        .expect("scripts entry");
+    assert_eq!(cfg["kind"], "scripted");
+    assert_eq!(scripts["kind"], "declarative");
+    assert_eq!(cfg["would_dispatch"], true);
 }
 
 #[test]
@@ -229,7 +238,7 @@ fn import_collision_path_is_reported_on_stderr() {
 
     let stderr = String::from_utf8(assertion.get_output().stderr.clone()).unwrap();
     assert!(
-        stderr.contains("path-collision") && stderr.contains("cfg"),
+        stderr.contains("path_collision") && stderr.contains("cfg"),
         "expected collision warning on stderr, got: {stderr}"
     );
 }

@@ -156,7 +156,8 @@ fn import_with_windows_drive_path_parses() {
     grex()
         .args(["import", "--from-repos-json", r"C:\temp\does-not-exist\REPOS.json"])
         .assert()
-        .failure();
+        .failure()
+        .stderr(predicate::str::contains("grex import"));
 }
 
 #[cfg(windows)]
@@ -197,7 +198,11 @@ fn import_with_no_flag_fails_with_message() {
 fn import_with_from_repos_json_relative_path_parses() {
     // Relative path parses through clap; a missing file surfaces at I/O
     // time as a runtime failure, not a usage failure.
-    grex().args(["import", "--from-repos-json", "./does-not-exist.json"]).assert().failure();
+    grex()
+        .args(["import", "--from-repos-json", "./does-not-exist.json"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("grex import"));
 }
 
 // ---------- sync ----------

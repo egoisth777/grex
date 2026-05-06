@@ -16,6 +16,7 @@
 //! emit byte-identical `Event::Add` rows for the same input.
 
 use crate::add::{add_pack, AddError, AddOpts, AddRequest};
+use crate::fs::ManifestLock;
 use crate::manifest;
 use crate::pack::validate::child_path::reject_reason;
 use serde::Deserialize;
@@ -100,6 +101,12 @@ pub enum ImportError {
     },
     #[error("manifest write failed: {0}")]
     Manifest(#[from] manifest::ManifestError),
+    #[error("manifest lock failed at {path}: {source}")]
+    Lock {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Classify a `REPOS.json` entry into a pack kind.
@@ -109,6 +116,9 @@ pub fn classify(url: &str) -> ImportedKind {
         return ImportedKind::Declarative;
     }
     let low = trimmed.to_ascii_lowercase();
+    if low.starts_with("file://") {
+        return ImportedKind::Scripted;
+    }
     let looks_git = low.starts_with("http://")
         || low.starts_with("https://")
         || low.starts_with("git@")
@@ -143,46 +153,84 @@ pub fn import_from_repos_json(
     opts: ImportOpts,
 ) -> Result<ImportPlan, ImportError> {
     let raw = parse_repos_json(repos_json)?;
-    let existing = existing_paths(manifest_path)?;
 
-    let mut plan = ImportPlan::default();
-    let mut seen_in_input: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for entry in raw {
-        let path = entry.path.clone();
-        // Bare-name validation BEFORE any manifest write — refuses to
-        // ingest a `path` that would later trip
-        // `ChildPathValidator` (separators, `.` / `..`, regex
-        // mismatch, empty). Without this gate, `migration.md`'s
-        // promise that import "validates" was untrue: bad rows
-        // landed as `Event::Add` rows that only failed at sync
-        // time. Fail-fast at import is a much friendlier signal.
-        if let Some(reason) = reject_reason(&path) {
-            plan.failed.push(ImportFailure { path, error: format!("invalid `path`: {reason}") });
-            continue;
+    // CR2: read existing manifest state and commit new rows under a single
+    // exclusive ManifestLock so a concurrent writer cannot insert a row
+    // between the snapshot and the commit loop. Lock sidecar lives next to
+    // the event log at `<ws>/.grex/events.lock` (parent dir created lazily
+    // because ManifestLock::open does not auto-create like ScopedLock).
+    let lock_path = manifest_path
+        .parent()
+        .map(|p| p.join("events.lock"))
+        .unwrap_or_else(|| PathBuf::from(".grex/events.lock"));
+    if let Some(parent) = lock_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|source| ImportError::Lock {
+                path: lock_path.clone(),
+                source,
+            })?;
         }
-        if existing.contains(&path) {
-            plan.skipped.push(ImportSkip { path, reason: SkipReason::PathCollision });
-            continue;
-        }
-        if !seen_in_input.insert(path.clone()) {
-            plan.skipped.push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
-            continue;
-        }
-        let kind = classify(&entry.url);
-        plan.imported.push(ImportEntry {
-            path,
-            url: entry.url,
-            kind,
-            would_dispatch: opts.dry_run,
-        });
     }
+    let mut lock = ManifestLock::open(manifest_path, &lock_path)
+        .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
 
-    if !opts.dry_run {
-        commit_plan(&plan, manifest_path)?;
-    }
+    let plan_result: Result<ImportPlan, ImportError> = lock
+        .write(|| {
+            let existing = existing_paths(manifest_path)?;
 
-    Ok(plan)
+            let mut plan = ImportPlan::default();
+            let mut seen_in_input: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            for entry in raw {
+                let path = entry.path.clone();
+                // Bare-name validation BEFORE any manifest write — refuses to
+                // ingest a `path` that would later trip
+                // `ChildPathValidator` (separators, `.` / `..`, regex
+                // mismatch, empty). Without this gate, `migration.md`'s
+                // promise that import "validates" was untrue: bad rows
+                // landed as `Event::Add` rows that only failed at sync
+                // time. Fail-fast at import is a much friendlier signal.
+                if let Some(reason) = reject_reason(&path) {
+                    plan.failed.push(ImportFailure {
+                        path,
+                        error: format!("invalid `path`: {reason}"),
+                    });
+                    continue;
+                }
+                // NOTE: PackId currently aliases path (identity derivation), so
+                // path-dedup also catches PackId collisions. When PackId
+                // derivation diverges from path (future change), add a
+                // parallel `existing_ids` set + dedup pass. Tracked in
+                // openspec/changes/feat-v1.3.2/design.md review-delta CR1.
+                if existing.contains(&path) {
+                    plan.skipped
+                        .push(ImportSkip { path, reason: SkipReason::PathCollision });
+                    continue;
+                }
+                if !seen_in_input.insert(path.clone()) {
+                    plan.skipped
+                        .push(ImportSkip { path, reason: SkipReason::DuplicateInInput });
+                    continue;
+                }
+                let kind = classify(&entry.url);
+                plan.imported.push(ImportEntry {
+                    path,
+                    url: entry.url,
+                    kind,
+                    would_dispatch: opts.dry_run,
+                });
+            }
+
+            if !opts.dry_run {
+                commit_plan(&plan, manifest_path)?;
+            }
+
+            Ok(plan)
+        })
+        .map_err(|source| ImportError::Lock { path: lock_path.clone(), source })?;
+
+    plan_result
 }
 
 fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportError> {
@@ -263,6 +311,16 @@ mod tests {
     #[test]
     fn classify_case_insensitive() {
         assert_eq!(classify("HTTPS://X/Y.GIT"), ImportedKind::Scripted);
+    }
+
+    #[test]
+    fn classify_file_url_is_scripted() {
+        assert_eq!(classify("file:///tmp/foo"), ImportedKind::Scripted);
+    }
+
+    #[test]
+    fn classify_relative_path_is_declarative() {
+        assert_eq!(classify("./local/path"), ImportedKind::Declarative);
     }
 
     #[test]
@@ -402,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn import_real_run_matches_shared_add_event_fields() {
+    fn import_event_shape_matches_add_run() {
         let dir = tempdir().unwrap();
         let input = dir.path().join("REPOS.json");
         let import_manifest = dir.path().join("grex-import.jsonl");
