@@ -14,9 +14,9 @@ Phase-by-phase checklist. Each task ends with `→ verify: <one-line check>` per
 ## § Phase 1 — Branch + OpenSpec triplet
 
 - [x] Branch `feat-ssot-mount-rename` cut from main  → verify: `git branch --show-current` = `feat-ssot-mount-rename`
-- [ ] `proposal.md` drafted  → verify: this file's sibling exists, frontmatter validates via `python inst/scripts/validate.py` once mount is renamed (until rename, validate against `.omne/scripts/validate.py`)
-- [ ] `design.md` drafted with migration sequence + boundary contract + rule 17 text proposal  → verify: validate.py exit 0; reviewer cross-checks rule 17 text reads coherent
-- [ ] `tasks.md` drafted (this file)  → verify: validate.py exit 0
+- [ ] `proposal.md` drafted  → verify: `python .omne/scripts/validate.py` (pre-rename) exit 0; re-validate with `python inst/scripts/validate.py` after Phase 3
+- [ ] `design.md` drafted with migration sequence + boundary contract + rule 17 text proposal  → verify: `python .omne/scripts/validate.py` (pre-rename) exit 0; reviewer cross-checks rule 17 text reads coherent
+- [ ] `tasks.md` drafted (this file)  → verify: `python .omne/scripts/validate.py` (pre-rename) exit 0
 - [ ] cavecrew-reviewer pass on triplet  → verify: 0 findings on triplet structure / frontmatter / scope
 
 ## § Phase 2 — Path-string rewrites (3 parallel workers, disjoint write-sets per rule 14)
@@ -56,7 +56,7 @@ Gated on Phase 2 complete (all path-string rewrites landed; refs now point at `i
 - [ ] Create `.omne/wt/.gitkeep` to preserve worktree-mount slot  → verify: `.omne/wt/.gitkeep` exists
 - [ ] `.gitignore`: replace single `.omne` line with two entries — `inst` and `.omne/` — on separate lines  → verify: `.gitignore` contains both `inst` and `.omne/` (or `.omne` — match existing convention) on separate lines
 - [ ] Verify both mounts gitignored: `git status --ignored` shows both `inst/` and `.omne/`  → verify: both directories appear under "Ignored files"
-- [ ] Refs now valid: spot-check 3 random rewritten refs resolve correctly via filesystem (e.g. `inst/grad/progress.md`, `inst/schemas/conduct/rules.md`, `inst/IDX.md` if exists)  → verify: each path resolves to a file
+- [ ] Refs now valid: spot-check 3 random rewritten refs resolve correctly via filesystem (e.g. `inst/grad/progress.md`, `inst/schemas/conduct/rules.md`, `inst/INDEX.yaml`)  → verify: each path resolves to a file
 - [ ] Regenerate SSOT INDEX: `python inst/scripts/build_index.py` (assuming script path also rewrote)  → verify: `inst/INDEX.yaml` regenerates with new mount-relative paths; build_index.py exit 0
 
 ## § Phase 4 — Verification
