@@ -240,11 +240,7 @@ fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportErro
     for entry in &plan.imported {
         add_pack(
             manifest_path,
-            AddRequest {
-                url: entry.url.clone(),
-                path: entry.path.clone(),
-                pack_type: entry.kind.as_str().to_string(),
-            },
+            AddRequest::new(entry.url.clone(), entry.path.clone(), entry.kind.as_str().to_string()),
             AddOpts { dry_run: false },
         )
         .map_err(add_error_to_import_error)?;
@@ -473,11 +469,7 @@ mod tests {
         import_from_repos_json(&input, &import_manifest, ImportOpts { dry_run: false }).unwrap();
         crate::add::add_pack(
             &add_manifest,
-            crate::add::AddRequest {
-                url: "https://x/y.git".into(),
-                path: "foo".into(),
-                pack_type: "scripted".into(),
-            },
+            crate::add::AddRequest::new("https://x/y.git", "foo", "scripted"),
             crate::add::AddOpts { dry_run: false },
         )
         .unwrap();

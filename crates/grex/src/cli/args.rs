@@ -83,6 +83,12 @@ pub struct AddArgs {
     pub url: String,
     /// Optional local path (defaults to repo name).
     pub path: Option<String>,
+    /// v1.3.3 B10 — git ref to pin at add time. Accepts `<branch>`,
+    /// `<commit>` (7..40 hex chars), or `<branch>@<commit>` (single
+    /// flag, `@` delimiter). When omitted, defaults to the remote's
+    /// `main` branch HEAD per the 8-cell folder-FA design.
+    #[arg(long = "ref", value_name = "GIT-REF", value_parser = non_empty_string)]
+    pub git_ref: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -94,7 +100,9 @@ pub struct RmArgs {
 #[derive(Args, Debug)]
 pub struct LsArgs {
     /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
-    /// itself. Defaults to the current working directory.
+    /// itself. Defaults to the current working directory. Pass `.` to
+    /// substitute the current working directory explicitly (v1.3.3 B3).
+    #[arg(value_parser = pack_path)]
     pub pack_root: Option<std::path::PathBuf>,
 }
 
@@ -109,6 +117,9 @@ pub struct SyncArgs {
 
     /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
     /// itself. When omitted, `sync` prints the legacy M1 stub and exits 0.
+    /// Pass `.` to substitute the current working directory explicitly
+    /// (v1.3.3 B3).
+    #[arg(value_parser = pack_path)]
     pub pack_root: Option<std::path::PathBuf>,
 
     /// Path to the pack root (formerly `--workspace`). Defaults to the
@@ -119,8 +130,9 @@ pub struct SyncArgs {
     /// `pack: <input> → <canonical>` when it differs). The legacy
     /// `--workspace` spelling is preserved as a deprecated alias and
     /// emits a one-time warning per process; removal scheduled for
-    /// v2.0.0.
-    #[arg(long = "pack", alias = "workspace")]
+    /// v2.0.0. Pass `.` to substitute the current working directory
+    /// explicitly (v1.3.3 B3).
+    #[arg(long = "pack", alias = "workspace", value_parser = pack_path)]
     pub pack: Option<std::path::PathBuf>,
 
     /// Plan actions without touching the filesystem.
@@ -228,6 +240,20 @@ fn non_empty_string(s: &str) -> Result<String, String> {
     }
 }
 
+/// v1.3.3 B3 — Clap `value_parser` for `--pack` / `--workspace` / pack-root
+/// positional path args. Substitutes the literal `.` token with
+/// `std::env::current_dir()` at parse time so all downstream code sees a
+/// concrete cwd path. Per design.md § B3 (Q2): cwd-only resolution, **no
+/// walk-up**. Other relative path forms (`..`, `./subdir`, etc.) flow
+/// through unchanged.
+fn pack_path(s: &str) -> Result<std::path::PathBuf, String> {
+    if s == "." {
+        std::env::current_dir().map_err(|e| format!("`.` shorthand: cannot resolve cwd: {e}"))
+    } else {
+        Ok(std::path::PathBuf::from(s))
+    }
+}
+
 #[derive(Args, Debug)]
 pub struct UpdateArgs {
     /// Optional pack path; if omitted, update all.
@@ -321,8 +347,9 @@ pub struct ServeArgs {
     /// resolves relative paths against. Defaults to the current working
     /// directory when omitted. The legacy `--workspace` spelling is
     /// preserved as a deprecated alias and emits a one-time warning per
-    /// process; removal scheduled for v2.0.0.
-    #[arg(long = "pack", alias = "workspace", value_name = "PATH")]
+    /// process; removal scheduled for v2.0.0. Pass `.` to substitute
+    /// the current working directory explicitly (v1.3.3 B3).
+    #[arg(long = "pack", alias = "workspace", value_name = "PATH", value_parser = pack_path)]
     pub pack: Option<std::path::PathBuf>,
 
     /// Harness-level worker cap inherited by the MCP server's
@@ -373,8 +400,9 @@ pub struct MigrateLockfileArgs {
     /// `.grex/grex.lock.jsonl` is migrated. Defaults to the current
     /// working directory. The legacy `--workspace` spelling is preserved
     /// as a deprecated alias and emits a one-time warning per process;
-    /// removal scheduled for v2.0.0.
-    #[arg(long = "pack", alias = "workspace", value_name = "PATH")]
+    /// removal scheduled for v2.0.0. Pass `.` to substitute the current
+    /// working directory explicitly (v1.3.3 B3).
+    #[arg(long = "pack", alias = "workspace", value_name = "PATH", value_parser = pack_path)]
     pub pack: Option<std::path::PathBuf>,
 
     /// Inspect-only: detect schema version and report what would happen
@@ -387,6 +415,9 @@ pub struct MigrateLockfileArgs {
 pub struct TeardownArgs {
     /// Pack root. Directory holding `.grex/pack.yaml`, or the YAML file
     /// itself. When omitted, `teardown` prints a usage stub and exits 0.
+    /// Pass `.` to substitute the current working directory explicitly
+    /// (v1.3.3 B3).
+    #[arg(value_parser = pack_path)]
     pub pack_root: Option<std::path::PathBuf>,
 
     /// Path to the pack root (formerly `--workspace`). Defaults to the
@@ -397,8 +428,9 @@ pub struct TeardownArgs {
     /// `pack: <input> → <canonical>` when it differs). The legacy
     /// `--workspace` spelling is preserved as a deprecated alias and
     /// emits a one-time warning per process; removal scheduled for
-    /// v2.0.0.
-    #[arg(long = "pack", alias = "workspace")]
+    /// v2.0.0. Pass `.` to substitute the current working directory
+    /// explicitly (v1.3.3 B3).
+    #[arg(long = "pack", alias = "workspace", value_parser = pack_path)]
     pub pack: Option<std::path::PathBuf>,
 
     /// Suppress per-action log lines.
@@ -638,6 +670,166 @@ mod tests {
                 assert!(a.force_prune_with_ignored);
             }
             _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn b3_dot_resolves_to_cwd_for_pack_flag_on_sync() {
+        // v1.3.3 B3 — `--pack .` substitutes process cwd at parse time.
+        let cwd = std::env::current_dir().expect("cwd available");
+        let cli = parse(&["sync", "--pack", "."]).expect("sync --pack . parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn b3_dot_resolves_to_cwd_for_workspace_alias() {
+        // v1.3.3 B3 — legacy `--workspace .` spelling honors `.` shorthand
+        // identically to `--pack .` (the alias is the same flag).
+        let cwd = std::env::current_dir().expect("cwd available");
+        let cli = parse(&["sync", "--workspace", "."]).expect("sync --workspace . parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn b3_dot_resolves_for_positional_pack_root() {
+        // v1.3.3 B3 — positional `<pack_root>` arg also honors `.` for
+        // sync / teardown / ls verbs.
+        let cwd = std::env::current_dir().expect("cwd available");
+        let cli = parse(&["sync", "."]).expect("sync . parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.pack_root.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Sync variant"),
+        }
+        let cli = parse(&["teardown", "."]).expect("teardown . parses");
+        match cli.verb {
+            Verb::Teardown(a) => assert_eq!(a.pack_root.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Teardown variant"),
+        }
+        let cli = parse(&["ls", "."]).expect("ls . parses");
+        match cli.verb {
+            Verb::Ls(a) => assert_eq!(a.pack_root.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Ls variant"),
+        }
+    }
+
+    #[test]
+    fn b3_dot_resolves_on_serve_and_migrate_lockfile() {
+        // v1.3.3 B3 — `--pack .` is uniform across every verb that
+        // accepts the flag. Cover the verbs not exercised above.
+        let cwd = std::env::current_dir().expect("cwd available");
+        let cli = parse(&["serve", "--pack", "."]).expect("serve --pack . parses");
+        match cli.verb {
+            Verb::Serve(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected Serve variant"),
+        }
+        let cli =
+            parse(&["migrate-lockfile", "--pack", "."]).expect("migrate-lockfile --pack . parses");
+        match cli.verb {
+            Verb::MigrateLockfile(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
+            _ => panic!("expected MigrateLockfile variant"),
+        }
+    }
+
+    #[test]
+    fn b3_other_relative_paths_unchanged() {
+        // v1.3.3 B3 — only the literal `.` token is rewritten. Other
+        // relative path forms (`./subdir`, `..`, plain names) flow
+        // through unchanged so existing path handling stays intact.
+        let cli = parse(&["sync", "--pack", "./subdir"]).expect("sync --pack ./subdir parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert_eq!(a.pack.as_deref(), Some(std::path::Path::new("./subdir")));
+            }
+            _ => panic!("expected Sync variant"),
+        }
+        let cli = parse(&["sync", "--pack", ".."]).expect("sync --pack .. parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert_eq!(a.pack.as_deref(), Some(std::path::Path::new("..")));
+            }
+            _ => panic!("expected Sync variant"),
+        }
+        let cli = parse(&["sync", "--pack", "some/pack"]).expect("sync --pack some/pack parses");
+        match cli.verb {
+            Verb::Sync(a) => {
+                assert_eq!(a.pack.as_deref(), Some(std::path::Path::new("some/pack")));
+            }
+            _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn b3_absolute_path_unchanged() {
+        // v1.3.3 B3 — absolute paths are passed through verbatim.
+        #[cfg(windows)]
+        let abs = "C:\\abs\\path";
+        #[cfg(not(windows))]
+        let abs = "/abs/path";
+        let cli = parse(&["sync", "--pack", abs]).expect("sync --pack <abs> parses");
+        match cli.verb {
+            Verb::Sync(a) => assert_eq!(a.pack.as_deref(), Some(std::path::Path::new(abs))),
+            _ => panic!("expected Sync variant"),
+        }
+    }
+
+    #[test]
+    fn b10_add_ref_flag_parses_bare_branch() {
+        // v1.3.3 B10 — `--ref main` populates `git_ref`.
+        let cli = parse(&["add", "https://example.com/repo.git", "--ref", "main"])
+            .expect("add --ref main parses");
+        match cli.verb {
+            Verb::Add(a) => assert_eq!(a.git_ref.as_deref(), Some("main")),
+            _ => panic!("expected Add variant"),
+        }
+    }
+
+    #[test]
+    fn b10_add_ref_flag_parses_branch_at_commit() {
+        // v1.3.3 B10 — `@`-delimited branch+commit pin parses verbatim;
+        // `parse_ref` (in grex-core) splits the components.
+        let cli = parse(&["add", "https://example.com/repo.git", "--ref", "main@a3f9c1d"])
+            .expect("add --ref main@a3f9c1d parses");
+        match cli.verb {
+            Verb::Add(a) => assert_eq!(a.git_ref.as_deref(), Some("main@a3f9c1d")),
+            _ => panic!("expected Add variant"),
+        }
+    }
+
+    #[test]
+    fn b10_add_ref_flag_parses_bare_commit() {
+        // v1.3.3 B10 — bare 7-char SHA token routes to `git_ref`.
+        let cli = parse(&["add", "https://example.com/repo.git", "--ref", "a3f9c1d"])
+            .expect("add --ref a3f9c1d parses");
+        match cli.verb {
+            Verb::Add(a) => assert_eq!(a.git_ref.as_deref(), Some("a3f9c1d")),
+            _ => panic!("expected Add variant"),
+        }
+    }
+
+    #[test]
+    fn b10_add_ref_flag_optional() {
+        // v1.3.3 B10 — `--ref` is opt-in; omitting it leaves `git_ref` None.
+        let cli =
+            parse(&["add", "https://example.com/repo.git"]).expect("add without --ref parses");
+        match cli.verb {
+            Verb::Add(a) => assert!(a.git_ref.is_none(), "default --ref must be None"),
+            _ => panic!("expected Add variant"),
+        }
+    }
+
+    #[test]
+    fn b10_add_ref_rejects_whitespace() {
+        // v1.3.3 B10 — `--ref ""` / `--ref " "` rejected by value parser.
+        for bad in ["", " ", "\t"] {
+            let err = parse(&["add", "https://example.com/repo.git", "--ref", bad])
+                .expect_err("whitespace --ref must be rejected");
+            assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation, "for {bad:?}");
         }
     }
 

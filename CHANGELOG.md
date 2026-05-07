@@ -20,8 +20,20 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-05-07
+
 ### Added
 
+- `grex add --ref <ref>` flag (B10) — pin child to a git ref at
+  registration time; folder-derived FA (folder-as-fingerprint) with
+  7-char SHA collision-extend disambiguation.
+- `grex sync --pack .` and `--workspace .` cwd shorthand (B3) —
+  `.` resolves to current directory, removing the explicit-path
+  boilerplate for the common case.
+- `grex doctor` `.gitignore`-aware drift check (B5) — warn-only
+  surfacing of managed-block divergence without auto-repair.
+- Lean4 theorems `ref_fa_total`, `ref_folder_injective`, `dup_safe`
+  in `proof/Grex/Ref.lean` formalising the B10 ref-FA contract.
 - Real-smoke harness (`crates/real-smoke/`) — black-box CLI regression
   suite running against stable GH fixture repos via SSH + git
   worktrees. 15 regression gates locking the v1.3.0 dogfood bugs
@@ -37,17 +49,16 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
   add registration path, keeping import and `grex add` on one event
   construction flow without changing the manifest schema.
 
-### Deprecated
-
-### Removed
-
 ### Fixed
 
 - `grex doctor` now compares and repairs managed `.gitignore` blocks against
   the patterns emitted by built-in pack types, including the default
   `.grex-lock` entry and authored `x-gitignore` patterns.
 
-### Security
+### Internal
+
+- SSOT mount path renamed `.omne/` → `inst/` (separate change
+  feat-ssot-mount-rename, shipped pre-v1.3.3).
 
 ## [1.3.0] - 2026-05-02
 
@@ -698,7 +709,8 @@ are parked for 1.0.1:
   gate + double-init gate (rmcp 1.5.0 limitation; documented in
   `openspec/archive/feat-m7-1-mcp-server/spec.md` §Known limitations).
 
-[Unreleased]: https://github.com/egoisth777/grex/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/egoisth777/grex/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/egoisth777/grex/releases/tag/v1.3.3
 [1.3.0]: https://github.com/egoisth777/grex/releases/tag/v1.3.0
 [1.2.5]: https://github.com/egoisth777/grex/releases/tag/v1.2.5
 [1.2.4]: https://github.com/egoisth777/grex/releases/tag/v1.2.4

@@ -74,6 +74,15 @@ pub enum CheckKind {
     /// the parent meta-repo's `.gitignore` — that contract is owned by
     /// the operator.
     ParentGitTracksPackContent,
+    /// v1.3.3 (B5) — advisory: a registered pack's path is NOT covered
+    /// by any rule in the parent git repo's `.gitignore`. Surfaced as
+    /// **warn-only** (`Severity::Ok`) so the exit-code roll-up is not
+    /// affected. Aggregated across all drift candidates into a single
+    /// summary finding at the end of the check rather than per-pack
+    /// rows. Operator action: add the pack path to the parent repo's
+    /// `.gitignore` (or narrow an over-broad rule). grex never mutates
+    /// the parent `.gitignore`.
+    GitignoreDrift,
 }
 
 impl CheckKind {
@@ -88,6 +97,7 @@ impl CheckKind {
             CheckKind::QuarantineGc => "quarantine-gc",
             CheckKind::QuarantineRestore => "quarantine-restore",
             CheckKind::ParentGitTracksPackContent => "parent-git-tracks-pack-content",
+            CheckKind::GitignoreDrift => "gitignore-drift",
         }
     }
 }
@@ -470,6 +480,14 @@ fn run_meta_checks(meta_dir: &Path, report: &mut DoctorReport) {
     // visible above `meta_dir`.
     let parent_findings = check_parent_git_tracks_pack_content(meta_dir, packs.as_ref());
     report.findings.extend(parent_findings.findings);
+
+    // v1.3.3 (B5) — advisory: detect packs whose path is not covered
+    // by the parent git repo's `.gitignore`. Warn-only, aggregated
+    // into one summary finding. Skipped silently when the manifest is
+    // unreadable (already reported by the schema check) or when no
+    // parent git repo is visible above `meta_dir`.
+    let drift_findings = check_gitignore_drift(meta_dir, packs.as_ref());
+    report.findings.extend(drift_findings.findings);
 }
 
 /// v1.2.5 — quarantine-GC check. Surveys `<meta>/.grex/trash/` and
@@ -1083,6 +1101,146 @@ fn parent_git_path_tracked(repo: &Path, rel_path: &str) -> bool {
         .stderr(Stdio::null())
         .status();
     matches!(status, Ok(s) if s.success())
+}
+
+/// v1.3.3 (B5) — `.gitignore`-aware drift advisory.
+///
+/// For every pack registered under `meta_dir`, classify the pack
+/// against the nearest parent git repo's `.gitignore`. A pack whose
+/// path is NOT matched by any ignore rule is a "drift candidate" — the
+/// operator most likely forgot to add the pack to `.gitignore`, which
+/// risks the parent meta-repo accidentally tracking pack content.
+///
+/// Severity is `Severity::Ok` (warn-only): the finding is informational
+/// and never affects the exit-code roll-up. All drift candidates are
+/// aggregated into a SINGLE summary finding at the end of the check
+/// rather than emitting per-pack rows, matching the design (Q3): "warn
+/// only, summary prompt at end".
+///
+/// Skipped silently (no finding emitted) when:
+/// * `packs` is `None` (manifest unreadable — already reported by the
+///   schema check);
+/// * no parent git repo is visible above `meta_dir` (no `.gitignore`
+///   to advise about);
+/// * `packs` is empty (nothing to drift).
+///
+/// Doctor never writes to the parent `.gitignore` — the advisory is
+/// always a passive nudge.
+pub fn check_gitignore_drift(
+    meta_dir: &Path,
+    packs: Option<&HashMap<String, PackState>>,
+) -> CheckResult {
+    let Some(packs) = packs else {
+        return CheckResult::default();
+    };
+    if packs.is_empty() {
+        return CheckResult::default();
+    }
+    let Some(parent_repo) = find_parent_git_repo(meta_dir) else {
+        return CheckResult::default();
+    };
+    let gi_path = parent_repo.join(".gitignore");
+    let rules = read_gitignore_rules(&gi_path);
+
+    let mut drift: Vec<(String, String)> = Vec::new();
+    let ordered: BTreeMap<_, _> = packs.iter().collect();
+    for (id, state) in ordered {
+        let pack_abs = meta_dir.join(&state.path);
+        let Ok(pack_rel) = pack_abs.strip_prefix(&parent_repo) else {
+            continue;
+        };
+        let rel_str = pack_rel.to_string_lossy().replace('\\', "/");
+        if rel_str.is_empty() {
+            continue;
+        }
+        if !gitignore_covers(&rules, &rel_str) {
+            drift.push((id.clone(), rel_str));
+        }
+    }
+
+    if drift.is_empty() {
+        return CheckResult::default();
+    }
+
+    let mut detail =
+        format!("{} pack(s) drift parent .gitignore tracking expectations:\n", drift.len());
+    for (id, rel) in &drift {
+        detail
+            .push_str(&format!("  {rel}  — not-tracked (consider adding `{id}` to .gitignore)\n"));
+    }
+    detail.push_str(&format!(
+        "Action: review .gitignore at {} and add rules accordingly. grex never mutates the parent `.gitignore` automatically.",
+        parent_repo.display()
+    ));
+
+    CheckResult::single(Finding {
+        check: CheckKind::GitignoreDrift,
+        severity: Severity::Ok,
+        pack: None,
+        detail,
+        auto_fixable: false,
+        synthetic: false,
+    })
+}
+
+/// Read `.gitignore` rules from `path`. Returns an empty vec when the
+/// file is absent or unreadable. Lines are trimmed; comments
+/// (leading `#`) and empty lines are skipped. Negation (`!rule`) and
+/// glob expansion are NOT modelled — this is a coarse string-prefix
+/// matcher tuned for the common case of pack basenames in
+/// `.gitignore`. False negatives (drift candidate emitted when the
+/// rule actually covers the pack via a glob) are tolerated by design:
+/// the advisory is warn-only.
+fn read_gitignore_rules(path: &Path) -> Vec<String> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.trim_end_matches('/').to_string())
+        .collect()
+}
+
+/// Coarse-grained `.gitignore` coverage check. Returns `true` when any
+/// rule matches the pack-relative path:
+/// * exact equality (`<rule> == <rel>`);
+/// * leading-slash anchored equality (`/<rule> == <rel>`);
+/// * basename equality (`<rule> == <last-segment of rel>`) — matches
+///   the unanchored `.gitignore` semantics where a bare name applies
+///   anywhere in the tree;
+/// * directory-prefix equality (`<rel>` starts with `<rule>/`) — a
+///   broader rule swallowing the pack subtree.
+///
+/// Glob characters (`*`, `?`, `[`) make the rule conservatively
+/// match-any: we treat the pack as covered to avoid noisy false
+/// positives. Negation (`!`) rules are ignored — too rare in pack
+/// `.gitignore` practice to be worth the complexity here.
+fn gitignore_covers(rules: &[String], rel: &str) -> bool {
+    let rel_norm = rel.trim_start_matches('/');
+    let rel_basename = rel_norm.rsplit('/').next().unwrap_or(rel_norm);
+    for rule in rules {
+        if rule.starts_with('!') {
+            continue;
+        }
+        // Conservative: any glob → assume coverage to keep noise low.
+        if rule.contains('*') || rule.contains('?') || rule.contains('[') {
+            return true;
+        }
+        let rule_stripped = rule.trim_start_matches('/');
+        if rule_stripped.is_empty() {
+            continue;
+        }
+        if rule_stripped == rel_norm || rule_stripped == rel_basename {
+            return true;
+        }
+        let prefix = format!("{rule_stripped}/");
+        if rel_norm.starts_with(&prefix) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Shorthand — build a workspace-scoped config-lint warning finding.
@@ -1985,5 +2143,134 @@ mod tests {
             let expected = match worst { 0 => 0, 1 => 1, _ => 2 };
             proptest::prop_assert_eq!(r.exit_code(), expected);
         }
+    }
+
+    // --- v1.3.3 (B5) — `check_gitignore_drift` ---
+
+    /// Build a minimal `PackState` for drift tests. The check only
+    /// reads `state.path`, so other fields are irrelevant placeholder
+    /// values.
+    fn drift_pack(id: &str, path: &str) -> (String, PackState) {
+        (
+            id.to_string(),
+            PackState {
+                id: id.to_string(),
+                url: format!("https://example/{id}"),
+                path: path.to_string(),
+                pack_type: "declarative".to_string(),
+                ref_spec: None,
+                last_sync_sha: None,
+                added_at: ts(),
+                updated_at: ts(),
+            },
+        )
+    }
+
+    /// Build a parent git repo with a workspace meta directory inside.
+    /// Returns `(parent_repo, workspace)`. Caller writes
+    /// `<parent>/.gitignore` themselves.
+    fn drift_fixture() -> (tempfile::TempDir, PathBuf) {
+        let parent = tempdir().unwrap();
+        fs::create_dir_all(parent.path().join(".git")).unwrap();
+        fs::write(parent.path().join(".git/HEAD"), b"ref: refs/heads/main\n").unwrap();
+        let ws = parent.path().join("ws");
+        fs::create_dir_all(&ws).unwrap();
+        (parent, ws)
+    }
+
+    #[test]
+    fn gitignore_drift_emits_finding_for_uncovered_pack() {
+        // One pack tracked by .gitignore, one NOT tracked → expect a
+        // single summary finding listing only the uncovered pack.
+        let (parent, ws) = drift_fixture();
+        fs::write(parent.path().join(".gitignore"), "ws/alpha\n").unwrap();
+        let mut packs: HashMap<String, PackState> = HashMap::new();
+        let (a_id, a) = drift_pack("alpha", "alpha");
+        let (b_id, b) = drift_pack("beta", "beta");
+        packs.insert(a_id, a);
+        packs.insert(b_id, b);
+
+        let r = check_gitignore_drift(&ws, Some(&packs));
+        assert_eq!(r.findings.len(), 1, "summary finding only; got: {:?}", r.findings);
+        let f = &r.findings[0];
+        assert_eq!(f.check, CheckKind::GitignoreDrift);
+        assert_eq!(f.severity, Severity::Ok, "warn-only — must not affect exit code");
+        assert!(f.detail.contains("beta"), "detail must name uncovered pack: {}", f.detail);
+        assert!(
+            !f.detail.contains("ws/alpha  — not-tracked"),
+            "covered pack must not appear: {}",
+            f.detail
+        );
+    }
+
+    #[test]
+    fn gitignore_drift_empty_gitignore_means_all_packs_drift() {
+        // Empty .gitignore covers nothing → every pack is drift.
+        let (parent, ws) = drift_fixture();
+        fs::write(parent.path().join(".gitignore"), "").unwrap();
+        let mut packs: HashMap<String, PackState> = HashMap::new();
+        for id in ["alpha", "beta"] {
+            let (k, v) = drift_pack(id, id);
+            packs.insert(k, v);
+        }
+
+        let r = check_gitignore_drift(&ws, Some(&packs));
+        assert_eq!(r.findings.len(), 1);
+        let detail = &r.findings[0].detail;
+        assert!(detail.contains("alpha"), "alpha must be flagged: {detail}");
+        assert!(detail.contains("beta"), "beta must be flagged: {detail}");
+        assert!(detail.starts_with("2 pack(s) drift"), "summary count: {detail}");
+    }
+
+    #[test]
+    fn gitignore_drift_all_covered_emits_no_finding() {
+        // Every pack covered → no summary finding.
+        let (parent, ws) = drift_fixture();
+        fs::write(parent.path().join(".gitignore"), "ws/alpha\nws/beta\n").unwrap();
+        let mut packs: HashMap<String, PackState> = HashMap::new();
+        for id in ["alpha", "beta"] {
+            let (k, v) = drift_pack(id, id);
+            packs.insert(k, v);
+        }
+
+        let r = check_gitignore_drift(&ws, Some(&packs));
+        assert!(r.findings.is_empty(), "no drift → no finding; got: {:?}", r.findings);
+    }
+
+    #[test]
+    fn gitignore_drift_no_packs_no_finding() {
+        // No packs registered → nothing to drift.
+        let (_parent, ws) = drift_fixture();
+        let packs: HashMap<String, PackState> = HashMap::new();
+        let r = check_gitignore_drift(&ws, Some(&packs));
+        assert!(r.findings.is_empty());
+
+        // None packs (manifest unreadable) → silent skip.
+        let r2 = check_gitignore_drift(&ws, None);
+        assert!(r2.findings.is_empty());
+    }
+
+    #[test]
+    fn gitignore_drift_no_parent_repo_silent_skip() {
+        // No parent git repo above meta_dir → nothing to advise.
+        let d = tempdir().unwrap();
+        let mut packs: HashMap<String, PackState> = HashMap::new();
+        let (k, v) = drift_pack("alpha", "alpha");
+        packs.insert(k, v);
+        let r = check_gitignore_drift(d.path(), Some(&packs));
+        assert!(r.findings.is_empty(), "no parent repo → silent; got: {:?}", r.findings);
+    }
+
+    #[test]
+    fn gitignore_drift_basename_rule_covers_pack() {
+        // Bare name `alpha` in .gitignore (unanchored) covers
+        // `ws/alpha` per `.gitignore` basename semantics.
+        let (parent, ws) = drift_fixture();
+        fs::write(parent.path().join(".gitignore"), "alpha\n").unwrap();
+        let mut packs: HashMap<String, PackState> = HashMap::new();
+        let (k, v) = drift_pack("alpha", "alpha");
+        packs.insert(k, v);
+        let r = check_gitignore_drift(&ws, Some(&packs));
+        assert!(r.findings.is_empty(), "basename rule covers pack; got: {:?}", r.findings);
     }
 }

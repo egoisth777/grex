@@ -15,6 +15,7 @@ pub mod lockfile;
 pub mod log;
 pub mod manifest;
 pub mod pack;
+pub mod refspec;
 pub mod sync;
 pub mod tree;
 pub mod vars;

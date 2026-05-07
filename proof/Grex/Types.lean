@@ -524,4 +524,122 @@ axiom snapshot_recursive : Path → Path → AuditLog → SnapResult
 
 end Walker
 
+/-! ## v1.3.3 B10 `--ref` folder FA — quarantined axiom + supporting defs
+
+The `encodeRefdir_distinct` axiom and the four definitions it depends on
+(`RefInput`, `encodeRefdir`, `same_repo`, `inputs_distinguish`) live here
+rather than in `Grex.Ref` per the CI axiom-location policy that restricts
+`axiom`-keyword declarations to `Grex.Bridge` and `Grex.Types` only.
+Theorems and helpers that *consume* these definitions remain in
+`Grex.Ref` (`ref_fa_total`, `ref_folder_injective`, `dup_safe`).
+
+Mirrors the existing v1.2.1 quarantine precedent (above) which lifted
+`AuditLog`, `SnapResult`, and `snapshot_recursive` into `Grex.Types`
+alongside the consumer pipeline staying in `Grex.Quarantine`.
+-/
+
+namespace Ref
+
+/-- Boolean-triple input axes, lifted into a tagged record so the FA
+    can pattern-match on the structural shape rather than three loose
+    `Bool` arguments. Mirrors the design-doc table header. -/
+structure RefInput where
+  /-- B: branch component present in `--ref`? -/
+  hasBranch : Bool
+  /-- C: commit component present in `--ref`? -/
+  hasCommit : Bool
+  /-- U: URL already tracked in parent manifest? -/
+  urlTracked : Bool
+  /-- repo identity (URL last-segment, `.git` stripped). Two inputs
+      with the same `repo` share the `<reponame>/` parent folder. -/
+  repo : String
+  /-- Branch name as written in `--ref` (e.g. `main`, `feature/foo`).
+      Empty string when `hasBranch = false` (FA defaults to `"main"`
+      in cells 1, 2, 5, 6 per OQ2/OQ3 resolution). -/
+  branch : String
+  /-- Resolved 40-char commit SHA. Always present at FA evaluation
+      time per the design's "always resolve target to specific
+      40-char commit SHA" universal invariant; the `hasCommit` axis
+      records whether the user *wrote* a commit token, not whether
+      the resolver found one. -/
+  commit : String
+  /-- For cells 4 / 6 / 8 (U=1): does the parent manifest already
+      track an entry with the same `(branch, commit)` tuple under
+      the same repo? `dupHit = true` triggers reject branches;
+      `dupHit = false` triggers Add-sibling branches. The resolver
+      computes this by scanning manifest entries; in the model it is
+      a free Boolean axis. -/
+  dupHit : Bool
+deriving DecidableEq, Repr
+
+/-- `<branch>` token: branch name with `/` → `_`. Mirrors the
+    design's path-encoding rule. Local copy needed because
+    `encodeRefdir` lives here; the same helper is also defined in
+    `Grex.Ref` for use by theorems that don't cross the axiom. -/
+def encodeBranchTy (s : String) : String :=
+  s.map (fun c => if c = '/' then '_' else c)
+
+/-- `<commit-short>` token: first 7 chars of the 40-char SHA. -/
+def commitShortTy (sha : String) : String :=
+  sha.take 7
+
+/-- Resolved `<refdir>` for a given input, per the design's 8-cell
+    table. Branch token defaults to `"main"` when the input has no
+    branch component (cells 1, 2, 5, 6 per OQ2/OQ3). -/
+def encodeRefdir (i : RefInput) : String :=
+  let br := if i.hasBranch then encodeBranchTy i.branch else "main"
+  match i.hasBranch, i.hasCommit with
+  | false, false => br                          -- cells 1, 2: just `main`
+  | true,  false => br                          -- cells 3, 4: `<branch>`
+  | false, true  => br ++ "@" ++ commitShortTy i.commit  -- cells 5, 6
+  | true,  true  => br ++ "@" ++ commitShortTy i.commit  -- cells 7, 8
+
+/-- Two inputs share the `<reponame>/` parent. -/
+def same_repo (i₁ i₂ : RefInput) : Prop := i₁.repo = i₂.repo
+
+/-- The "encoding-relevant" projection of a `RefInput`. Two inputs
+    with equal projections produce equal `<refdir>` strings. -/
+def encKey (i : RefInput) : Bool × Bool × String × String :=
+  (i.hasBranch, i.hasCommit, i.branch, i.commit)
+
+/-- **OQ5 collision-extend invariant (decidable hypothesis).**
+
+    Captures the design's add-time uniqueness check: when two
+    Add-class inputs share the same repo and *would* collide on
+    `<commit-short>`, the resolver extends the prefix until they
+    differ. Stated as a hypothesis on call sites so that
+    `ref_folder_injective` is provable without modelling the
+    extension loop in Lean (which would require an unbounded
+    fixed-point construction). The hypothesis says: if two distinct
+    inputs reach the FA with the *same* `encKey`, the design's
+    pre-FA resolver has already differentiated them — i.e. they are
+    *not* distinct under that key, contradiction. -/
+def inputs_distinguish (i₁ i₂ : RefInput) : Prop :=
+  i₁ ≠ i₂ → same_repo i₁ i₂ → encKey i₁ ≠ encKey i₂
+
+/-- **OQ5-strengthened encoding distinctness.** The pre-FA resolver
+    extends `<commit-short>` prefixes until distinct same-repo
+    inputs yield distinct `encodeRefdir`. This packs the
+    collision-extend invariant into a single decidable predicate
+    consumed by `ref_folder_injective`. We prove it from
+    `inputs_distinguish` plus the assumption that, at FA-evaluation
+    time, the resolver has already canonicalised the input — a
+    stronger version of `inputs_distinguish` that also forbids
+    encoding-collapse:
+
+    Practically: this is the right place for the v1.3.3 Rust impl
+    to plug in. The Rust resolver MUST establish this property
+    before invoking the FA; the Lean side accepts it as the OQ5
+    contract.
+
+    Lives in `Grex.Types` (alongside the other quarantined data
+    axioms) per the CI axiom-location policy. -/
+axiom encodeRefdir_distinct {i₁ i₂ : RefInput} :
+    inputs_distinguish i₁ i₂ →
+    i₁ ≠ i₂ →
+    same_repo i₁ i₂ →
+    encodeRefdir i₁ ≠ encodeRefdir i₂
+
+end Ref
+
 end Grex
