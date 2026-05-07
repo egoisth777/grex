@@ -240,11 +240,7 @@ fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportErro
     for entry in &plan.imported {
         add_pack(
             manifest_path,
-            AddRequest::new(
-                entry.url.clone(),
-                entry.path.clone(),
-                entry.kind.as_str().to_string(),
-            ),
+            AddRequest::new(entry.url.clone(), entry.path.clone(), entry.kind.as_str().to_string()),
             AddOpts { dry_run: false },
         )
         .map_err(add_error_to_import_error)?;

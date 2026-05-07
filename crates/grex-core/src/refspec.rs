@@ -167,10 +167,7 @@ pub fn parse_ref(token: &str) -> Result<Ref, RefParseError> {
             if !is_hex_sha(commit) {
                 return Err(RefParseError::InvalidCommit((*commit).to_string()));
             }
-            Ok(Ref {
-                branch: Some((*branch).to_string()),
-                commit: Some((*commit).to_string()),
-            })
+            Ok(Ref { branch: Some((*branch).to_string()), commit: Some((*commit).to_string()) })
         }
         _ => Err(RefParseError::MultipleAt),
     }
@@ -289,19 +286,31 @@ pub fn classify_ref_input(r: &Ref, ctx: &AddContext) -> RefAction {
         (true, false, false) => RefAction::Add,
         // cell 4: B=1 C=0 U=1 → silent reject if dup, else AddSibling.
         (true, false, true) => {
-            if dup { RefAction::SilentReject } else { RefAction::AddSibling }
+            if dup {
+                RefAction::SilentReject
+            } else {
+                RefAction::AddSibling
+            }
         }
         // cell 5: B=0 C=1 U=0 → Add (bare commit, default `main`).
         (false, true, false) => RefAction::Add,
         // cell 6: B=0 C=1 U=1 → warn-reject if dup, else warn-add.
         (false, true, true) => {
-            if dup { RefAction::WarnReject } else { RefAction::WarnAdd }
+            if dup {
+                RefAction::WarnReject
+            } else {
+                RefAction::WarnAdd
+            }
         }
         // cell 7: B=1 C=1 U=0 → Add (branch + commit pin, fresh repo).
         (true, true, false) => RefAction::Add,
         // cell 8: B=1 C=1 U=1 → warn-reject if dup, else warn-add.
         (true, true, true) => {
-            if dup { RefAction::WarnReject } else { RefAction::WarnAdd }
+            if dup {
+                RefAction::WarnReject
+            } else {
+                RefAction::WarnAdd
+            }
         }
     }
 }
@@ -340,10 +349,7 @@ mod tests {
     #[test]
     fn parse_branch_at_commit() {
         let r = parse_ref("main@a3f9c1d").unwrap();
-        assert_eq!(
-            r,
-            Ref { branch: Some("main".into()), commit: Some("a3f9c1d".into()) }
-        );
+        assert_eq!(r, Ref { branch: Some("main".into()), commit: Some("a3f9c1d".into()) });
     }
 
     #[test]
@@ -411,29 +417,20 @@ mod tests {
 
     #[test]
     fn encode_branch_at_commit_short_seven() {
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         assert_eq!(encode_refdir(&r), "main@a3f9c1d");
     }
 
     #[test]
     fn encode_with_extended_prefix() {
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         assert_eq!(encode_refdir_with_prefix(&r, 8), "main@a3f9c1d2");
         assert_eq!(encode_refdir_with_prefix(&r, 12), "main@a3f9c1d2b8e7");
     }
 
     #[test]
     fn encode_prefix_clamps_to_min_max() {
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a".repeat(40)),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a".repeat(40)) };
         // Below min clamped up to 7.
         assert_eq!(encode_refdir_with_prefix(&r, 3).len(), "main@".len() + 7);
         // Above max clamped down to 40.
@@ -444,10 +441,7 @@ mod tests {
 
     #[test]
     fn resolve_no_collision_returns_seven_char_prefix() {
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         let existing: HashSet<String> = HashSet::new();
         assert_eq!(resolve_unique_refdir(&r, &existing), "main@a3f9c1d");
     }
@@ -455,10 +449,7 @@ mod tests {
     #[test]
     fn resolve_collision_extends_one_char() {
         // Force collision on 7-char prefix; 8-char prefix is unique.
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         let mut existing = HashSet::new();
         existing.insert("main@a3f9c1d".to_string());
         assert_eq!(resolve_unique_refdir(&r, &existing), "main@a3f9c1d2");
@@ -467,10 +458,7 @@ mod tests {
     #[test]
     fn resolve_collision_extends_multiple_chars() {
         // Force collision on 7-char and 8-char prefixes.
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         let mut existing = HashSet::new();
         existing.insert("main@a3f9c1d".to_string());
         existing.insert("main@a3f9c1d2".to_string());
@@ -492,10 +480,7 @@ mod tests {
     #[test]
     fn resolve_full_sha_collision_returns_full() {
         // 12-char SHA, all prefixes collide with existing entries.
-        let r = Ref {
-            branch: Some("main".into()),
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = Ref { branch: Some("main".into()), commit: Some("a3f9c1d2b8e7".into()) };
         let mut existing = HashSet::new();
         for n in SHA_PREFIX_MIN..=12 {
             existing.insert(encode_refdir_with_prefix(&r, n));
@@ -623,22 +608,10 @@ mod tests {
         // a Reject-class action, which the caller MUST translate to a
         // no-op. Cells 2, 4-dup, 6-dup, 8-dup.
         let cases: [(Ref, AddContext); 4] = [
-            (
-                Ref { branch: None, commit: None },
-                AddContext { url_tracked: true, dup_hit: false },
-            ), // cell 2
-            (
-                br("main"),
-                AddContext { url_tracked: true, dup_hit: true },
-            ), // cell 4-dup
-            (
-                co("a3f9c1d"),
-                AddContext { url_tracked: true, dup_hit: true },
-            ), // cell 6-dup
-            (
-                br_co("main", "a3f9c1d"),
-                AddContext { url_tracked: true, dup_hit: true },
-            ), // cell 8-dup
+            (Ref { branch: None, commit: None }, AddContext { url_tracked: true, dup_hit: false }), // cell 2
+            (br("main"), AddContext { url_tracked: true, dup_hit: true }), // cell 4-dup
+            (co("a3f9c1d"), AddContext { url_tracked: true, dup_hit: true }), // cell 6-dup
+            (br_co("main", "a3f9c1d"), AddContext { url_tracked: true, dup_hit: true }), // cell 8-dup
         ];
         for (r, ctx) in &cases {
             let action = classify_ref_input(r, ctx);

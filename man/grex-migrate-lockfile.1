@@ -10,7 +10,7 @@ Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt\-in, idempotent). T
 .SH OPTIONS
 .TP
 \fB\-\-pack\fR \fI<PATH>\fR
-Path to the pack root (formerly `\-\-workspace`) — the meta whose `.grex/grex.lock.jsonl` is migrated. Defaults to the current working directory. The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
+Path to the pack root (formerly `\-\-workspace`) — the meta whose `.grex/grex.lock.jsonl` is migrated. Defaults to the current working directory. The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0. Pass `.` to substitute the current working directory explicitly (v1.3.3 B3)
 .TP
 \fB\-n\fR, \fB\-\-dry\-run\fR
 Inspect\-only: detect schema version and report what would happen without writing. Lockfile bytes are unchanged

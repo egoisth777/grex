@@ -728,8 +728,8 @@ mod tests {
             Verb::Serve(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
             _ => panic!("expected Serve variant"),
         }
-        let cli = parse(&["migrate-lockfile", "--pack", "."])
-            .expect("migrate-lockfile --pack . parses");
+        let cli =
+            parse(&["migrate-lockfile", "--pack", "."]).expect("migrate-lockfile --pack . parses");
         match cli.verb {
             Verb::MigrateLockfile(a) => assert_eq!(a.pack.as_deref(), Some(cwd.as_path())),
             _ => panic!("expected MigrateLockfile variant"),
@@ -815,8 +815,8 @@ mod tests {
     #[test]
     fn b10_add_ref_flag_optional() {
         // v1.3.3 B10 — `--ref` is opt-in; omitting it leaves `git_ref` None.
-        let cli = parse(&["add", "https://example.com/repo.git"])
-            .expect("add without --ref parses");
+        let cli =
+            parse(&["add", "https://example.com/repo.git"]).expect("add without --ref parses");
         match cli.verb {
             Verb::Add(a) => assert!(a.git_ref.is_none(), "default --ref must be None"),
             _ => panic!("expected Add variant"),

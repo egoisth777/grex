@@ -4,10 +4,13 @@
 .SH NAME
 grex\-add \- Register and clone a pack
 .SH SYNOPSIS
-\fBgrex\-add\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> [\fIPATH\fR]
+\fBgrex\-add\fR [\fB\-\-ref\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> [\fIPATH\fR]
 .SH DESCRIPTION
 Register and clone a pack
 .SH OPTIONS
+.TP
+\fB\-\-ref\fR \fI<GIT\-REF>\fR
+v1.3.3 B10 — git ref to pin at add time. Accepts `<branch>`, `<commit>` (7..40 hex chars), or `<branch>@<commit>` (single flag, `@` delimiter). When omitted, defaults to the remote\*(Aqs `main` branch HEAD per the 8\-cell folder\-FA design
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

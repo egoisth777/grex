@@ -13,7 +13,7 @@ Git fetch and pull (recurse by default)
 Recurse into child packs
 .TP
 \fB\-\-pack\fR \fI<PACK>\fR
-Path to the pack root (formerly `\-\-workspace`). Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<pack>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `pack: <input> → <canonical>` when it differs). The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
+Path to the pack root (formerly `\-\-workspace`). Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<pack>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `pack: <input> → <canonical>` when it differs). The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0. Pass `.` to substitute the current working directory explicitly (v1.3.3 B3)
 .TP
 \fB\-n\fR, \fB\-\-dry\-run\fR
 Plan actions without touching the filesystem
@@ -58,4 +58,4 @@ v1.2.5 — sweep `<meta>/.grex/trash/` of entries older than `N` days at the sta
 Print help (see a summary with \*(Aq\-h\*(Aq)
 .TP
 [\fIPACK_ROOT\fR]
-Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `sync` prints the legacy M1 stub and exits 0
+Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `sync` prints the legacy M1 stub and exits 0. Pass `.` to substitute the current working directory explicitly (v1.3.3 B3)

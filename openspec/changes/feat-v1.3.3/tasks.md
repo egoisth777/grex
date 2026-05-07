@@ -48,7 +48,7 @@ Lean4 file lives in `proof/` folder per OQ4. Proposed path `proof/Grex/RefFa.lea
 - [ ] Locate doctor check registry in `crates/grex-core/src/doctor/`  → verify: registration site identified
 - [ ] Add new check: scan parent repo `.gitignore` rules vs pack content paths; classify each pack as tracked / not-tracked / over-ignored  → verify: classifier function exists with explicit enum return type
 - [ ] Severity = warn (info); doctor exits 0 even when drift detected  → verify: unit test asserts exit code 0 in drift case
-- [ ] Append summary block at end of `grex doctor` run when drift detected: list non-tracking packs, prompt user to add to `.gitignore` (or remove over-broad rule)  → verify: manual smoke from a parent repo with mis-ignored pack shows summary block
+- [ ] Append summary block at end of `grex doctor` run when drift detected: list non-tracking packs, prompt user to add to `.gitignore` (or remove over-broad rule)  → verify: manual smoke from a parent repo with un-gitignored pack shows summary block
 - [ ] Add unit test in `crates/grex-core/tests/`: drift-detection produces summary; non-drift run produces no summary; summary text matches Q3 prompt semantics  → verify: `cargo test --workspace` exits 0
 - [ ] Re-run existing `doctor_advisory.rs` tests to confirm no regressions  → verify: existing doctor tests stay green
 

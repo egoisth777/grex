@@ -10,7 +10,7 @@ Tear down a pack tree (reverse of `sync`/`install`)
 .SH OPTIONS
 .TP
 \fB\-\-pack\fR \fI<PACK>\fR
-Path to the pack root (formerly `\-\-workspace`). Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<pack>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `pack: <input> → <canonical>` when it differs). The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0
+Path to the pack root (formerly `\-\-workspace`). Defaults to the pack root directory (where `.grex/pack.yaml` lives). When set, this path becomes the canonical meta directory: children resolve parent\-relatively as `<pack>/<child.path>`. The path MUST exist; symlinks are resolved to their canonical inode (logged as `pack: <input> → <canonical>` when it differs). The legacy `\-\-workspace` spelling is preserved as a deprecated alias and emits a one\-time warning per process; removal scheduled for v2.0.0. Pass `.` to substitute the current working directory explicitly (v1.3.3 B3)
 .TP
 \fB\-q\fR, \fB\-\-quiet\fR
 Suppress per\-action log lines
@@ -22,4 +22,4 @@ Skip plan\-phase validators. Debug\-only escape hatch
 Print help
 .TP
 [\fIPACK_ROOT\fR]
-Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `teardown` prints a usage stub and exits 0
+Pack root. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, `teardown` prints a usage stub and exits 0. Pass `.` to substitute the current working directory explicitly (v1.3.3 B3)

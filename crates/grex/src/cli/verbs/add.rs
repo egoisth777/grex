@@ -27,8 +27,8 @@ pub fn run(args: AddArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> 
     if let Some(r) = parsed_ref {
         request = request.with_ref(r);
     }
-    let report = add_pack(&manifest, request, AddOpts::new(global.dry_run))
-        .context("grex add failed")?;
+    let report =
+        add_pack(&manifest, request, AddOpts::new(global.dry_run)).context("grex add failed")?;
 
     if global.json {
         emit_json(&report)?;

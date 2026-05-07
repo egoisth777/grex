@@ -1162,14 +1162,11 @@ pub fn check_gitignore_drift(
         return CheckResult::default();
     }
 
-    let mut detail = format!(
-        "{} pack(s) drift parent .gitignore tracking expectations:\n",
-        drift.len()
-    );
+    let mut detail =
+        format!("{} pack(s) drift parent .gitignore tracking expectations:\n", drift.len());
     for (id, rel) in &drift {
-        detail.push_str(&format!(
-            "  {rel}  — not-tracked (consider adding `{id}` to .gitignore)\n"
-        ));
+        detail
+            .push_str(&format!("  {rel}  — not-tracked (consider adding `{id}` to .gitignore)\n"));
     }
     detail.push_str(&format!(
         "Action: review .gitignore at {} and add rules accordingly. grex never mutates the parent `.gitignore` automatically.",
@@ -2199,7 +2196,11 @@ mod tests {
         assert_eq!(f.check, CheckKind::GitignoreDrift);
         assert_eq!(f.severity, Severity::Ok, "warn-only — must not affect exit code");
         assert!(f.detail.contains("beta"), "detail must name uncovered pack: {}", f.detail);
-        assert!(!f.detail.contains("ws/alpha  — not-tracked"), "covered pack must not appear: {}", f.detail);
+        assert!(
+            !f.detail.contains("ws/alpha  — not-tracked"),
+            "covered pack must not appear: {}",
+            f.detail
+        );
     }
 
     #[test]

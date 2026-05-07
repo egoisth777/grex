@@ -24,12 +24,7 @@ impl AddRequest {
         path: impl Into<String>,
         pack_type: impl Into<String>,
     ) -> Self {
-        Self {
-            url: url.into(),
-            path: path.into(),
-            pack_type: pack_type.into(),
-            git_ref: None,
-        }
+        Self { url: url.into(), path: path.into(), pack_type: pack_type.into(), git_ref: None }
     }
 
     /// v1.3.3 B10 — attach a parsed [`crate::refspec::Ref`] to the
@@ -296,10 +291,7 @@ mod tests {
         // Manifest must contain exactly one Add event after the dup
         // attempt.
         let events = manifest::read_all(&manifest).unwrap();
-        let add_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::Add { .. }))
-            .count();
+        let add_count = events.iter().filter(|e| matches!(e, Event::Add { .. })).count();
         assert_eq!(add_count, 1, "only the first add should have been appended");
     }
 
@@ -342,10 +334,7 @@ mod tests {
         assert_ne!(dir1, dir2);
 
         let events = manifest::read_all(&manifest).unwrap();
-        let add_count = events
-            .iter()
-            .filter(|e| matches!(e, Event::Add { .. }))
-            .count();
+        let add_count = events.iter().filter(|e| matches!(e, Event::Add { .. })).count();
         assert_eq!(add_count, 2);
     }
 
@@ -356,10 +345,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let manifest = dir.path().join(".grex/events.jsonl");
         let url = "https://example.com/repo.git";
-        let r = crate::refspec::Ref {
-            branch: None,
-            commit: Some("a3f9c1d2b8e7".into()),
-        };
+        let r = crate::refspec::Ref { branch: None, commit: Some("a3f9c1d2b8e7".into()) };
         let refdir = crate::refspec::encode_refdir(&r);
 
         let _ = add_pack(
