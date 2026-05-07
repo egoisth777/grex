@@ -41,7 +41,7 @@ use serde_json::json;
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DoctorParams {
     /// Run the opt-in config-lint check (`openspec/config.yaml` +
-    /// `inst/*.md`).
+    /// `inst/cfg/*.md`).
     #[serde(default)]
     pub lint_config: bool,
 }

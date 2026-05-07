@@ -41,8 +41,8 @@ Dispatch all three workers in parallel. Phase 2 walk first confirms write-sets a
 
 ### W3 — CLAUDE.md bootloaders (grex + grex-org)
 
-- [ ] `E:\repos\utils\grex-org\grex\CLAUDE.md` (26 refs): rewrite all `.omne/<X>` → `inst/<X>` EXCEPT references to runtime worktree path `.omne/wt/<branch>`  → verify: grep `\.omne/wt/` returns the runtime-mount references only; grep `\.omne/[^w]` returns 0 hits
-- [ ] `E:\repos\utils\grex-org\CLAUDE.md` (1 ref): rewrite `.omne/dist/AGENTS.md` → `inst/dist/AGENTS.md` (or whatever the canonical bootloader path becomes)  → verify: grep `\.omne/` over grex-org/CLAUDE.md returns 0 hits
+- [ ] `<repo-root>/CLAUDE.md` (26 refs): rewrite all `.omne/<X>` → `inst/<X>` EXCEPT references to runtime worktree path `.omne/wt/<branch>`  → verify: grep `\.omne/wt/` returns the runtime-mount references only; grep `\.omne/[^w]` returns 0 hits
+- [ ] `<grex-org>/CLAUDE.md` (1 ref): rewrite `.omne/dist/AGENTS.md` → `inst/dist/AGENTS.md` (or whatever the canonical bootloader path becomes)  → verify: grep `\.omne/` over grex-org/CLAUDE.md returns 0 hits
 - [ ] Update memory-discipline section in `grex/CLAUDE.md` (currently mentions `.omne/`) to reflect SSOT-only writes go to `inst/`  → verify: section reads coherent — "All memorable project knowledge lives EXCLUSIVELY in the SSOT at `inst/` (mounted from `grex-inst` repo)"
 - [ ] Update "0-state hop-in" auto-load list to point at `inst/grad/progress.md`, `inst/grad/milestone.md`, etc.  → verify: all 7 auto-load entries reference `inst/`
 - [ ] Update "SSOT layout" block to reflect the new mount name (10 buckets now under `inst/`, runtime worktrees under `.omne/wt/`)  → verify: layout block reads coherent
@@ -55,17 +55,19 @@ Gated on Phase 2 complete (all path-string rewrites landed; refs now point at `i
 - [ ] Recreate runtime mount: `mkdir .omne/`  → verify: `.omne/` exists, empty
 - [ ] Create `.omne/wt/.gitkeep` to preserve worktree-mount slot  → verify: `.omne/wt/.gitkeep` exists
 - [ ] `.gitignore`: replace single `.omne` line with two lines:  → verify: `.gitignore` contains both `inst` and `.omne/` (or `.omne` — match existing convention) on separate lines
-  ```
+
+  ```text
   inst
   .omne/
   ```
+
 - [ ] Verify both mounts gitignored: `git status --ignored` shows both `inst/` and `.omne/`  → verify: both directories appear under "Ignored files"
 - [ ] Refs now valid: spot-check 3 random rewritten refs resolve correctly via filesystem (e.g. `inst/grad/progress.md`, `inst/schemas/conduct/rules.md`, `inst/IDX.md` if exists)  → verify: each path resolves to a file
 - [ ] Regenerate SSOT INDEX: `python inst/scripts/build_index.py` (assuming script path also rewrote)  → verify: `inst/INDEX.yaml` regenerates with new mount-relative paths; build_index.py exit 0
 
 ## § Phase 4 — Verification
 
-- [ ] Run `python .scripts/test.py` from parent meta-repo `E:\repos\utils\grex-org`  → verify: lint + integrity + regression phases all exit 0
+- [ ] Run `python .scripts/test.py` from parent meta-repo `<grex-org>`  → verify: lint + integrity + regression phases all exit 0
 - [ ] Audit grep: `grep -rn "\.omne/" .` excluding `inst/archive/`, `inst/grad/changes/feat-ssot-reorg-velocity/`, `target/`, `grex-doc/build/`, `searchindex.json`, `.git/`, `.omne/wt/`  → verify: 0 hits OR all hits are runtime-worktree references (`\.omne/wt/`) or rule-17 text describing the runtime mount
 - [ ] Audit grep: `grep -rn "\.omne/" inst/` excluding `inst/archive/`, `inst/grad/changes/feat-ssot-reorg-velocity/`  → verify: 0 hits (the SSOT no longer references its own old mount path internally, except in historical scope)
 - [ ] SSOT validate: `python inst/scripts/validate.py` exit 0  → verify: all SSOT frontmatter clean

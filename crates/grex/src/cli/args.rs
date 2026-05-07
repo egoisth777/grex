@@ -242,7 +242,7 @@ pub struct DoctorArgs {
     pub fix: bool,
 
     /// Run the opt-in config-lint check (`openspec/config.yaml` +
-    /// `inst/*.md`). Skipped by default.
+    /// `inst/cfg/*.md`). Skipped by default.
     #[arg(long = "lint-config")]
     pub lint_config: bool,
 
