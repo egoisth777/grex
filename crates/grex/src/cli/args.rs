@@ -198,7 +198,7 @@ pub struct SyncArgs {
     /// Distinct from the global `--parallel` on [`GlobalFlags`]; that
     /// knob is documented as the harness-level worker cap and rejects
     /// `0`. Sync parallelism uses `0` as the "unbounded" sentinel per
-    /// `.omne/concurrency.md`.
+    /// `inst/concurrency.md`.
     #[arg(
         long = "parallel",
         env = "GREX_PARALLEL",
@@ -242,7 +242,7 @@ pub struct DoctorArgs {
     pub fix: bool,
 
     /// Run the opt-in config-lint check (`openspec/config.yaml` +
-    /// `.omne/*.md`). Skipped by default.
+    /// `inst/*.md`). Skipped by default.
     #[arg(long = "lint-config")]
     pub lint_config: bool,
 

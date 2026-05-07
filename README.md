@@ -162,7 +162,7 @@ mdbook serve grex-doc/   # http://localhost:3000
 ### Source-of-truth design docs
 
 - `openspec/feat-grex/spec.md` — active feature spec
-- `.omne/README.md` — design-doc index (mdBook site is generated from these)
+- `inst/README.md` — design-doc index (mdBook site is generated from these)
 - `progress.md` — current state + last endpoint
 - `milestone.md` — phased delivery plan
 

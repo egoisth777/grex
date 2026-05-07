@@ -27,8 +27,8 @@ here. Theorems and axioms belong in their topic files (Walker.lean,
 Scheduler.lean, Bridge.lean).
 
 Source-of-truth links:
-* `.omne/walker.md` — primary spec for v1.2.0 walker
-* `.omne/concurrency.md` §Lean4 invariant — scheduler model
+* `inst/walker.md` — primary spec for v1.2.0 walker
+* `inst/concurrency.md` §Lean4 invariant — scheduler model
 -/
 
 namespace Grex
@@ -263,7 +263,7 @@ inductive Lock where
   deriving Repr
 
 /-- Strict total order on lock tiers, enforcing the fixed 5-tier
-    acquisition rule from `.omne/concurrency.md`:
+    acquisition rule from `inst/concurrency.md`:
     workspace-sync → semaphore → pack-lock → repo-backend → manifest. -/
 def tier : Lock → Nat
   | .workspaceSync   => 0

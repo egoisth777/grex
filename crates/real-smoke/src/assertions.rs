@@ -47,7 +47,7 @@ pub fn assert_no_warn_on_stdout(result: &CliResult) -> Result<()> {
 
 /// Asserts that the legacy lockfile location (`<workspace>/.grex-lock`) does
 /// **not** exist. The current contract puts all lock state under
-/// `<workspace>/.grex/` (see `.omne/lockfile.md`), so a stray
+/// `<workspace>/.grex/` (see `inst/lockfile.md`), so a stray
 /// `.grex-lock` at the workspace root is a regression.
 pub fn assert_lockfile_under_grex_dir(workspace: &Path) -> Result<()> {
     let stray = workspace.join(".grex-lock");

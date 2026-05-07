@@ -33,7 +33,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHal
 use tokio::task::JoinHandle;
 
 /// MCP protocol version pinned at the wire boundary (matches
-/// `.omne/mcp.md` §"Protocol version" and `feat-m7-1` Stage 5).
+/// `inst/mcp.md` §"Protocol version" and `feat-m7-1` Stage 5).
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Per-call response timeout. Kept low so the L2 suite fails fast under

@@ -122,7 +122,7 @@ impl GitBackend for GixBackend {
 /// `tools/foo` → `<parent>/.grex/locks/tools/foo.backend.lock`); intermediate
 /// directories are auto-created on first acquire by [`with_repo_lock`].
 ///
-/// Properties (per `.omne/lockfile.md` §"File location"):
+/// Properties (per `inst/lockfile.md` §"File location"):
 /// - Survives `rm -rf <dest>` — lock is parent-owned, not dest-adjacent.
 /// - Pre-clone safe — parent's `.grex/` exists before any child clone.
 /// - Path-keyed identity — no collision when two children share `name:`

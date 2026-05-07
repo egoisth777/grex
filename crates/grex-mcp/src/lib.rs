@@ -158,7 +158,7 @@ impl ServerHandler for GrexMcpServer {
         info.server_info = implementation;
         info.instructions = Some(
             "grex pack-orchestrator MCP surface. 11 tools reachable via tools/call; \
-             cancellation via notifications/cancelled. See `.omne/mcp.md`."
+             cancellation via notifications/cancelled. See `inst/mcp.md`."
                 .into(),
         );
         info

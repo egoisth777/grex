@@ -49,7 +49,7 @@ Semantics: * Absent → default `num_cpus::get()` resolved in `verbs::sync`. * `
 
 Env fallback: `GREX_PARALLEL` is honoured only when the flag is absent. Clap reads the env var automatically via `env`.
 
-Distinct from the global `\-\-parallel` on [`GlobalFlags`]; that knob is documented as the harness\-level worker cap and rejects `0`. Sync parallelism uses `0` as the "unbounded" sentinel per `.omne/concurrency.md`.
+Distinct from the global `\-\-parallel` on [`GlobalFlags`]; that knob is documented as the harness\-level worker cap and rejects `0`. Sync parallelism uses `0` as the "unbounded" sentinel per `inst/concurrency.md`.
 .TP
 \fB\-\-retain\-days\fR \fI<N>\fR
 v1.2.5 — sweep `<meta>/.grex/trash/` of entries older than `N` days at the start of every meta sync (best\-effort). When omitted, no GC fires (v1.2.1 indefinite\-retention behavior is preserved). When set, sweep failures log via tracing and do NOT halt the sync

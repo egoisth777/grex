@@ -13,7 +13,7 @@ Run integrity checks
 Heal gitignore drift by re\-emitting the managed block. Safety: NEVER touches the manifest or the filesystem on other checks
 .TP
 \fB\-\-lint\-config\fR
-Run the opt\-in config\-lint check (`openspec/config.yaml` + `.omne/*.md`). Skipped by default
+Run the opt\-in config\-lint check (`openspec/config.yaml` + `inst/*.md`). Skipped by default
 .TP
 \fB\-\-shallow\fR \fI<N>\fR
 v1.2.0 Stage 1.j — bound the recursive ManifestTree walk. Omitted: walk every nested meta exhaustively (default). `\-\-shallow 0`: root meta only. `\-\-shallow N`: recurse up to `N` levels of nesting (root is depth 0; depth\-`N` metas are visited but their children are not). The walk is read\-only at every frame
