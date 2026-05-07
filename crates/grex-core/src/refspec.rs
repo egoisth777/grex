@@ -8,25 +8,25 @@
 //! here as Rust functions.
 //!
 //! Public surface:
-//! * [`Ref`]              — parsed `--ref` token (mirrors Lean `RefInput`
-//!                          minus the dynamic `urlTracked` / `dupHit`
-//!                          axes, which come from the parent manifest).
-//! * [`RefAction`]        — five-tag FA action (mirrors Lean `RefAction`).
-//! * [`AddContext`]       — parent-manifest probe (URL tracked? same
-//!                          `(branch, commit)` already?).
-//! * [`parse_ref`]        — parse the `--ref <token>` string. Accepts
-//!                          `main`, `a3f9c1d` (7..40 hex chars), or
-//!                          `main@a3f9c1d`.
-//! * [`encode_refdir`]    — `<refdir>` folder name from a `Ref` (default
-//!                          7-char SHA prefix).
+//! * [`Ref`] — parsed `--ref` token (mirrors Lean `RefInput`
+//!   minus the dynamic `urlTracked` / `dupHit`
+//!   axes, which come from the parent manifest).
+//! * [`RefAction`] — five-tag FA action (mirrors Lean `RefAction`).
+//! * [`AddContext`] — parent-manifest probe (URL tracked? same
+//!   `(branch, commit)` already?).
+//! * [`parse_ref`] — parse the `--ref <token>` string. Accepts
+//!   `main`, `a3f9c1d` (7..40 hex chars), or
+//!   `main@a3f9c1d`.
+//! * [`encode_refdir`] — `<refdir>` folder name from a `Ref` (default
+//!   7-char SHA prefix).
 //! * [`encode_refdir_with_prefix`] — same as `encode_refdir` but with a
-//!                          caller-controlled SHA prefix length (used by
-//!                          the collision-extend resolver).
+//!   caller-controlled SHA prefix length (used by
+//!   the collision-extend resolver).
 //! * [`resolve_unique_refdir`] — collision-extend loop. Iteratively
-//!                          extends the SHA prefix until the resulting
-//!                          folder name does not appear in `existing`.
+//!   extends the SHA prefix until the resulting
+//!   folder name does not appear in `existing`.
 //! * [`classify_ref_input`] — drive the 8-cell FA. Returns the
-//!                          `RefAction` for a `(Ref, AddContext)` pair.
+//!   `RefAction` for a `(Ref, AddContext)` pair.
 
 use std::collections::HashSet;
 
