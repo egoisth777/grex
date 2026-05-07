@@ -54,13 +54,7 @@ Gated on Phase 2 complete (all path-string rewrites landed; refs now point at `i
 - [ ] Plain-directory rename: `.omne/` → `inst/`  → verify: `inst/` exists; `.omne/` does not exist on disk
 - [ ] Recreate runtime mount: `mkdir .omne/`  → verify: `.omne/` exists, empty
 - [ ] Create `.omne/wt/.gitkeep` to preserve worktree-mount slot  → verify: `.omne/wt/.gitkeep` exists
-- [ ] `.gitignore`: replace single `.omne` line with two lines:  → verify: `.gitignore` contains both `inst` and `.omne/` (or `.omne` — match existing convention) on separate lines
-
-  ```text
-  inst
-  .omne/
-  ```
-
+- [ ] `.gitignore`: replace single `.omne` line with two entries — `inst` and `.omne/` — on separate lines  → verify: `.gitignore` contains both `inst` and `.omne/` (or `.omne` — match existing convention) on separate lines
 - [ ] Verify both mounts gitignored: `git status --ignored` shows both `inst/` and `.omne/`  → verify: both directories appear under "Ignored files"
 - [ ] Refs now valid: spot-check 3 random rewritten refs resolve correctly via filesystem (e.g. `inst/grad/progress.md`, `inst/schemas/conduct/rules.md`, `inst/IDX.md` if exists)  → verify: each path resolves to a file
 - [ ] Regenerate SSOT INDEX: `python inst/scripts/build_index.py` (assuming script path also rewrote)  → verify: `inst/INDEX.yaml` regenerates with new mount-relative paths; build_index.py exit 0
