@@ -207,4 +207,15 @@ mod tests {
     fn server_constructs() {
         let _ = GrexMcpServer::new(ServerState::for_tests());
     }
+
+    #[test]
+    fn get_info_instructions_reference_inst_mcp_md() {
+        let server = GrexMcpServer::new(ServerState::for_tests());
+        let info = server.get_info();
+        let instructions = info.instructions.expect("instructions must be set");
+        assert!(
+            instructions.contains("inst/mcp.md"),
+            "instructions must reference inst/mcp.md; got: {instructions:?}",
+        );
+    }
 }
