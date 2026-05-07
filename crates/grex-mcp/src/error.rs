@@ -13,7 +13,7 @@
 //!    kind=`pack_op`) and the spec's manifest / lock / drift / plugin-
 //!    missing codes.
 //!
-//! Per `.omne/mcp.md` §"Error codes" `-32002` is dual-use; the `data.kind`
+//! Per `inst/mcp.md` §"Error codes" `-32002` is dual-use; the `data.kind`
 //! discriminator disambiguates. Splitting into two codes is a documented
 //! future item — not in this change.
 

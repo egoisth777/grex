@@ -1,7 +1,7 @@
 //! Decoupled git backend surface used by the pack walker and exec path.
 //!
 //! Pack children reference git remotes (`url`, `path`, `ref` — see
-//! `.omne/pack-spec.md` §children). The walker needs to clone, fetch, and
+//! `inst/pack-spec.md` §children). The walker needs to clone, fetch, and
 //! checkout these remotes; the exec path pins commits. Every one of those
 //! callers goes through the [`GitBackend`] trait rather than the `gix` crate
 //! directly, so:

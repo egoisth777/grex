@@ -2,7 +2,7 @@
 
 The `BoundedDir` primitive — how grex closes the path-swap TOCTOU window between `canonicalize(dest)` and the actual filesystem write. Hybrid `cap-std` (uniform) plus Linux `openat2(RESOLVE_BENEATH)` (internal acceleration).
 
-> Canonical source: forthcoming `.omne/toctou.md` (SSOT, separate `grex-inst` repo). For now this page derives from `.omne/walker.md` §Symlink hardening, `.omne/rust-design-decisions.md` §6, `.omne/proof/impl-axiom-bridge.md` §3 (`sync_local_writes`), and `crates/grex-core/src/fs/boundary.rs` (the implementing module).
+> Canonical source: forthcoming `inst/toctou.md` (SSOT, separate `grex-inst` repo). For now this page derives from `inst/walker.md` §Symlink hardening, `inst/rust-design-decisions.md` §6, `inst/proof/impl-axiom-bridge.md` §3 (`sync_local_writes`), and `crates/grex-core/src/fs/boundary.rs` (the implementing module).
 
 ## What is TOCTOU?
 
@@ -44,7 +44,7 @@ The module lives at `crates/grex-core/src/fs/boundary.rs`. Visibility is `pub(cr
 
 ## Hybrid strategy: cap-std uniform, openat2 internal
 
-Per design decision §6 in `.omne/rust-design-decisions.md`:
+Per design decision §6 in `inst/rust-design-decisions.md`:
 
 | Platform        | What `BoundedDir` actually does                                                              |
 |-----------------|----------------------------------------------------------------------------------------------|
@@ -107,7 +107,7 @@ axiom sync_local_writes
 
 The Rust contract that discharges this axiom is precisely the `BoundedDir` capability handle. Without it, a malicious symlink inside the subtree could cause `sync` to clobber `w.hasGit q` for a `q` that does not descend from `parent`, falsifying the axiom.
 
-The `validate_children_paths` gate (rejects `..` and absolute segments) is **necessary but NOT sufficient** on its own; the capability-handle invariant is what closes the symlink-traversal escape window. Any change to the Rust impl that swaps `cap-std` for raw `std::fs` MUST re-prove this axiom (or bridge it via an explicit "no-symlink-escape" lemma) — `.omne/proof/impl-axiom-bridge.md` §3 documents this re-review trigger.
+The `validate_children_paths` gate (rejects `..` and absolute segments) is **necessary but NOT sufficient** on its own; the capability-handle invariant is what closes the symlink-traversal escape window. Any change to the Rust impl that swaps `cap-std` for raw `std::fs` MUST re-prove this axiom (or bridge it via an explicit "no-symlink-escape" lemma) — `inst/proof/impl-axiom-bridge.md` §3 documents this re-review trigger.
 
 ## What `BoundedDir` does NOT cover
 

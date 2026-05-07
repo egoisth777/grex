@@ -13,7 +13,7 @@
 //! path traversal / workspace escape is a real hazard when untrusted
 //! agents drive the server, so the tool always uses `state.workspace`
 //! captured at `grex serve` start. This matches the v1 safety model in
-//! `.omne/mcp.md`.
+//! `inst/mcp.md`.
 //!
 //! # Return value
 //!
@@ -41,7 +41,7 @@ use serde_json::json;
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DoctorParams {
     /// Run the opt-in config-lint check (`openspec/config.yaml` +
-    /// `.omne/*.md`).
+    /// `inst/cfg/*.md`).
     #[serde(default)]
     pub lint_config: bool,
 }

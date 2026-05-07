@@ -75,7 +75,7 @@ pub fn run(args: ServeArgs, _global: &GlobalFlags, _cancel: &CancellationToken) 
 /// back to `std::thread::available_parallelism()` when unset and to `1`
 /// as the conservative floor when even that fails (uncommon — reserved
 /// VMs / sandboxed CI). Matches the harness contract in
-/// `.omne/concurrency.md`.
+/// `inst/concurrency.md`.
 fn resolve_parallel(opt: Option<u32>) -> usize {
     match opt {
         Some(n) => n as usize,

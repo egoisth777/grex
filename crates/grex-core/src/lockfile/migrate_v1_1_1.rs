@@ -28,7 +28,7 @@
 //! happens incrementally as users opt into nested children (a v1.1.1
 //! lockfile already only references direct children of the root meta,
 //! since v1.1.1's validator enforced bare-name `path:` — see
-//! `.omne/var/migration.md` §"Forward-compat: v1.2.0 reads v1.1.1
+//! `inst/var/migration.md` §"Forward-compat: v1.2.0 reads v1.1.1
 //! lockfile").
 //!
 //! The migrator therefore has a small, well-defined job: rewrite the

@@ -27,8 +27,8 @@ realising the pipeline).
 
 Source-of-truth links:
 * `openspec/feat-v1.2.1/spec.md` §5 — quarantine layout + ordering spec
-* `.omne/walker.md` — Phase 2 prune contract (force-prune + quarantine)
-* `.omne/concurrency.md` §Per-pack `PackLock` — quarantine runs under
+* `inst/walker.md` — Phase 2 prune contract (force-prune + quarantine)
+* `inst/concurrency.md` §Per-pack `PackLock` — quarantine runs under
   the per-pack lock (so single-writer to `.grex/events.jsonl`)
 
 ## Axioms introduced (v1.2.1 Item 5a)
@@ -60,7 +60,7 @@ theorem is a pure consequence of the pipeline definition + the snapshot
 primitive's contract. The Rust impl earns the safety guarantee by
 faithfully realising the pipeline (audit-fsync → snapshot → unlink iff
 both succeed); reviewers verify this faithfulness against
-`.omne/proof/impl-axiom-bridge.md` (separate SSOT-repo commit per
+`inst/proof/impl-axiom-bridge.md` (separate SSOT-repo commit per
 Rule 7).
 -/
 
@@ -240,7 +240,7 @@ control flow does NOT reach `unlink_recursive`, matching the model's
 - snapshot primitive swapped from `cap-std` recursive copy to a
   non-bounded primitive (capability-handle invariant lost).
 
-Reviewers verify these against `.omne/proof/impl-axiom-bridge.md`
+Reviewers verify these against `inst/proof/impl-axiom-bridge.md`
 (separate SSOT-repo commit per Rule 7).
 -/
 

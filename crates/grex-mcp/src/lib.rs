@@ -158,7 +158,7 @@ impl ServerHandler for GrexMcpServer {
         info.server_info = implementation;
         info.instructions = Some(
             "grex pack-orchestrator MCP surface. 11 tools reachable via tools/call; \
-             cancellation via notifications/cancelled. See `.omne/mcp.md`."
+             cancellation via notifications/cancelled. See `inst/mcp.md`."
                 .into(),
         );
         info
@@ -206,5 +206,16 @@ mod tests {
     #[test]
     fn server_constructs() {
         let _ = GrexMcpServer::new(ServerState::for_tests());
+    }
+
+    #[test]
+    fn get_info_instructions_reference_inst_mcp_md() {
+        let server = GrexMcpServer::new(ServerState::for_tests());
+        let info = server.get_info();
+        let instructions = info.instructions.expect("instructions must be set");
+        assert!(
+            instructions.contains("inst/mcp.md"),
+            "instructions must reference inst/mcp.md; got: {instructions:?}",
+        );
     }
 }

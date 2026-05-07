@@ -141,14 +141,14 @@ jobs:
           release-type: patch
 
   # Lean4 proof verification — mechanises invariant I1 (no double lock) per
-  # `.omne/concurrency.md` §Lean4 invariant. Linux-only is acceptable
-  # per `.omne/test-plan.md` §Lean4 proof verification — `.olean` is
+  # `inst/concurrency.md` §Lean4 invariant. Linux-only is acceptable
+  # per `inst/test-plan.md` §Lean4 proof verification — `.olean` is
   # platform-agnostic, so one successful build proves the invariant
   # everywhere.
   #
   # Stage 0.5.F hard gate. `lake build` alone tolerates `sorry` warnings
   # and exits 0; the grep step mechanically enforces Rule 8
-  # (`.omne/schemas/rules.md`): "any non-simple algorithm requires Lean4
+  # (`inst/schemas/rules.md`): "any non-simple algorithm requires Lean4
   # proof to compile clean — zero sorry, zero admit — BEFORE any Rust
   # code change lands". All steps below are gating (no continue-on-error,
   # no conditional `if:`).
@@ -267,7 +267,7 @@ jobs:
         working-directory: proof
         shell: bash
         run: |
-          # v1.2.4 + v1.2.5 + v1.2.6 Rule-8 gate (.omne/schemas/rules.md §8):
+          # v1.2.4 + v1.2.5 + v1.2.6 Rule-8 gate (inst/schemas/rules.md §8):
           # the five correctness theorems below MUST depend on at most
           # `propext` — no bridge axiom, no model placeholder, no
           # Classical.choice. Any drift means a downstream proof leaked

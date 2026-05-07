@@ -19,7 +19,7 @@
 -- Types + Bridge to state v1.2.0 walker theorems (D1–D4 all discharged
 -- — zero `sorry`, zero `admit` across `proof/Grex/`).
 --
--- See `.omne/concurrency.md` §Lean4 invariant and `.omne/walker.md`.
+-- See `inst/concurrency.md` §Lean4 invariant and `inst/walker.md`.
 import Grex.Types
 import Grex.Bridge
 import Grex.Scheduler

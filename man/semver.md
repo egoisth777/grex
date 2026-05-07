@@ -161,9 +161,9 @@ are explicitly out-of-scope:
 
 - [`CHANGELOG.md`](https://github.com/egoisth777/grex/blob/main/CHANGELOG.md) — per-release entries with categorised
   changes.
-- [`.omne/manifest.md`](https://github.com/egoisth777/grex/blob/main/.omne/manifest.md) — normative manifest /
-  lockfile schema.
-- [`.omne/cli.md`](https://github.com/egoisth777/grex/blob/main/.omne/cli.md) — v1 frozen verb contract.
-- [`.omne/mcp.md`](https://github.com/egoisth777/grex/blob/main/.omne/mcp.md) — MCP server surface.
-- [`.omne/pack-spec.md`](https://github.com/egoisth777/grex/blob/main/.omne/pack-spec.md) — `pack.yaml` schema
-  and built-in pack-types.
+- [`cfg/architecture/manifest.md`](https://github.com/egoisth777/grex-inst/blob/main/cfg/architecture/manifest.md) — normative manifest /
+  lockfile schema (SSOT, separate `grex-inst` repo).
+- [`cfg/architecture/cli.md`](https://github.com/egoisth777/grex-inst/blob/main/cfg/architecture/cli.md) — v1 frozen verb contract (SSOT).
+- [`cfg/architecture/mcp.md`](https://github.com/egoisth777/grex-inst/blob/main/cfg/architecture/mcp.md) — MCP server surface (SSOT).
+- [`cfg/architecture/pack-spec.md`](https://github.com/egoisth777/grex-inst/blob/main/cfg/architecture/pack-spec.md) — `pack.yaml` schema
+  and built-in pack-types (SSOT).

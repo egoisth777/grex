@@ -1,6 +1,6 @@
 //! Regression gates for dogfood bugs B1-B15.
 //!
-//! Source post-mortem: `.omne/var/dogfood-findings-v1.3.0.md` (SSOT, separate
+//! Source post-mortem: `inst/var/dogfood-findings-v1.3.0.md` (SSOT, separate
 //! `grex-inst` repo per Rule 7). Each test below maps 1:1 to a bug ID and is
 //! designed to FAIL against a v1.3.0 binary (= the regression direction is
 //! locked). v1.3.x patch series will flip them green as the underlying defects
@@ -127,7 +127,7 @@ fn assert_success(result: &CliResult, ctx: &str) {
 // ---------------------------------------------------------------------------
 
 /// B1 (ls label/path shape on nested children).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// `grex ls` against a meta-pack with nested children must NOT carry the
 /// `(scripted, synthetic)` substring; nested children declared in pack.yaml
@@ -157,7 +157,7 @@ fn t_b01_ls_label_path_shape() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B2 (sync defaults pack root to cwd).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// `cd <worktree>; grex sync` (no positional, no `--pack` flag) must succeed
 /// with the pack root resolved to cwd. Regressed in v1.3.0 by requiring an
@@ -181,7 +181,7 @@ fn t_b02_sync_default_pack_root_cwd() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B3 (--pack . and --workspace . both succeed).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// Both forms must parse and resolve to the worktree. `--workspace` is the
 /// legacy alias and SHOULD emit a deprecation warning on stderr but still
@@ -210,7 +210,7 @@ fn t_b03_pack_dot_and_workspace_dot() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B4 (dry-run no network).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// `grex sync --dry-run` with `GIT_SSH_COMMAND` rigged to fail must still
 /// exit 0 and must NOT materialise any `.git/` directory under expected child
@@ -258,7 +258,7 @@ fn t_b04_dry_run_no_network() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B5 (doctor consults .gitignore).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// A directory listed in `.gitignore` must NOT be reported as drift by
 /// `grex doctor`.
@@ -293,7 +293,7 @@ fn t_b05_doctor_consults_gitignore() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B6 (no synthetic field in lockfile).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b06_no_synthetic_field() -> Result<()> {
@@ -318,7 +318,7 @@ fn t_b06_no_synthetic_field() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B7 (warn lands on stderr, op name Display not Discriminant).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b07_warn_stderr_op_name() -> Result<()> {
@@ -341,7 +341,7 @@ fn t_b07_warn_stderr_op_name() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B8 (event log id + schema_version).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 ///
 /// HARNESS GAP (W2b): `assertions::assert_eventlog_record_carries_field` keys
 /// off the `op` field; the dogfood report names the relevant ops as
@@ -380,7 +380,7 @@ fn t_b08_event_log_id_and_schema_version() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B9 (stub verbs exit non-zero).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b09_stub_verbs_exit_nonzero() -> Result<()> {
@@ -406,7 +406,7 @@ fn t_b09_stub_verbs_exit_nonzero() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B10 (add --ref flag).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b10_add_ref_flag() -> Result<()> {
@@ -441,7 +441,7 @@ fn t_b10_add_ref_flag() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B11 (lockfile location).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b11_lockfile_location_under_grex_dir() -> Result<()> {
@@ -472,7 +472,7 @@ fn t_b11_lockfile_location_under_grex_dir() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B12 (.gitignore no silent mutation).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b12_gitignore_no_silent_mutation() -> Result<()> {
@@ -505,7 +505,7 @@ fn t_b12_gitignore_no_silent_mutation() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B13 (nested slash-path supported).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b13_nested_slash_path_supported() -> Result<()> {
@@ -526,7 +526,7 @@ fn t_b13_nested_slash_path_supported() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B14 (lockfile branch carries ref).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
@@ -584,7 +584,7 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// B15 (path collision warning).
-/// Source: .omne/var/dogfood-findings-v1.3.0.md
+/// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b15_path_collision_warn() -> Result<()> {

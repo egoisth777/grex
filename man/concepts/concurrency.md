@@ -2,7 +2,7 @@
 
 Tokio runtime, bounded semaphore, per-pack file lock, per-meta manifest lock. One Lean4-verified invariant.
 
-> Canonical source: [.omne/concurrency.md](../../.omne/concurrency.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection.
+> Canonical source: [inst/concurrency.md](../../inst/concurrency.md) (SSOT, separate `grex-inst` repo). This page is the user-facing projection.
 
 ## Runtime
 

@@ -12,7 +12,7 @@
 //! into the same field; once parsing completes there is no signal left
 //! that distinguishes which spelling the operator typed.
 //!
-//! Removal target: `v2.0.0` (per `.omne/var/freeze-v1.3.0.md` Table M1).
+//! Removal target: `v2.0.0` (per `inst/var/freeze-v1.3.0.md` Table M1).
 
 /// Emit a `tracing::warn!` line when the current process was invoked with
 /// the deprecated `--workspace` spelling on a verb that now prefers

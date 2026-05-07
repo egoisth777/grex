@@ -2,7 +2,7 @@
 
 Default-deny safety contract for [walker Phase 2](./walker.md#phase-2--prune-children-removed-from-manifest) — and the `--force-prune` family of flags that override it. With audit log, blast-radius analysis, and a forward reference to the v1.2.1 `--quarantine` snapshot.
 
-> Canonical source: [.omne/walker.md §Cleanup semantics](../../.omne/walker.md) (SSOT, separate `grex-inst` repo). A dedicated `.omne/force-prune.md` will land in the SSOT repo separately. This page is the user-facing projection.
+> Canonical source: [inst/walker.md §Cleanup semantics](../../../inst/walker.md) (SSOT, separate `grex-inst` repo). A dedicated `inst/force-prune.md` will land in the SSOT repo separately. This page is the user-facing projection.
 
 ## When does prune fire?
 

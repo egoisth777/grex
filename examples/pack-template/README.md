@@ -71,7 +71,7 @@ Fork this directory into a new git repo to publish your own pack:
    `^[a-z][a-z0-9-]*$`).
 2. Replace the actions in the manifest. The 7 action primitives are
    `symlink`, `env`, `mkdir`, `rmdir`, `require`, `when`, `exec`. See
-   [`.omne/actions.md`](../../.omne/actions.md) in the main grex repo
+   [`inst/actions.md`](../../inst/actions.md) in the main grex repo
    (published at https://egoisth777.github.io/grex/actions.html).
 3. If you need arbitrary shell steps that don't fit the declarative
    primitives, switch `type: declarative` to `type: scripted` and add a

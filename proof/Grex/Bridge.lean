@@ -72,9 +72,9 @@ theorems can discharge against the axioms. The root `Grex.lean` re-exports
 all four.
 
 Source-of-truth links:
-* `.omne/walker.md` — primary spec for v1.2.0 walker contracts
-* `.omne/concurrency.md` §Lean4 invariant — scheduler contracts
-* `.omne/architecture.md` §Walker invariants / §Runtime invariants
+* `inst/walker.md` — primary spec for v1.2.0 walker contracts
+* `inst/concurrency.md` §Lean4 invariant — scheduler contracts
+* `inst/architecture.md` §Walker invariants / §Runtime invariants
 -/
 
 namespace Grex
@@ -320,7 +320,7 @@ namespace Scheduler
     satisfies `legalAcquire`.
 
     Promotion to theorem would require modelling tokio's await semantics
-    in Lean — deferred to v2 per `.omne/concurrency.md` §Deferred. -/
+    in Lean — deferred to v2 per `inst/concurrency.md` §Deferred. -/
 axiom runtime_respects_ordering :
     ∀ (t : Task) (ℓ : Lock), legalAcquire t ℓ
 
@@ -329,7 +329,7 @@ axiom runtime_respects_ordering :
     windows. This encodes the FIFO mutual-exclusion semantics of
     `fd_lock::RwLock::write` as used by `PackLock::acquire_async`
     (v1.2.4+ canonical entry point; the legacy `PackLock::acquire` is
-    retained as a deprecated shim) in `.omne/concurrency.md`
+    retained as a deprecated shim) in `inst/concurrency.md`
     §Per-pack `PackLock`.
 
     Promotion to theorem requires modelling `fd-lock`'s kernel-level FIFO

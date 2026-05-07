@@ -19,7 +19,7 @@
 //!    parent abandons stderr (a common pattern in MCP host shims that
 //!    only multiplex stdout/stdin).
 //!
-//! Both guarantees come from `.omne/mcp.md` §"Stdio discipline" and
+//! Both guarantees come from `inst/mcp.md` §"Stdio discipline" and
 //! the MCP 2025-06-18 transport contract; this file enforces them at
 //! the binary boundary on the host where the bug would surface.
 //!
@@ -237,7 +237,7 @@ fn large_response_crosses_pipe_buffer() {
 /// Mechanic on Windows: spawning the child with `Stdio::null()` for
 /// stderr discards the server's stderr writes into the OS null device.
 /// This is the closest analogue to a host that opens stdin/stdout pipes
-/// but ignores stderr — the case `.omne/mcp.md` calls out under
+/// but ignores stderr — the case `inst/mcp.md` calls out under
 /// "Stdio discipline" ("server MUST tolerate stderr being unread or
 /// redirected to /dev/null"). If the server panicked on a full stderr
 /// buffer or aborted on a stderr-write `BrokenPipe` error the

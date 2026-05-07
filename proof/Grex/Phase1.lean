@@ -11,7 +11,7 @@ that imports `Grex.Types` (for the `DestClass` inductive and the opaque
 which the discharger will need to reflect on the in-progress probe).
 
 Source-of-truth links:
-* `.omne/walker.md` §Phase 1 — five-way classifier contract
+* `inst/walker.md` §Phase 1 — five-way classifier contract
 * `progress.md` — Stage 1.e (`classify_dest_total`) discharge endpoint
 
 The theorem body is `sorry` in this commit; discharge lands in commit D2.

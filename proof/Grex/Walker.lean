@@ -23,8 +23,8 @@ The proof follows the same idiom as `Grex.Scheduler`:
   axiomises `fd-lock`'s FIFO queue for the scheduler.
 
 Source-of-truth links:
-* `.omne/walker.md` — primary spec for v1.2.0 walker
-* `.omne/architecture.md` §Walker invariants — identifies the eight
+* `inst/walker.md` — primary spec for v1.2.0 walker
+* `inst/architecture.md` §Walker invariants — identifies the eight
   properties enumerated below
 * `progress.md` — v1.2.0 milestone tracker
 
@@ -361,7 +361,7 @@ shared state. Treating `cancelled` as a pure functional parameter
 threaded through the recursion is the model-level encoding of "every
 closure entry observes the same flag value". Bridge.lean axiom count
 remains 9; Types.lean axiom count remains 4; total = 13 (10 catalogued
-+ 3 data-typed Types axioms — see `.omne/proof/impl-axiom-bridge.md`).
++ 3 data-typed Types axioms — see `inst/proof/impl-axiom-bridge.md`).
 -/
 
 mutual
@@ -737,7 +737,7 @@ Bridge.lean axiom count remains 9; Types.lean axiom count remains 4
     preview) AND emits zero FS writes / network calls (so `--dry-run`
     is safe to run in untrusted environments). The IO-skipping property
     is bundled with bridge axiom #2 `sync_local_writes` — see
-    `.omne/proof/impl-axiom-bridge.md` v1.3.1 update — which already
+    `inst/proof/impl-axiom-bridge.md` v1.3.1 update — which already
     asserts that the runtime emits FS effects iff the model recursion
     visits a `.leaf` arm; dry-run flipping the gate does not visit
     additional model arms, so no new bridge axiom is needed.
@@ -1055,7 +1055,7 @@ rejects `..`-bearing `rel` arguments) is what discharges the
 `bounded` precondition at the call site, NOT what discharges the
 conclusion. Bridge.lean axiom count remains 9; Types.lean axiom count
 remains 4; total catalogued = 13 (10 catalogued + 3 data-typed Types
-axioms — see `.omne/proof/impl-axiom-bridge.md`).
+axioms — see `inst/proof/impl-axiom-bridge.md`).
 
 **Caller obligation (Rust bridge).** The Rust runtime satisfies
 `bounded op` by construction at every call site: cap-std's `Dir`
