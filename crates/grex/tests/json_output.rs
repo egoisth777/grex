@@ -33,13 +33,7 @@ fn seed_pack(dir: &std::path::Path) {
 fn init_json_emits_ok_envelope() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("workspace");
-    let out = bin()
-        .args(["--json", "init"])
-        .arg(&target)
-        .assert()
-        .success()
-        .get_output()
-        .clone();
+    let out = bin().args(["--json", "init"]).arg(&target).assert().success().get_output().clone();
     let v = parse_json_stdout(&out);
     assert_eq!(v.get("verb").and_then(Value::as_str), Some("init"));
     assert_eq!(v.get("status").and_then(Value::as_str), Some("ok"));
@@ -50,20 +44,12 @@ fn init_json_emits_ok_envelope() {
 fn init_json_idempotency_error() {
     let dir = tempfile::tempdir().unwrap();
     seed_pack(dir.path());
-    let out = bin()
-        .args(["--json", "init"])
-        .arg(dir.path())
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
+    let out =
+        bin().args(["--json", "init"]).arg(dir.path()).assert().failure().get_output().clone();
     assert_eq!(out.status.code(), Some(1));
     let v = parse_json_stdout(&out);
     assert_eq!(v.get("verb").and_then(Value::as_str), Some("init"));
-    assert_eq!(
-        v.pointer("/error/kind").and_then(Value::as_str),
-        Some("already_initialized")
-    );
+    assert_eq!(v.pointer("/error/kind").and_then(Value::as_str), Some("already_initialized"));
 }
 
 #[test]
@@ -104,12 +90,7 @@ fn rm_json_emits_error_for_missing_path() {
 fn status_json_clean_pack() {
     let dir = tempfile::tempdir().unwrap();
     seed_pack(dir.path());
-    let out = bin()
-        .args(["--json", "status"])
-        .arg(dir.path())
-        .assert()
-        .get_output()
-        .clone();
+    let out = bin().args(["--json", "status"]).arg(dir.path()).assert().get_output().clone();
     let v = parse_json_stdout(&out);
     assert_eq!(v.get("verb").and_then(Value::as_str), Some("status"));
     assert!(v.get("clean").is_some(), "status JSON must carry a `clean` field");
@@ -163,10 +144,7 @@ fn exec_json_envelope_with_exit_code() {
     let program = if cfg!(windows) { "cmd" } else { "true" };
     let args_slice: &[&str] = if cfg!(windows) { &["/c", "exit", "0"] } else { &[] };
     let mut cmd = bin();
-    cmd.args(["--json", "exec", "--pack"])
-        .arg(dir.path())
-        .arg("--")
-        .arg(program);
+    cmd.args(["--json", "exec", "--pack"]).arg(dir.path()).arg("--").arg(program);
     for a in args_slice {
         cmd.arg(a);
     }

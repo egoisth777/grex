@@ -23,10 +23,7 @@ use serde_json::json;
 pub struct InitParams {}
 
 fn derive_pack_name(dir: &std::path::Path) -> String {
-    let raw = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("workspace");
+    let raw = dir.file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
         let c = ch.to_ascii_lowercase();
@@ -36,9 +33,7 @@ fn derive_pack_name(dir: &std::path::Path) -> String {
             out.push('-');
         }
     }
-    while !out.is_empty()
-        && !out.chars().next().unwrap_or('-').is_ascii_lowercase()
-    {
+    while !out.is_empty() && !out.chars().next().unwrap_or('-').is_ascii_lowercase() {
         out.remove(0);
     }
     if out.is_empty() {
@@ -56,26 +51,16 @@ pub(crate) async fn handle(
     let grex_dir = workspace.join(".grex");
     let manifest_path = grex_dir.join("pack.yaml");
     if manifest_path.exists() {
-        return Ok(packop_error(&format!(
-            "{} already initialized",
-            workspace.display()
-        )));
+        return Ok(packop_error(&format!("{} already initialized", workspace.display())));
     }
     if let Err(err) = std::fs::create_dir_all(&grex_dir) {
-        return Ok(packop_error(&format!(
-            "create {}: {err}",
-            grex_dir.display()
-        )));
+        return Ok(packop_error(&format!("create {}: {err}", grex_dir.display())));
     }
     let name = derive_pack_name(&workspace);
-    let body = format!(
-        "schema_version: \"1\"\nname: {name}\ntype: meta\nactions: []\nchildren: []\n"
-    );
+    let body =
+        format!("schema_version: \"1\"\nname: {name}\ntype: meta\nactions: []\nchildren: []\n");
     if let Err(err) = std::fs::write(&manifest_path, body) {
-        return Ok(packop_error(&format!(
-            "write {}: {err}",
-            manifest_path.display()
-        )));
+        return Ok(packop_error(&format!("write {}: {err}", manifest_path.display())));
     }
     let doc = json!({
         "verb": "init",

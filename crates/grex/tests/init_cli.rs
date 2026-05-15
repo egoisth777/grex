@@ -39,11 +39,7 @@ fn init_idempotency_exits_one_and_does_not_overwrite() {
 #[test]
 fn init_cwd_default_when_no_path_given() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .arg("init")
-        .assert()
-        .success();
+    grex().current_dir(dir.path()).arg("init").assert().success();
     assert!(dir.path().join(".grex/pack.yaml").is_file());
 }
 
@@ -51,13 +47,7 @@ fn init_cwd_default_when_no_path_given() {
 fn init_json_envelope_carries_path_and_manifest_keys() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("ws");
-    let out = grex()
-        .args(["--json", "init"])
-        .arg(&target)
-        .assert()
-        .success()
-        .get_output()
-        .clone();
+    let out = grex().args(["--json", "init"]).arg(&target).assert().success().get_output().clone();
     let stdout = String::from_utf8(out.stdout).unwrap();
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     assert_eq!(v["verb"].as_str(), Some("init"));

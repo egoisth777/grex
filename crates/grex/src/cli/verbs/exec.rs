@@ -35,11 +35,8 @@ pub fn run(args: ExecArgs, global: &GlobalFlags, _cancel: &CancellationToken) ->
     let mut cmd = Command::new(&program);
     cmd.args(&rest).current_dir(&cwd);
 
-    let exit_code = if json {
-        run_capture(&mut cmd, &cwd, &program)
-    } else {
-        run_inherit(&mut cmd, &program)
-    };
+    let exit_code =
+        if json { run_capture(&mut cmd, &cwd, &program) } else { run_inherit(&mut cmd, &program) };
     std::process::exit(exit_code.min(125));
 }
 

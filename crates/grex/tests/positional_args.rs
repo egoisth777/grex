@@ -42,12 +42,7 @@ fn add_with_no_url_fails() {
 #[test]
 fn rm_with_path_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", "my-pack"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", "my-pack"]).assert().failure().code(2);
 }
 
 #[test]
@@ -64,22 +59,13 @@ fn rm_without_path_fails() {
 #[test]
 fn update_without_pack_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .arg("update")
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).arg("update").assert().failure().code(2);
 }
 
 #[test]
 fn update_with_pack_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["update", "my-pack"])
-        .assert()
-        .failure();
+    grex().current_dir(dir.path()).args(["update", "my-pack"]).assert().failure();
 }
 
 // ---------- run ----------
@@ -89,12 +75,7 @@ fn update_with_pack_succeeds() {
 #[test]
 fn run_with_action_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["run", "symlink"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["run", "symlink"]).assert().failure().code(2);
 }
 
 #[test]
@@ -122,12 +103,7 @@ fn exec_with_trailing_args_succeeds() {
 #[test]
 fn exec_with_single_arg_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["exec", "--", "echo"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["exec", "--", "echo"]).assert().failure().code(2);
 }
 
 /// v1.4.0 — `cmd` is `required = true`, so `grex exec` with no
@@ -156,24 +132,14 @@ fn add_empty_url_currently_succeeds() {
 #[test]
 fn rm_unicode_path_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", "unicode-пакет-🎯"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", "unicode-пакет-🎯"]).assert().failure().code(2);
 }
 
 #[test]
 fn rm_long_path_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     let long = "a".repeat(512);
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", long.as_str()])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", long.as_str()]).assert().failure().code(2);
 }
 
 // ---------- windows path handling ----------
@@ -196,24 +162,14 @@ fn import_with_windows_drive_path_parses() {
 #[test]
 fn rm_with_windows_relative_path_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", r".\pack"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", r".\pack"]).assert().failure().code(2);
 }
 
 #[cfg(windows)]
 #[test]
 fn rm_with_windows_parent_relative_path_succeeds() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", r"..\pack"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", r"..\pack"]).assert().failure().code(2);
 }
 
 // ---------- import ----------

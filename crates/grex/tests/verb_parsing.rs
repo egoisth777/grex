@@ -64,10 +64,14 @@ fn bare_grex_fails_with_help_hint() {
         .stderr(predicate::str::contains("Usage:").or(predicate::str::contains("<COMMAND>")));
 }
 
-/// clap should reject two subcommands stacked in a row (`grex init ls`).
+/// clap should reject two subcommands stacked in a row. `init` now
+/// accepts an optional positional path (v1.4.0), so the prior
+/// `["init", "ls"]` shape silently parses as `init <path=ls>`. Use a
+/// verb with no positional (`serve`) so the second token can only be
+/// interpreted as an unknown argument.
 #[test]
 fn multi_verb_input_fails() {
-    grex().args(["init", "ls"]).assert().failure();
+    grex().args(["serve", "ls"]).assert().failure();
 }
 
 /// `init` — invoked with an explicit tempdir path writes the minimal

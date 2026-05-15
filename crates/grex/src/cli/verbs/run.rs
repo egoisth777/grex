@@ -17,7 +17,11 @@ use tokio_util::sync::CancellationToken;
 
 pub fn run(args: RunArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
     let Some(pack_root) = super::resolve_pack_root_or_cwd(args.pack_root.as_deref()) else {
-        emit_error(global.json, "usage", "`<pack_root>` required (directory with `.grex/pack.yaml`)");
+        emit_error(
+            global.json,
+            "usage",
+            "`<pack_root>` required (directory with `.grex/pack.yaml`)",
+        );
         std::process::exit(2);
     };
     let manifest = match FsPackLoader::new().load(&pack_root) {
@@ -28,12 +32,8 @@ pub fn run(args: RunArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> 
         }
     };
     let target = args.action.as_str();
-    let matched: Vec<(usize, &grex_core::Action)> = manifest
-        .actions
-        .iter()
-        .enumerate()
-        .filter(|(_, a)| a.name() == target)
-        .collect();
+    let matched: Vec<(usize, &grex_core::Action)> =
+        manifest.actions.iter().enumerate().filter(|(_, a)| a.name() == target).collect();
     if matched.is_empty() {
         emit_no_match(global.json, target);
         return Ok(());

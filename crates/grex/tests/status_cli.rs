@@ -49,13 +49,8 @@ fn status_clean_pack_emits_a_state_line() {
 fn status_json_envelope_has_packs_array_and_clean_field() {
     let dir = tempfile::tempdir().unwrap();
     seed_pack(dir.path());
-    let out = grex()
-        .args(["--json", "status"])
-        .arg(dir.path())
-        .assert()
-        .success()
-        .get_output()
-        .clone();
+    let out =
+        grex().args(["--json", "status"]).arg(dir.path()).assert().success().get_output().clone();
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON");
     assert_eq!(v["verb"].as_str(), Some("status"));
     assert!(v["clean"].is_boolean(), "clean field must be boolean");

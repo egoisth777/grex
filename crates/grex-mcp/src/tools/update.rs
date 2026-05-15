@@ -18,7 +18,9 @@ pub(crate) async fn handle(
     _state: &crate::ServerState,
     Parameters(_p): Parameters<UpdateParams>,
 ) -> Result<CallToolResult, McpError> {
-    Ok(packop_error("verb `update` is wired CLI-side as of v1.4.0; MCP handler will follow in v1.5.0"))
+    Ok(packop_error(
+        "verb `update` is wired CLI-side as of v1.4.0; MCP handler will follow in v1.5.0",
+    ))
 }
 
 #[cfg(test)]

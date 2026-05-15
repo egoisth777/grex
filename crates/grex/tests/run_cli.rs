@@ -13,12 +13,7 @@ fn seed_pack(dir: &std::path::Path, body: &str) {
 #[test]
 fn run_outside_pack_root_exits_two() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["run", "symlink"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["run", "symlink"]).assert().failure().code(2);
 }
 
 #[test]
@@ -28,18 +23,10 @@ fn run_no_match_exits_zero_with_informational_message() {
         dir.path(),
         "schema_version: \"1\"\nname: run-test\ntype: scripted\nactions: []\nchildren: []\n",
     );
-    let out = grex()
-        .args(["run", "symlink"])
-        .arg(dir.path())
-        .assert()
-        .success()
-        .get_output()
-        .clone();
+    let out =
+        grex().args(["run", "symlink"]).arg(dir.path()).assert().success().get_output().clone();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        stdout.contains("no packs declare action"),
-        "no-match message expected; got: {stdout}"
-    );
+    assert!(stdout.contains("no packs declare action"), "no-match message expected; got: {stdout}");
 }
 
 #[test]

@@ -527,12 +527,7 @@ pub fn default_args_for(verb: &str, fixture: &TestFixture) -> Vec<String> {
         // the fixture so it does not collide with MCP init (which
         // writes into `state.workspace` = fixture root). Both surfaces
         // succeed independently → both signal `Success`.
-        "init" => vec![fixture
-            .workspace
-            .path()
-            .join("init-target")
-            .to_string_lossy()
-            .into_owned()],
+        "init" => vec![fixture.workspace.path().join("init-target").to_string_lossy().into_owned()],
         // `sync` needs an absolute path inside the per-test tempdir so
         // the CLI's `pack_root.is_none()` legacy-stub branch is not
         // taken AND the runner cwd never gets polluted. The path

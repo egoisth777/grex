@@ -31,8 +31,7 @@ pub fn run(args: StatusArgs, global: &GlobalFlags, cancel: &CancellationToken) -
             Ok(())
         }
         Err(err) => {
-            let outcome =
-                super::sync::classify_sync_err(err, global.json, "status");
+            let outcome = super::sync::classify_sync_err(err, global.json, "status");
             match outcome {
                 super::sync::RunOutcome::Validation => std::process::exit(1),
                 super::sync::RunOutcome::Tree | super::sync::RunOutcome::UsageError => {

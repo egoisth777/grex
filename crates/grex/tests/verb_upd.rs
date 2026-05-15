@@ -31,9 +31,5 @@ fn update_in_seeded_pack_root_succeeds() {
         "schema_version: \"1\"\nname: update-test\ntype: meta\nactions: []\nchildren: []\n",
     )
     .unwrap();
-    grex()
-        .current_dir(dir.path())
-        .arg("update")
-        .assert()
-        .success();
+    grex().current_dir(dir.path()).arg("update").assert().success();
 }

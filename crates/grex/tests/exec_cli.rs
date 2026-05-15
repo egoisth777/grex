@@ -18,23 +18,14 @@ fn seed_pack(dir: &std::path::Path) {
 #[test]
 fn exec_without_args_fails_at_parse_time() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .arg("exec")
-        .assert()
-        .failure();
+    grex().current_dir(dir.path()).arg("exec").assert().failure();
 }
 
 #[test]
 fn exec_outside_pack_root_exits_two() {
     let dir = tempfile::tempdir().unwrap();
     let program = if cfg!(windows) { "cmd" } else { "true" };
-    grex()
-        .current_dir(dir.path())
-        .args(["exec", "--", program])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["exec", "--", program]).assert().failure().code(2);
 }
 
 #[test]
@@ -56,9 +47,7 @@ fn exec_json_envelope_captures_stdout_and_exit_code() {
     let dir = tempfile::tempdir().unwrap();
     seed_pack(dir.path());
     let mut cmd = grex();
-    cmd.args(["--json", "exec", "--pack"])
-        .arg(dir.path())
-        .arg("--");
+    cmd.args(["--json", "exec", "--pack"]).arg(dir.path()).arg("--");
     if cfg!(windows) {
         cmd.args(["cmd", "/c", "echo", "hello"]);
     } else {

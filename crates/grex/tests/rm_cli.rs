@@ -15,12 +15,7 @@ fn seed_meta_pack(dir: &std::path::Path, body: &str) {
 #[test]
 fn rm_missing_path_exits_two() {
     let dir = tempfile::tempdir().unwrap();
-    grex()
-        .current_dir(dir.path())
-        .args(["rm", "definitely-not-a-pack"])
-        .assert()
-        .failure()
-        .code(2);
+    grex().current_dir(dir.path()).args(["rm", "definitely-not-a-pack"]).assert().failure().code(2);
 }
 
 #[test]
@@ -43,13 +38,7 @@ fn rm_meta_with_children_refuses_without_force() {
         &pack,
         "schema_version: \"1\"\nname: parent\ntype: meta\nactions: []\nchildren:\n  - url: https://example.invalid/child.git\n    path: c\n",
     );
-    grex()
-        .arg("rm")
-        .arg(&pack)
-        .assert()
-        .failure()
-        .code(1)
-        .stderr(contains("children"));
+    grex().arg("rm").arg(&pack).assert().failure().code(1).stderr(contains("children"));
     assert!(pack.exists(), "refused rm must not delete the directory");
 }
 
@@ -61,12 +50,7 @@ fn rm_meta_with_children_succeeds_with_force() {
         &pack,
         "schema_version: \"1\"\nname: parent\ntype: meta\nactions: []\nchildren:\n  - url: https://example.invalid/child.git\n    path: c\n",
     );
-    grex()
-        .arg("rm")
-        .arg(&pack)
-        .arg("--force")
-        .assert()
-        .success();
+    grex().arg("rm").arg(&pack).arg("--force").assert().success();
     assert!(!pack.exists(), "directory must be removed under --force");
 }
 
@@ -78,10 +62,6 @@ fn rm_dry_run_does_not_remove_directory() {
         &pack,
         "schema_version: \"1\"\nname: leaf\ntype: meta\nactions: []\nchildren: []\n",
     );
-    grex()
-        .args(["--dry-run", "rm"])
-        .arg(&pack)
-        .assert()
-        .success();
+    grex().args(["--dry-run", "rm"]).arg(&pack).assert().success();
     assert!(pack.exists(), "dry-run must not remove the directory");
 }

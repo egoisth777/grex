@@ -78,10 +78,7 @@ fn add_path_collision_exits_one_and_does_not_append() {
         .stderr(contains("already registered"));
 
     let after = fs::read_to_string(dir.path().join(".grex/events.jsonl")).unwrap();
-    assert_eq!(
-        before, after,
-        "second add must NOT append on path collision"
-    );
+    assert_eq!(before, after, "second add must NOT append on path collision");
 }
 
 #[test]
@@ -96,12 +93,7 @@ fn add_path_collision_json_envelope_carries_existing_url() {
 
     let out = grex()
         .current_dir(dir.path())
-        .args([
-            "--json",
-            "add",
-            "https://example.com/b/second.git",
-            "shared",
-        ])
+        .args(["--json", "add", "https://example.com/b/second.git", "shared"])
         .assert()
         .failure()
         .code(1)

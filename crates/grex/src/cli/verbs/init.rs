@@ -14,10 +14,7 @@ use tokio_util::sync::CancellationToken;
 /// leading non-alphabetic chars are trimmed; an empty result falls back
 /// to `"workspace"`.
 fn derive_pack_name(dir: &Path) -> String {
-    let raw = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("workspace");
+    let raw = dir.file_name().and_then(|s| s.to_str()).unwrap_or("workspace");
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
         let c = ch.to_ascii_lowercase();
@@ -27,9 +24,7 @@ fn derive_pack_name(dir: &Path) -> String {
             out.push('-');
         }
     }
-    while !out.is_empty()
-        && !out.chars().next().unwrap_or('-').is_ascii_lowercase()
-    {
+    while !out.is_empty() && !out.chars().next().unwrap_or('-').is_ascii_lowercase() {
         out.remove(0);
     }
     if out.is_empty() {
@@ -40,9 +35,7 @@ fn derive_pack_name(dir: &Path) -> String {
 }
 
 fn minimal_pack_yaml(name: &str) -> String {
-    format!(
-        "schema_version: \"1\"\nname: {name}\ntype: meta\nactions: []\nchildren: []\n"
-    )
+    format!("schema_version: \"1\"\nname: {name}\ntype: meta\nactions: []\nchildren: []\n")
 }
 
 pub fn run(args: InitArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> Result<()> {
@@ -72,41 +65,25 @@ fn run_impl(path: Option<PathBuf>, json: bool) -> Outcome {
     };
 
     if let Err(err) = std::fs::create_dir_all(&dir) {
-        emit_error(
-            json,
-            "io",
-            &format!("create workspace dir {}: {err}", dir.display()),
-        );
+        emit_error(json, "io", &format!("create workspace dir {}: {err}", dir.display()));
         return Outcome::Io;
     }
 
     let grex_dir = dir.join(".grex");
     let manifest_path = grex_dir.join("pack.yaml");
     if manifest_path.exists() {
-        emit_error(
-            json,
-            "already_initialized",
-            &format!("{} already initialized", dir.display()),
-        );
+        emit_error(json, "already_initialized", &format!("{} already initialized", dir.display()));
         return Outcome::AlreadyInitialized;
     }
 
     if let Err(err) = std::fs::create_dir_all(&grex_dir) {
-        emit_error(
-            json,
-            "io",
-            &format!("create {}: {err}", grex_dir.display()),
-        );
+        emit_error(json, "io", &format!("create {}: {err}", grex_dir.display()));
         return Outcome::Io;
     }
 
     let name = derive_pack_name(&dir);
     if let Err(err) = std::fs::write(&manifest_path, minimal_pack_yaml(&name)) {
-        emit_error(
-            json,
-            "io",
-            &format!("write {}: {err}", manifest_path.display()),
-        );
+        emit_error(json, "io", &format!("write {}: {err}", manifest_path.display()));
         return Outcome::Io;
     }
 
@@ -139,4 +116,3 @@ fn emit_error(json: bool, kind: &str, msg: &str) {
         eprintln!("grex init: {msg}");
     }
 }
-
