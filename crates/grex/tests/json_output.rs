@@ -1,14 +1,8 @@
 // JSON-output integration tests for the CLI verb surface.
 //
-// M8-6 / issue #35: `--json` is now wired for all 11 non-transport
-// verbs. Stubs emit `{"status":"unimplemented","verb":"<name>"}`;
-// real verbs (`add`, `doctor`, `import`, `sync`, `teardown`) emit a verb-specific
-// schema mirroring the human output. `serve` is excluded — it owns stdio
-// for JSON-RPC and `--json` is not applicable.
-//
-// Each test spawns the real `grex` binary via `assert_cmd`, invokes
-// `grex <verb> --json`, and asserts that stdout parses as JSON with
-// the expected verb-specific key.
+// v1.4.0 — all 14 verbs are now wired. Each test asserts the JSON
+// envelope shape for one verb under a representative invocation.
+// `serve` is excluded (owns stdio for JSON-RPC, --json N/A).
 
 use assert_cmd::prelude::*;
 use serde_json::Value;
@@ -24,28 +18,52 @@ fn parse_json_stdout(out: &std::process::Output) -> Value {
         .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\n---\n{stdout}\n---"))
 }
 
-// ----- Stub verbs: expect `{"status":"unimplemented","verb":"<name>"}` -----
-
-fn assert_unimplemented(verb: &str, extra_args: &[&str]) {
-    // `--json` is placed before the verb so that verbs using
-    // `trailing_var_arg = true` (notably `exec`) cannot swallow it as a
-    // positional — clap parses it as the global flag regardless of
-    // verb ordering.
-    let mut cmd = bin();
-    cmd.arg("--json");
-    cmd.arg(verb);
-    for a in extra_args {
-        cmd.arg(a);
-    }
-    let out = cmd.assert().success().get_output().clone();
-    let v = parse_json_stdout(&out);
-    assert_eq!(v.get("status").and_then(Value::as_str), Some("unimplemented"), "status field");
-    assert_eq!(v.get("verb").and_then(Value::as_str), Some(verb), "verb field for {verb}");
+// Helper: seed a minimal meta-pack manifest at `dir/.grex/pack.yaml`.
+fn seed_pack(dir: &std::path::Path) {
+    let grex_dir = dir.join(".grex");
+    std::fs::create_dir_all(&grex_dir).unwrap();
+    std::fs::write(
+        grex_dir.join("pack.yaml"),
+        "schema_version: \"1\"\nname: test-pack\ntype: meta\nactions: []\nchildren: []\n",
+    )
+    .unwrap();
 }
 
 #[test]
-fn init_json_emits_unimplemented() {
-    assert_unimplemented("init", &[]);
+fn init_json_emits_ok_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("workspace");
+    let out = bin()
+        .args(["--json", "init"])
+        .arg(&target)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("init"));
+    assert_eq!(v.get("status").and_then(Value::as_str), Some("ok"));
+    assert!(target.join(".grex/pack.yaml").is_file());
+}
+
+#[test]
+fn init_json_idempotency_error() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_pack(dir.path());
+    let out = bin()
+        .args(["--json", "init"])
+        .arg(dir.path())
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert_eq!(out.status.code(), Some(1));
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("init"));
+    assert_eq!(
+        v.pointer("/error/kind").and_then(Value::as_str),
+        Some("already_initialized")
+    );
 }
 
 #[test]
@@ -67,41 +85,106 @@ fn add_json_emits_report() {
 }
 
 #[test]
-fn rm_json_emits_unimplemented() {
-    assert_unimplemented("rm", &["some-pack"]);
-}
-
-// `ls` no longer emits the unimplemented stub: as of feat-v1.1.1 it
-// performs a read-only tree walk and surfaces structured output. See
-// `crates/grex/tests/ls_basic.rs` for dedicated coverage.
-
-#[test]
-fn status_json_emits_unimplemented() {
-    assert_unimplemented("status", &[]);
-}
-
-#[test]
-fn update_json_emits_unimplemented() {
-    assert_unimplemented("update", &[]);
+fn rm_json_emits_error_for_missing_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = bin()
+        .current_dir(dir.path())
+        .args(["--json", "rm", "definitely-not-here"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert_eq!(out.status.code(), Some(2));
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("rm"));
+    assert_eq!(v.pointer("/error/kind").and_then(Value::as_str), Some("not_found"));
 }
 
 #[test]
-fn run_json_emits_unimplemented() {
-    assert_unimplemented("run", &["some-action"]);
+fn status_json_clean_pack() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_pack(dir.path());
+    let out = bin()
+        .args(["--json", "status"])
+        .arg(dir.path())
+        .assert()
+        .get_output()
+        .clone();
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("status"));
+    assert!(v.get("clean").is_some(), "status JSON must carry a `clean` field");
+    assert!(
+        v.get("packs").and_then(Value::as_array).is_some(),
+        "status JSON must carry a `packs` array"
+    );
 }
 
 #[test]
-fn exec_json_emits_unimplemented() {
-    assert_unimplemented("exec", &["echo", "hi"]);
+fn update_json_usage_error_outside_pack() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = bin()
+        .current_dir(dir.path())
+        .args(["--json", "update"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert_eq!(out.status.code(), Some(2));
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("sync"));
+    assert_eq!(
+        v.pointer("/error/kind").and_then(Value::as_str),
+        Some("usage"),
+        "update delegates to sync; usage error envelope expected"
+    );
 }
 
-// `sync` and `teardown` without `<pack_root>` emit a usage-error envelope
-// and exit 2 (not the `unimplemented` stub). Asserted below in
-// `sync_without_pack_root_json_emits_usage_error` /
-// `teardown_without_pack_root_json_emits_usage_error`.
+#[test]
+fn run_json_no_match_envelope() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_pack(dir.path());
+    let out = bin()
+        .args(["--json", "run", "symlink"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("run"));
+    assert_eq!(v.get("matched_packs").and_then(Value::as_u64), Some(0));
+    assert_eq!(v.get("action").and_then(Value::as_str), Some("symlink"));
+}
+
+#[test]
+fn exec_json_envelope_with_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    seed_pack(dir.path());
+    let program = if cfg!(windows) { "cmd" } else { "true" };
+    let args_slice: &[&str] = if cfg!(windows) { &["/c", "exit", "0"] } else { &[] };
+    let mut cmd = bin();
+    cmd.args(["--json", "exec", "--pack"])
+        .arg(dir.path())
+        .arg("--")
+        .arg(program);
+    for a in args_slice {
+        cmd.arg(a);
+    }
+    let out = cmd.assert().success().get_output().clone();
+    let v = parse_json_stdout(&out);
+    assert_eq!(v.get("verb").and_then(Value::as_str), Some("exec"));
+    assert_eq!(v.get("exit_code").and_then(Value::as_i64), Some(0));
+}
 
 fn assert_usage_error(verb: &str) {
-    let out = bin().args([verb, "--json"]).assert().failure().get_output().clone();
+    let dir = tempfile::tempdir().unwrap();
+    let out = bin()
+        .current_dir(dir.path())
+        .args([verb, "--json"])
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
     assert_eq!(out.status.code(), Some(2), "{verb} --json must exit 2 on missing pack_root");
     let v = parse_json_stdout(&out);
     assert_eq!(v.get("verb").and_then(Value::as_str), Some(verb));

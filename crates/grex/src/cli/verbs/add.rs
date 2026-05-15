@@ -2,7 +2,9 @@ use crate::cli::args::{AddArgs, GlobalFlags};
 use anyhow::{Context, Result};
 use grex_core::add::{add_pack, infer_path_from_url, AddOpts, AddReport, AddRequest};
 use grex_core::import::classify;
-use grex_core::manifest::{ensure_event_log_migrated, find_workspace_root};
+use grex_core::manifest::{
+    append::read_all, ensure_event_log_migrated, find_workspace_root, fold::fold,
+};
 use grex_core::refspec::parse_ref;
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +25,39 @@ pub fn run(args: AddArgs, global: &GlobalFlags, _cancel: &CancellationToken) -> 
     let cwd = std::env::current_dir().context("resolve cwd for workspace root")?;
     let workspace = find_workspace_root(&cwd);
     let manifest = ensure_event_log_migrated(&workspace).context("migrate v1.x event log")?;
+
+    // v1.4.0 B15 — refuse to register a pack whose path collides with
+    // an already-tracked entry. Without this guard, the second `add`
+    // appended a fresh registration that silently shadowed the prior
+    // one on fold. Hard exit 1 (no state mutation) — operators must
+    // run `grex rm <path>` first if they really want to replace the
+    // entry.
+    if manifest.exists() {
+        let events = read_all(&manifest).context("read event log for collision check")?;
+        let state = fold(events);
+        if let Some(existing) = state.values().find(|s| s.path == path) {
+            let msg = format!(
+                "path '{path}' already registered to {existing_url}",
+                existing_url = existing.url
+            );
+            if global.json {
+                let doc = serde_json::json!({
+                    "verb": "add",
+                    "error": {
+                        "kind": "path_collision",
+                        "message": msg,
+                        "path": path,
+                        "existing_url": existing.url,
+                    },
+                });
+                println!("{}", serde_json::to_string(&doc)?);
+            } else {
+                eprintln!("grex add: {msg}; not adding");
+            }
+            std::process::exit(1);
+        }
+    }
+
     let mut request = AddRequest::new(args.url, path, pack_type);
     if let Some(r) = parsed_ref {
         request = request.with_ref(r);

@@ -6,7 +6,7 @@
 //! turns trusted-command execution into arbitrary-code execution. Re-
 //! introduction is gated on a future per-session capability opt-in.
 
-use crate::error::not_implemented_result;
+use crate::error::packop_error;
 use rmcp::{handler::server::wrapper::Parameters, model::CallToolResult, ErrorData as McpError};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -28,7 +28,7 @@ pub(crate) async fn handle(
     _state: &crate::ServerState,
     Parameters(_p): Parameters<ExecParams>,
 ) -> Result<CallToolResult, McpError> {
-    Ok(not_implemented_result("exec"))
+    Ok(packop_error("verb `exec` is wired CLI-side as of v1.4.0; MCP handler will follow in v1.5.0"))
 }
 
 #[cfg(test)]

@@ -523,6 +523,16 @@ pub fn default_args_for(verb: &str, fixture: &TestFixture) -> Vec<String> {
         "run" => vec!["parity-fixture-action".to_string()],
         // `exec` collects trailing args; pass one so clap-parse succeeds.
         "exec" => vec!["true".to_string()],
+        // v1.4.0 `init` is wired. Aim CLI init at a fresh sub-dir of
+        // the fixture so it does not collide with MCP init (which
+        // writes into `state.workspace` = fixture root). Both surfaces
+        // succeed independently → both signal `Success`.
+        "init" => vec![fixture
+            .workspace
+            .path()
+            .join("init-target")
+            .to_string_lossy()
+            .into_owned()],
         // `sync` needs an absolute path inside the per-test tempdir so
         // the CLI's `pack_root.is_none()` legacy-stub branch is not
         // taken AND the runner cwd never gets polluted. The path

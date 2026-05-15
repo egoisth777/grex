@@ -6,15 +6,17 @@ mod common;
 use common::{grex, required_args_for, STUB_VERBS, VERBS};
 use predicates::prelude::*;
 
-/// Each stub verb, invoked with its minimal required args, exits 0 and
-/// prints the M1 stub marker. `serve` is excluded — see `STUB_VERBS` doc.
+/// v1.4.0 — `STUB_VERBS` is now empty (all six prior stubs wired). The
+/// loop body never fires; the function is retained so the suite still
+/// guards against a regression where a future verb is reintroduced as
+/// a stub. Coverage of real verb behavior lives in per-verb test files.
 #[test]
 fn every_verb_stub_runs_and_prints_unimplemented() {
     for verb in STUB_VERBS {
         let mut cmd = grex();
         cmd.arg(verb);
         cmd.args(required_args_for(verb));
-        cmd.assert().success().stdout(predicate::str::contains("unimplemented"));
+        cmd.assert().success();
     }
 }
 
@@ -68,18 +70,31 @@ fn multi_verb_input_fails() {
     grex().args(["init", "ls"]).assert().failure();
 }
 
-/// `init` — no args, succeeds.
+/// `init` — invoked with an explicit tempdir path writes the minimal
+/// `.grex/pack.yaml` skeleton and exits 0. v1.4.0 replaces the prior
+/// M1 stub assertion. Idempotency + JSON envelope coverage lives in
+/// `crates/grex/tests/init_cli.rs`.
 #[test]
-fn init_stub() {
-    grex().arg("init").assert().success().stdout(predicate::str::contains("unimplemented"));
+fn init_writes_manifest_skeleton() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    grex()
+        .args(["init"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack.yaml"));
+    assert!(dir.path().join(".grex/pack.yaml").is_file());
 }
 
-/// `status` — no args, succeeds with the M1 "unimplemented" stub
-/// marker. `doctor` is excluded as of feat-m7-4b; its dedicated
-/// coverage lives in `crates/grex/tests/doctor_cli.rs`. `ls` is
-/// excluded as of feat-v1.1.1; its dedicated coverage lives in
-/// `crates/grex/tests/ls_basic.rs`.
+/// `status` — invoked outside a pack root exits 2 with a usage error.
+/// Full drift-reporting coverage lives in `crates/grex/tests/status_cli.rs`.
 #[test]
-fn zero_arg_verbs_succeed() {
-    grex().arg("status").assert().success().stdout(predicate::str::contains("unimplemented"));
+fn status_outside_pack_root_exits_usage_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    grex()
+        .current_dir(dir.path())
+        .arg("status")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("pack_root").or(predicate::str::contains("required")));
 }
