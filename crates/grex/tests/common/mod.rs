@@ -18,28 +18,12 @@ pub const VERBS: &[&str] = &[
     "exec",
 ];
 
-/// Verbs whose stub still exits 0 with "unimplemented" stdout when invoked.
-///
-/// `serve` is excluded as of feat-m7-1 stage 8: it is now a real long-running
-/// stdio MCP loop (no "unimplemented" message, exits non-zero on closed
-/// stdin without a handshake). Its dedicated coverage lives in
-/// `crates/grex/tests/serve_smoke.rs`. `doctor` is excluded as of feat-m7-4b:
-/// it now executes real checks against the current working directory and
-/// exits with a severity-derived code, so its dedicated coverage lives in
-/// `crates/grex/tests/doctor_cli.rs`. `sync` is excluded as of
-/// feat-m8-release: the bare-invocation fall-through now emits a
-/// `usage` error envelope and exits 2 (see `man/reference/cli-json.md`
-/// §"Missing `<pack_root>`"). `add` is excluded as of issue #35: it now
-/// appends one manifest registration row (or reports a dry-run plan), with
-/// dedicated coverage in `add_cli.rs`; sync coverage lives in
-/// `crates/grex/tests/json_output.rs::sync_without_pack_root_json_emits_usage_error`
-/// and the E2E suite. `ls` is excluded as of feat-v1.1.1: it now performs
-/// a real read-only tree walk and surfaces a usage-shaped error when no
-/// manifest is reachable from the cwd; dedicated coverage lives in
-/// `crates/grex/tests/ls_basic.rs`. Use this slice for parametric tests
-/// that actually *run* the verb; use `VERBS` for tests that only inspect
-/// help text or the verb-name surface.
-pub const STUB_VERBS: &[&str] = &["init", "rm", "status", "update", "run", "exec"];
+/// Verbs that previously shipped as M1 stubs. v1.4.0 wired all six
+/// (`init`, `rm`, `status`, `update`, `run`, `exec`) — the slice is
+/// retained empty for downstream test scaffolds that still loop over
+/// "stub-shaped" verbs as a no-op; new tests should iterate `VERBS`
+/// directly or target individual verbs by name.
+pub const STUB_VERBS: &[&str] = &[];
 
 /// Return the minimal required positional args for a verb.
 /// Verbs with no required positionals return an empty vec.
@@ -53,19 +37,15 @@ pub fn required_args_for(verb: &str) -> Vec<&'static str> {
     }
 }
 
-/// Run a verb with the given universal-flag slice and assert success +
-/// "unimplemented" stub output. Flags are passed through verbatim so callers
-/// can shape them (e.g. `&["--json", "--dry-run"]`).
+/// v1.4.0 — every verb is now wired; this helper exercises the global
+/// flag parser against `<verb> --help` so the parser surface is still
+/// checked without actually running the verb's side effects. The
+/// previous "unimplemented" assertion is gone (v1.3.x M1 scaffolds are
+/// retired). Each verb's real behavior gets its own dedicated test file.
 pub fn run_with_flags(verb: &str, flags: &[&str]) {
     let mut cmd = grex();
     cmd.arg(verb);
-    cmd.args(required_args_for(verb));
     cmd.args(flags);
-    let assert = cmd.assert().success();
-    let stdout =
-        String::from_utf8(assert.get_output().stdout.clone()).expect("grex stdout is valid UTF-8");
-    assert!(
-        stdout.contains("unimplemented"),
-        "verb `{verb}` with flags {flags:?} did not print 'unimplemented'; got: {stdout}"
-    );
+    cmd.arg("--help");
+    cmd.assert().success();
 }

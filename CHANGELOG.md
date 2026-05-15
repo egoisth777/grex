@@ -20,6 +20,59 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-15
+
+Six previously-stub CLI verbs (`init`, `rm`, `update`, `status`, `run`,
+`exec`) are now wired against their grex-core counterparts, plus a
+B15 path-collision guard on `add`. Every basic action now behaves
+as advertised in `openspec/feat-grex/spec.md` §"Success criteria".
+
+### Added
+
+- `grex init [<path>]` — bootstrap a meta-pack at `<path>` (default
+  cwd). Writes the minimal v1 manifest skeleton
+  (`schema_version: "1"`, derived `name`, `type: meta`, empty
+  `actions` + `children`) to `<path>/.grex/pack.yaml`. Refuses to
+  overwrite an existing manifest (exit `1`, kind
+  `already_initialized`).
+- `grex rm <path>` — load the manifest, refuse to delete a meta-pack
+  with non-empty `children:` unless `--force` is passed, run the
+  standard teardown lifecycle (`sync::teardown`), then `rmtree`.
+  `--force` bypasses the teardown walk so operators can clean up
+  packs whose children no longer exist on disk.
+- `grex update [<pack>]` — thin alias for `sync`. The existing sync
+  pipeline already re-runs install actions on lockfile delta, so the
+  verb is a discoverability-only entry-point in v1.4.0.
+- `grex status [<pack_root>]` — drift vs lockfile. Walks the pack
+  tree under `sync::run` with `dry_run = true` and prints per-pack
+  state (`clean` / `would-update N`). Never mutates state.
+- `grex run <action> [<pack_root>]` — execute a named action across
+  the resolved pack. Filters `manifest.actions` by
+  `Action::name() == <action>` and dispatches each matched entry
+  through `PlanExecutor` (dry-run) or `FsExecutor` (wet-run). Zero
+  matches exits `0` with an informational message.
+- `grex exec [--pack <PATH>] -- <cmd>...` — spawn `<cmd>` with cwd
+  pinned to the pack root. Stdio is inherited in human mode and
+  captured in `--json` mode. Child exit code is propagated and
+  clamped at `125` so it cannot collide with the sync `1/2/3` band.
+- `grex add` path-collision guard (B15) — registering a pack whose
+  `path` collides with an already-tracked entry now exits `1`
+  (kind `path_collision`) without mutating the event log. The
+  `--json` envelope surfaces the existing URL so operators can
+  decide between `rm` + re-add and a different path.
+
+### Changed
+
+- All 14 CLI verbs now return real exit codes; the prior M1 scaffold
+  message (`"unimplemented (M1 scaffold)"`) is retired. The
+  `STUB_VERBS` integration-test slice is now empty.
+- MCP `init` handler is wired against `state.workspace` and writes
+  the same manifest skeleton the CLI does. Remaining MCP-side stubs
+  (`rm`, `status`, `update`, `run`, `exec`) return `packop_error`
+  envelopes pointing at v1.5.0; full MCP-side wiring is deferred so
+  the v1.4.0 scope stays CLI-focused.
+- `xtask` workspace-version pin bumped from `1.3.3` to `1.4.0`.
+
 ## [1.3.3] - 2026-05-07
 
 ### Added

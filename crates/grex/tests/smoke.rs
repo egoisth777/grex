@@ -26,7 +26,17 @@ fn help_lists_all_verbs() {
 
 #[test]
 fn init_stub_exits_zero() {
-    bin().arg("init").assert().success().stdout(predicate::str::contains("unimplemented"));
+    // v1.4.0 — `init` is a real verb that writes `.grex/pack.yaml` in
+    // the target directory. Smoke-verify it succeeds against a fresh
+    // tempdir; idempotency + JSON coverage lives in
+    // `crates/grex/tests/init_cli.rs`.
+    let dir = tempfile::tempdir().unwrap();
+    bin()
+        .args(["init"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack.yaml"));
 }
 
 #[test]

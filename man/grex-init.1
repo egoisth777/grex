@@ -4,10 +4,13 @@
 .SH NAME
 grex\-init \- Initialize a grex workspace
 .SH SYNOPSIS
-\fBgrex\-init\fR [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-init\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPATH\fR]
 .SH DESCRIPTION
 Initialize a grex workspace
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.TP
+[\fIPATH\fR]
+Workspace path to initialize. Defaults to the current working directory. The directory is created if it does not exist. The command refuses to overwrite an existing `.grex/pack.yaml` — idempotent only on a fresh tree

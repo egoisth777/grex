@@ -75,7 +75,14 @@ pub enum Verb {
 }
 
 #[derive(Args, Debug)]
-pub struct InitArgs {}
+pub struct InitArgs {
+    /// Workspace path to initialize. Defaults to the current working
+    /// directory. The directory is created if it does not exist. The
+    /// command refuses to overwrite an existing `.grex/pack.yaml` —
+    /// idempotent only on a fresh tree.
+    #[arg(value_parser = pack_path)]
+    pub path: Option<std::path::PathBuf>,
+}
 
 #[derive(Args, Debug)]
 pub struct AddArgs {
@@ -95,6 +102,12 @@ pub struct AddArgs {
 pub struct RmArgs {
     /// Local path of the pack to remove.
     pub path: String,
+
+    /// Remove a meta-pack even if it still has registered children.
+    /// Without this flag, `rm` refuses to delete a meta-pack with
+    /// non-empty `children:` to avoid orphaning sub-trees.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -107,7 +120,13 @@ pub struct LsArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct StatusArgs {}
+pub struct StatusArgs {
+    /// Pack root to inspect. Directory holding `.grex/pack.yaml`, or
+    /// the YAML file itself. When omitted, defaults to the current
+    /// working directory (v1.3.1 B2 cwd-default).
+    #[arg(value_parser = pack_path)]
+    pub pack_root: Option<std::path::PathBuf>,
+}
 
 #[derive(Args, Debug)]
 pub struct SyncArgs {
@@ -385,12 +404,25 @@ pub struct ImportArgs {
 pub struct RunArgs {
     /// Action name to run.
     pub action: String,
+
+    /// Pack root to walk. Directory holding `.grex/pack.yaml`, or the
+    /// YAML file itself. When omitted, defaults to the current working
+    /// directory (v1.3.1 B2 cwd-default).
+    #[arg(value_parser = pack_path)]
+    pub pack_root: Option<std::path::PathBuf>,
 }
 
 #[derive(Args, Debug)]
 pub struct ExecArgs {
-    /// Shell command and args to execute.
-    #[arg(trailing_var_arg = true)]
+    /// Pack root in which to run the command. Defaults to the current
+    /// working directory (v1.3.1 B2 cwd-default).
+    #[arg(long = "pack", value_parser = pack_path)]
+    pub pack: Option<std::path::PathBuf>,
+
+    /// Command + args to execute. The first element is the program
+    /// name; subsequent elements are passed verbatim. For shell
+    /// expansion use `sh -c '...'` or `pwsh -Command ...`.
+    #[arg(trailing_var_arg = true, required = true)]
     pub cmd: Vec<String>,
 }
 

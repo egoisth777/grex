@@ -4,13 +4,16 @@
 .SH NAME
 grex\-exec \- Execute a shell command in pack context
 .SH SYNOPSIS
-\fBgrex\-exec\fR [\fB\-h\fR|\fB\-\-help\fR] [\fICMD\fR]
+\fBgrex\-exec\fR [\fB\-\-pack\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICMD\fR>
 .SH DESCRIPTION
 Execute a shell command in pack context
 .SH OPTIONS
 .TP
+\fB\-\-pack\fR \fI<PACK>\fR
+Pack root in which to run the command. Defaults to the current working directory (v1.3.1 B2 cwd\-default)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-[\fICMD\fR]
-Shell command and args to execute
+<\fICMD\fR>
+Command + args to execute. The first element is the program name; subsequent elements are passed verbatim. For shell expansion use `sh \-c \*(Aq...\*(Aq` or `pwsh \-Command ...`

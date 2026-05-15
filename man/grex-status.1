@@ -4,10 +4,13 @@
 .SH NAME
 grex\-status \- Report drift vs lockfile
 .SH SYNOPSIS
-\fBgrex\-status\fR [\fB\-h\fR|\fB\-\-help\fR]
+\fBgrex\-status\fR [\fB\-h\fR|\fB\-\-help\fR] [\fIPACK_ROOT\fR]
 .SH DESCRIPTION
 Report drift vs lockfile
 .SH OPTIONS
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
+.TP
+[\fIPACK_ROOT\fR]
+Pack root to inspect. Directory holding `.grex/pack.yaml`, or the YAML file itself. When omitted, defaults to the current working directory (v1.3.1 B2 cwd\-default)

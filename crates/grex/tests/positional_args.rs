@@ -36,13 +36,13 @@ fn add_with_no_url_fails() {
 
 // ---------- rm ----------
 
+// v1.4.0 — `rm` is wired against a real path. Invoking it on a
+// non-existent path exits 2 (`not_found`). Coverage of the full
+// teardown lifecycle lives in `crates/grex/tests/rm_cli.rs`.
 #[test]
 fn rm_with_path_succeeds() {
-    grex()
-        .args(["rm", "my-pack"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["rm", "my-pack"]).assert().failure().code(2);
 }
 
 #[test]
@@ -51,30 +51,31 @@ fn rm_without_path_fails() {
 }
 
 // ---------- update ----------
+//
+// v1.4.0 — `update` delegates to `sync`. Outside a pack root it fails
+// with the sync usage envelope. Inside a pack root it runs the same
+// pipeline as `sync`. Full coverage lives in `crates/grex/tests/update_cli.rs`.
 
 #[test]
 fn update_without_pack_succeeds() {
-    grex().arg("update").assert().success().stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).arg("update").assert().failure().code(2);
 }
 
 #[test]
 fn update_with_pack_succeeds() {
-    grex()
-        .args(["update", "my-pack"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["update", "my-pack"]).assert().failure();
 }
 
 // ---------- run ----------
+//
+// v1.4.0 — `run` requires a pack root. Without one it exits 2.
 
 #[test]
 fn run_with_action_succeeds() {
-    grex()
-        .args(["run", "symlink"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["run", "symlink"]).assert().failure().code(2);
 }
 
 #[test]
@@ -83,31 +84,34 @@ fn run_without_action_fails() {
 }
 
 // ---------- exec ----------
+//
+// v1.4.0 — `exec` spawns the given program in the pack root. Without a
+// pack root it exits 2. With `--required` enforced by clap, zero-arg
+// invocations also fail at parse time.
 
 #[test]
 fn exec_with_trailing_args_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
     grex()
-        .args(["exec", "echo", "hi", "there"])
+        .current_dir(dir.path())
+        .args(["exec", "--", "echo", "hi", "there"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+        .failure()
+        .code(2);
 }
 
 #[test]
 fn exec_with_single_arg_succeeds() {
-    grex()
-        .args(["exec", "echo"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["exec", "--", "echo"]).assert().failure().code(2);
 }
 
-/// `trailing_var_arg = true` on a `Vec<String>` accepts zero args — so
-/// `grex exec` currently parses to an empty `cmd` vec and succeeds. A real
-/// required-non-empty check will land with the exec runtime in M2/M3.
+/// v1.4.0 — `cmd` is `required = true`, so `grex exec` with no
+/// positionals now fails at clap parse time (rather than silently
+/// succeeding with an empty cmd vector as it did under the M1 stub).
 #[test]
 fn exec_without_args_currently_succeeds() {
-    grex().arg("exec").assert().success().stdout(predicate::str::contains("unimplemented"));
+    grex().arg("exec").assert().failure();
 }
 
 // ---------- boundary values ----------
@@ -127,21 +131,15 @@ fn add_empty_url_currently_succeeds() {
 
 #[test]
 fn rm_unicode_path_succeeds() {
-    grex()
-        .args(["rm", "unicode-пакет-🎯"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["rm", "unicode-пакет-🎯"]).assert().failure().code(2);
 }
 
 #[test]
 fn rm_long_path_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
     let long = "a".repeat(512);
-    grex()
-        .args(["rm", long.as_str()])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    grex().current_dir(dir.path()).args(["rm", long.as_str()]).assert().failure().code(2);
 }
 
 // ---------- windows path handling ----------
@@ -163,21 +161,15 @@ fn import_with_windows_drive_path_parses() {
 #[cfg(windows)]
 #[test]
 fn rm_with_windows_relative_path_succeeds() {
-    grex()
-        .args(["rm", r".\pack"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["rm", r".\pack"]).assert().failure().code(2);
 }
 
 #[cfg(windows)]
 #[test]
 fn rm_with_windows_parent_relative_path_succeeds() {
-    grex()
-        .args(["rm", r"..\pack"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("unimplemented"));
+    let dir = tempfile::tempdir().unwrap();
+    grex().current_dir(dir.path()).args(["rm", r"..\pack"]).assert().failure().code(2);
 }
 
 // ---------- import ----------
@@ -215,7 +207,9 @@ fn import_with_from_repos_json_relative_path_parses() {
 
 #[test]
 fn sync_default_emits_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
     grex()
+        .current_dir(dir.path())
         .arg("sync")
         .assert()
         .failure()
@@ -231,7 +225,9 @@ fn sync_default_emits_usage_error() {
 /// then the missing-pack-root fall-through).
 #[test]
 fn sync_recursive_explicit_true_parses() {
+    let dir = tempfile::tempdir().unwrap();
     grex()
+        .current_dir(dir.path())
         .args(["sync", "--recursive"])
         .assert()
         .failure()

@@ -4,10 +4,13 @@
 .SH NAME
 grex\-rm \- Teardown and remove a pack
 .SH SYNOPSIS
-\fBgrex\-rm\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR>
+\fBgrex\-rm\fR [\fB\-\-force\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR>
 .SH DESCRIPTION
 Teardown and remove a pack
 .SH OPTIONS
+.TP
+\fB\-\-force\fR
+Remove a meta\-pack even if it still has registered children. Without this flag, `rm` refuses to delete a meta\-pack with non\-empty `children:` to avoid orphaning sub\-trees
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

@@ -29,7 +29,13 @@ use assert_cmd::Command;
 /// emits on parse failure. Both exit 2 under the new contract, so we
 /// differentiate on stderr content.
 fn assert_clap_accepted(args: &[&str], env: &[(&str, &str)]) {
+    // v1.4.0 — pin cwd to a fresh tempdir so the cwd-default helper
+    // (v1.3.1 B2) cannot pick up a sibling `.grex/pack.yaml` from a
+    // polluted test runner cwd. We need the "missing pack_root" fall-
+    // through here, not a successful dispatch.
+    let tmp = tempfile::tempdir().expect("tempdir");
     let mut cmd = Command::cargo_bin("grex").expect("binary built");
+    cmd.current_dir(tmp.path());
     for (k, v) in env {
         cmd.env(k, v);
     }

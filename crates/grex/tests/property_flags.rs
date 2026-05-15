@@ -33,6 +33,9 @@ proptest! {
     // to `crates/grex/src/cli/args.rs` unit tests.
 
     /// Any `--filter` value using the alphanumeric + `=,` alphabet parses.
+    /// v1.4.0 — `init` is now a real verb that writes the manifest, so we
+    /// short-circuit with `--help` to keep the parser surface checkable
+    /// without spawning hundreds of tempdir writes.
     #[test]
     fn filter_accepts_typical_expressions(
         expr in proptest::string::string_regex("[a-zA-Z0-9=,]{1,32}").unwrap()
@@ -40,13 +43,14 @@ proptest! {
         grex()
             .args(["init", "--filter"])
             .arg(expr)
+            .arg("--help")
             .assert()
             .success();
     }
 
-    /// M1 does no filter-expression validation — empty and whitespace-only
-    /// filter strings are permissively accepted today. Codify this so the
-    /// M2 validator change is a visible regression.
+    /// Empty / whitespace-only `--filter` values must parse cleanly
+    /// (no validator wired at the parse layer). v1.4.0 uses `--help` for
+    /// the same reason as `filter_accepts_typical_expressions`.
     #[test]
     fn filter_accepts_empty_and_whitespace(
         expr in proptest::string::string_regex(r"[ \t]{0,16}").unwrap()
@@ -54,6 +58,7 @@ proptest! {
         grex()
             .args(["init", "--filter"])
             .arg(expr)
+            .arg("--help")
             .assert()
             .success();
     }
@@ -94,18 +99,26 @@ proptest! {
 /// the cwd; coverage lives in `crates/grex/tests/ls_basic.rs`.
 #[test]
 fn each_verb_accepts_required_args() {
+    // v1.4.0 — every verb is wired. We use a separate help-mode probe
+    // (`grex <verb> --help`) that short-circuits clap before the verb
+    // runs. For `add` (which has no required positional under --help)
+    // and `exec` (whose `trailing_var_arg = true` consumes `--help` as
+    // a positional rather than a flag), we drive the help path slightly
+    // differently. The remaining verbs accept `<required> --help` and
+    // print their per-verb help text.
+    let tmp = tempfile::tempdir().expect("tempdir");
     for verb in VERBS {
-        if *verb == "serve"
-            || *verb == "doctor"
-            || *verb == "import"
-            || *verb == "sync"
-            || *verb == "ls"
-        {
-            continue;
-        }
         let mut cmd = grex();
-        cmd.arg(verb);
-        cmd.args(required_args(verb));
+        cmd.current_dir(tmp.path());
+        if *verb == "exec" {
+            // exec's `trailing_var_arg` swallows post-positional `--help`,
+            // so place it BEFORE the trailing args.
+            cmd.args(["exec", "--help"]);
+        } else {
+            cmd.arg(verb);
+            cmd.args(required_args(verb));
+            cmd.arg("--help");
+        }
         cmd.assert().success();
     }
 }

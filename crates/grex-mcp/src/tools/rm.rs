@@ -1,6 +1,6 @@
 //! `rm` tool — unregister a pack (runs teardown unless skipped).
 
-use crate::error::not_implemented_result;
+use crate::error::packop_error;
 use rmcp::{handler::server::wrapper::Parameters, model::CallToolResult, ErrorData as McpError};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -17,7 +17,7 @@ pub(crate) async fn handle(
     _state: &crate::ServerState,
     Parameters(_p): Parameters<RmParams>,
 ) -> Result<CallToolResult, McpError> {
-    Ok(not_implemented_result("rm"))
+    Ok(packop_error("verb `rm` is wired CLI-side as of v1.4.0; MCP handler will follow in v1.5.0"))
 }
 
 #[cfg(test)]
