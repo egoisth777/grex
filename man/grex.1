@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH grex 1  "grex 1.4.0"
+.TH grex 1  "grex 1.4.1"
 .SH NAME
 grex \- grex — nested meta\-repo manager. Pack\-based, agent\-native, Rust\-fast.
 .SH SYNOPSIS
@@ -32,7 +32,7 @@ grex\-init(1)
 Initialize a grex workspace
 .TP
 grex\-add(1)
-Register and clone a pack
+Register a pack — appends an `Event::Add` to `.grex/events.jsonl` and inserts a `{url, path, ref?}` row into `.grex/pack.yaml`\*(Aqs `children:` sequence. `pack.yaml` is created from the minimal v1 skeleton when absent so `sync`/`ls`/`status` see the pack immediately (v1.4.1: closes the bridge that v1.4.0 left unwired)
 .TP
 grex\-rm(1)
 Teardown and remove a pack
@@ -56,7 +56,7 @@ grex\-serve(1)
 Start MCP stdio server
 .TP
 grex\-import(1)
-Import legacy REPOS.json
+Import a legacy flat `REPOS.json` array. v1.4.1: every accepted entry is materialized as both an `Event::Add` row in `.grex/events.jsonl` AND a `children:` entry in `.grex/pack.yaml`. Optional `platform:` keys (cfg\-style `cmn`/`win`/`lnx`/`mac` buckets) compose into `<platform>/<path>` so the source metarepo\*(Aqs on\-disk layout survives the migration
 .TP
 grex\-run(1)
 Run a named action across packs
@@ -73,4 +73,4 @@ Migrate a v1.1.x lockfile in place to the v1.2.0 schema (opt\-in, idempotent). T
 grex\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
-v1.4.0
+v1.4.1

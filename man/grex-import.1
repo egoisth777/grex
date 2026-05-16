@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH grex-import 1  "grex-import "
 .SH NAME
-grex\-import \- Import legacy REPOS.json
+grex\-import \- Import a legacy flat `REPOS.json` array. v1.4.1: every accepted entry is materialized as both an `Event::Add` row in `.grex/events.jsonl` AND a `children:` entry in `.grex/pack.yaml`. Optional `platform:` keys (cfg\-style `cmn`/`win`/`lnx`/`mac` buckets) compose into `<platform>/<path>` so the source metarepo\*(Aqs on\-disk layout survives the migration
 .SH SYNOPSIS
 \fBgrex\-import\fR [\fB\-\-from\-repos\-json\fR] [\fB\-\-manifest\fR] [\fB\-n\fR|\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR]
 .SH DESCRIPTION
-Import legacy REPOS.json
+Import a legacy flat `REPOS.json` array. v1.4.1: every accepted entry is materialized as both an `Event::Add` row in `.grex/events.jsonl` AND a `children:` entry in `.grex/pack.yaml`. Optional `platform:` keys (cfg\-style `cmn`/`win`/`lnx`/`mac` buckets) compose into `<platform>/<path>` so the source metarepo\*(Aqs on\-disk layout survives the migration
 .SH OPTIONS
 .TP
 \fB\-\-from\-repos\-json\fR \fI<FROM_REPOS_JSON>\fR

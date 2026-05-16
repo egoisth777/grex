@@ -37,10 +37,17 @@ pub struct SeedFile {
 
 /// Seed a bare repo at `<base_dir>/<basename>.git` carrying the given
 /// files in its first commit on `main`. Returns the bare-repo path
-/// (suitable for `file://` URL conversion via
-/// [`crate::worktree::file_url_from_path`] if you need URL form).
+/// (run it through [`file_url`] if you need a clone-source URL).
 pub fn seed_bare_repo(base_dir: &Path, basename: &str, files: &[SeedFile]) -> Result<PathBuf> {
     init_git_identity();
+    let work = prepare_work_dir(base_dir, basename, files)?;
+    init_seed_commit(&work)?;
+    let bare = produce_bare_clone(base_dir, &work, basename)?;
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(bare)
+}
+
+fn prepare_work_dir(base_dir: &Path, basename: &str, files: &[SeedFile]) -> Result<PathBuf> {
     std::fs::create_dir_all(base_dir)
         .with_context(|| format!("create base_dir {}", base_dir.display()))?;
     let work = base_dir.join(format!("__seed-{basename}-work"));
@@ -48,34 +55,37 @@ pub fn seed_bare_repo(base_dir: &Path, basename: &str, files: &[SeedFile]) -> Re
         std::fs::remove_dir_all(&work).context("cleanup prior seed work dir")?;
     }
     std::fs::create_dir_all(&work).with_context(|| format!("create work {}", work.display()))?;
-
     for f in files {
-        let target = work.join(&f.relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create seed file parent {}", parent.display()))?;
-        }
-        std::fs::write(&target, &f.contents)
-            .with_context(|| format!("write seed file {}", target.display()))?;
+        write_seed_file(&work, f)?;
     }
+    Ok(work)
+}
 
-    git(&work, &["init", "-q", "-b", "main"])?;
-    git(&work, &["config", "user.email", "smoke@grex.local"])?;
-    git(&work, &["config", "user.name", "smoke"])?;
-    git(&work, &["config", "commit.gpgsign", "false"])?;
-    git(&work, &["add", "-A"])?;
-    git(&work, &["commit", "-q", "-m", "seed"])?;
+fn write_seed_file(work: &Path, f: &SeedFile) -> Result<()> {
+    let target = work.join(&f.relative);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create seed file parent {}", parent.display()))?;
+    }
+    std::fs::write(&target, &f.contents)
+        .with_context(|| format!("write seed file {}", target.display()))
+}
 
+fn init_seed_commit(work: &Path) -> Result<()> {
+    git(work, &["init", "-q", "-b", "main"])?;
+    git(work, &["config", "user.email", "smoke@grex.local"])?;
+    git(work, &["config", "user.name", "smoke"])?;
+    git(work, &["config", "commit.gpgsign", "false"])?;
+    git(work, &["add", "-A"])?;
+    git(work, &["commit", "-q", "-m", "seed"])
+}
+
+fn produce_bare_clone(base_dir: &Path, work: &Path, basename: &str) -> Result<PathBuf> {
     let bare = base_dir.join(format!("{basename}.git"));
     if bare.exists() {
         std::fs::remove_dir_all(&bare).context("cleanup prior bare clone")?;
     }
     git(base_dir, &["clone", "-q", "--bare", work.to_str().unwrap(), bare.to_str().unwrap()])?;
-
-    // Leave the work dir cleaned up so the base_dir holds only
-    // `<basename>.git` per seed call — keeps fixture inspection cheap.
-    let _ = std::fs::remove_dir_all(&work);
-
     Ok(bare)
 }
 
@@ -233,18 +243,22 @@ mod tests {
     }
 
     #[test]
-    fn file_url_round_trips_through_gix_form() {
+    fn file_url_round_trips_to_existing_path() {
         let dir = tempdir().unwrap();
         let url = file_url(dir.path());
         assert!(url.starts_with("file://"));
-        // The URL must reference an existing on-disk path.
-        let stripped = url.strip_prefix("file://").unwrap();
-        let stripped = stripped.trim_start_matches('/');
-        // Windows: path may include drive letter (C:/...) — present in the URL.
+
+        // Decode back to a filesystem path and confirm it exists. The
+        // round-trip rules differ per OS:
+        //   - Unix: file:///abs/path  → strip `file://` → /abs/path
+        //   - Windows: file:///C:/abs/path → strip `file:///` → C:/abs/path
+        let body = url.strip_prefix("file://").unwrap();
+        let candidate =
+            if cfg!(windows) { body.trim_start_matches('/').to_string() } else { body.to_string() };
         assert!(
-            stripped.contains(':')
-                || stripped.starts_with('/')
-                || std::path::Path::new(stripped).exists()
+            std::path::Path::new(&candidate).exists(),
+            "round-tripped URL `{url}` must point at an existing path; \
+             candidate=`{candidate}` did not exist",
         );
     }
 }
