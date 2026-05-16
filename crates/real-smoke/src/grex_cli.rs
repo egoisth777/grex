@@ -69,13 +69,32 @@ pub fn run(args: &[&str], cwd: &Path) -> Result<CliResult> {
 }
 
 /// Resolves the path of the `grex` binary that this harness should drive.
+///
+/// Probe order (first hit wins):
+/// 1. `GREX_BIN` env var — verbatim.
+/// 2. `CARGO_TARGET_DIR` env var — `{value}/{debug,release}/grex(.exe)?`.
+/// 3. `<workspace>/target/{debug,release}/grex(.exe)?` — the
+///    conventional cargo layout, derived from `CARGO_MANIFEST_DIR`.
+/// 4. `<workspace>/target/llvm-cov-target/{debug,release}/grex(.exe)?` —
+///    `cargo-llvm-cov` writes here when it instruments the workspace
+///    via `--target-dir target/llvm-cov-target`. Without this probe the
+///    coverage job cannot find the binary even though `cargo test
+///    --workspace` just built it as a side effect of compiling the
+///    integration-test deps.
 fn locate_grex_bin() -> Result<PathBuf> {
     if let Ok(explicit) = std::env::var("GREX_BIN") {
         return Ok(PathBuf::from(explicit));
     }
 
-    // CARGO_MANIFEST_DIR points at .../crates/real-smoke. Walk up two levels
-    // to land on the workspace root, then probe target/{debug,release}.
+    let exe = if cfg!(windows) { "grex.exe" } else { "grex" };
+
+    if let Ok(target) = std::env::var("CARGO_TARGET_DIR") {
+        let root = PathBuf::from(target);
+        if let Some(p) = probe_target_dir(&root, exe) {
+            return Ok(p);
+        }
+    }
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .context("CARGO_MANIFEST_DIR not set; build via `cargo` or set GREX_BIN")?;
     let workspace_root = PathBuf::from(&manifest_dir)
@@ -83,18 +102,29 @@ fn locate_grex_bin() -> Result<PathBuf> {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .with_context(|| format!("walking up from CARGO_MANIFEST_DIR={manifest_dir}"))?;
-
-    let exe = if cfg!(windows) { "grex.exe" } else { "grex" };
-    for profile in ["debug", "release"] {
-        let candidate = workspace_root.join("target").join(profile).join(exe);
-        if candidate.exists() {
-            return Ok(candidate);
-        }
+    let target = workspace_root.join("target");
+    if let Some(p) = probe_target_dir(&target, exe) {
+        return Ok(p);
+    }
+    let llvm_cov_target = target.join("llvm-cov-target");
+    if let Some(p) = probe_target_dir(&llvm_cov_target, exe) {
+        return Ok(p);
     }
 
     anyhow::bail!(
-        "grex binary not found under {}/target/{{debug,release}}/{exe}; \
-         build it first or set GREX_BIN.",
-        workspace_root.display()
+        "grex binary not found under CARGO_TARGET_DIR, {}/{{debug,release}}/{exe}, \
+         or {}/{{debug,release}}/{exe}; build it first or set GREX_BIN.",
+        target.display(),
+        llvm_cov_target.display(),
     )
+}
+
+fn probe_target_dir(target_root: &Path, exe: &str) -> Option<PathBuf> {
+    for profile in ["debug", "release"] {
+        let candidate = target_root.join(profile).join(exe);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
