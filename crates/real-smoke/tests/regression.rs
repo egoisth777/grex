@@ -384,18 +384,29 @@ fn t_b08_event_log_id_and_schema_version() -> Result<()> {
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b09_stub_verbs_exit_nonzero() -> Result<()> {
+    // v1.4.0 wired `status` and `update` against grex-core (see
+    // CHANGELOG 1.4.0 §Added). Both verbs now run real
+    // sync-with-dry-run / sync-with-install pipelines, so the v1.3.0
+    // "stub marker" expectation is the regression now — the verbs
+    // MUST succeed with no stub markers on stdout/stderr.
     let f = WtFixture::new(FIXTURE_LEAF)?;
 
     for verb in ["status", "update"] {
         let result = grex_cli::run(&[verb], f.path())?;
+        assert!(
+            result.is_success(),
+            "B9 regressed: `grex {verb}` failed post-v1.4.0\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            result.stdout,
+            result.stderr,
+        );
         let stub_marker = result.stdout.contains("\"stub\":true")
             || result.stdout.contains("unimplemented")
             || result.stderr.contains("unimplemented");
         assert!(
-            !result.is_success() || stub_marker,
-            "B9 regressed: `grex {verb}` exited 0 with no stub marker\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            !stub_marker,
+            "B9 regressed: `grex {verb}` still advertises a stub marker post-v1.4.0\n--- stdout ---\n{}\n--- stderr ---\n{}",
             result.stdout,
-            result.stderr
+            result.stderr,
         );
     }
     Ok(())
@@ -421,9 +432,12 @@ fn t_b10_add_ref_flag() -> Result<()> {
     );
 
     // Parse-only: a real `add` would attempt a clone. We use --dry-run so the
-    // assertion is purely about flag acceptance.
+    // assertion is purely about flag acceptance. v1.4.1 — `grex add` takes
+    // URL as the first positional argument (not `--url`); the original
+    // helper string passed `--url FIXTURE_LEAF` which clap rejected as an
+    // unknown flag. Use the documented positional surface.
     let parsed = grex_cli::run(
-        &["add", "--url", FIXTURE_LEAF, "--ref", "main", "--dry-run", "leaf-pinned"],
+        &["add", FIXTURE_LEAF, "leaf-pinned", "--ref", "main", "--dry-run"],
         f.path(),
     )?;
     assert!(
