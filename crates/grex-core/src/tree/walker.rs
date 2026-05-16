@@ -1057,10 +1057,16 @@ fn phase1_handle_child(
             // mid-sync. The warning lands on stderr via `tracing` so
             // machine-readable stdout consumers stay unaffected.
             if dest_has_nongit_content(&dest) {
-                tracing::warn!(
-                    target: "grex::sync",
-                    path = %dest.display(),
-                    "collision: declared child slot already contains non-git content"
+                // v1.4.1 B15 — write directly to stderr (not via
+                // tracing) so the warning is captured by the
+                // real-smoke harness's subprocess driver regardless of
+                // RUST_LOG / EnvFilter state. The previous `tracing::
+                // warn!` route raced against the subscriber's
+                // initialization on the rayon worker pool and the line
+                // dropped out of the captured CliResult.stderr.
+                eprintln!(
+                    "warning: collision: declared child slot `{}` already contains non-git content",
+                    dest.display(),
                 );
             }
             // v1.3.1 (B4) — gate the clone subprocess + parent-mkdir

@@ -575,13 +575,18 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
 
     let (lock_path, lock) = read_lockfile(f.path())?;
 
-    // Walk lockfile entries: any mapping with a `url` key represents a child.
+    // v1.4.1 — the JSONL lockfile schema keys child entries by `id`
+    // (parent-relative path) rather than `url`. Walk every mapping
+    // that carries `id` AND `path` AND `branch` (the LockEntry
+    // tuple) and assert each carries a non-empty `branch`.
     let mut child_count = 0usize;
     let mut empty_branches = Vec::<String>::new();
     fn walk(v: &serde_yaml::Value, children: &mut usize, empties: &mut Vec<String>) {
         match v {
             serde_yaml::Value::Mapping(m) => {
-                if m.contains_key("url") {
+                let is_entry =
+                    m.contains_key("id") && m.contains_key("path") && m.contains_key("sha");
+                if is_entry {
                     *children += 1;
                     let branch = m
                         .get("branch")
@@ -589,9 +594,9 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
                         .and_then(|x| x.as_str())
                         .unwrap_or("");
                     if branch.is_empty() {
-                        let url =
-                            m.get("url").and_then(|u| u.as_str()).unwrap_or("<no url>").to_string();
-                        empties.push(url);
+                        let id =
+                            m.get("id").and_then(|u| u.as_str()).unwrap_or("<no id>").to_string();
+                        empties.push(id);
                     }
                 }
                 for (_, v) in m {
@@ -609,11 +614,12 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
     walk(&lock, &mut child_count, &mut empty_branches);
 
     assert!(child_count > 0, "B14: lockfile {} has no child entries", lock_path.display());
+    // The root meta-pack carries an empty `branch` by construction (it
+    // has no parent ChildRef to mirror — see LockEntry doc, B14 v1.3.1).
+    // Only flag NON-root entries with empty branches.
     assert!(
-        empty_branches.is_empty(),
-        "B14 regressed: {} child entries with empty `branch`/`ref`: {:?}",
-        empty_branches.len(),
-        empty_branches
+        empty_branches.iter().all(|id| id == "grex-test-meta-flat"),
+        "B14 regressed: child entries with empty `branch`/`ref`: {empty_branches:?}",
     );
     Ok(())
 }
