@@ -65,16 +65,41 @@ impl WtFixture {
 /// (`serde_yaml::Value` is a JSON superset for our purposes).
 fn read_lockfile(worktree: &Path) -> Result<(PathBuf, serde_yaml::Value)> {
     let grex_dir = worktree.join(".grex");
-    let candidates = ["grex.lock", "grex.lock.yaml", "grex.lock.json", ".grex.sync.lock"];
+    // v1.4.1 — the canonical resolution lockfile is JSONL at
+    // `<workspace>/.grex/grex.lock.jsonl` (see
+    // `grex_core::sync::lockfile_path`). The legacy `.grex.sync.lock`
+    // is a workspace concurrency lock, not the resolution registry —
+    // tests that walked it found a permanently empty file. We try
+    // the JSONL form first (decoded as a YAML sequence of single-line
+    // documents) and fall back to the historical names.
+    let candidates =
+        ["grex.lock.jsonl", "grex.lock", "grex.lock.yaml", "grex.lock.json", ".grex.sync.lock"];
     for name in candidates {
         let p = grex_dir.join(name);
-        if p.exists() {
-            let text = std::fs::read_to_string(&p)
-                .with_context(|| format!("read lockfile {}", p.display()))?;
-            let v: serde_yaml::Value = serde_yaml::from_str(&text)
-                .with_context(|| format!("parse lockfile {}", p.display()))?;
-            return Ok((p, v));
+        if !p.exists() {
+            continue;
         }
+        let text = std::fs::read_to_string(&p)
+            .with_context(|| format!("read lockfile {}", p.display()))?;
+        let v = if name == "grex.lock.jsonl" {
+            // Parse JSONL into a Value::Sequence so the existing
+            // walk(...) closure can recurse uniformly.
+            let mut entries = Vec::new();
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let one: serde_yaml::Value = serde_yaml::from_str(line)
+                    .with_context(|| format!("parse lockfile line `{line}`"))?;
+                entries.push(one);
+            }
+            serde_yaml::Value::Sequence(entries)
+        } else {
+            serde_yaml::from_str(&text)
+                .with_context(|| format!("parse lockfile {}", p.display()))?
+        };
+        return Ok((p, v));
     }
     Err(anyhow!("no lockfile found under {}/.grex/ (tried {:?})", worktree.display(), candidates))
 }

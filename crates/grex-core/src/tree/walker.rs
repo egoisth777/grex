@@ -379,6 +379,22 @@ pub fn dest_has_git_repo(dest: &Path) -> bool {
     dest.join(".git").exists()
 }
 
+/// v1.4.1 B15 — `true` when `dest` exists, has no `.git/`, and is a
+/// non-empty directory. Pre-clone collision detection: signals an
+/// operator-pre-existing slot that `git clone` would refuse, so the
+/// caller can surface a warning before the walk even attempts the
+/// clone. Returns `false` for an empty dir or a missing dest (the
+/// happy-path Missing case).
+pub(crate) fn dest_has_nongit_content(dest: &Path) -> bool {
+    if !dest.exists() || dest.join(".git").exists() {
+        return false;
+    }
+    match std::fs::read_dir(dest) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => false,
+    }
+}
+
 /// Build the in-memory manifest used for v1.1.1 plain-git children — a
 /// leaf scripted pack with no hooks, no children, no actions. Activated
 /// at the walker's load-fallback boundary when a child has a `.git/`
@@ -1031,6 +1047,22 @@ fn phase1_handle_child(
     };
     match class {
         DestClass::Missing => {
+            // v1.4.1 B15 — surface a pre-clone collision warning when
+            // the declared slot already holds non-git content (i.e.
+            // `classify_dest` returned `Missing` because `.git/` is
+            // absent, but the dir itself is non-empty). Real-run would
+            // still attempt the clone and fail with git's own "dest is
+            // not empty" error; dry-run previously emitted no signal
+            // at all, leaving operators to discover the conflict only
+            // mid-sync. The warning lands on stderr via `tracing` so
+            // machine-readable stdout consumers stay unaffected.
+            if dest_has_nongit_content(&dest) {
+                tracing::warn!(
+                    target: "grex::sync",
+                    path = %dest.display(),
+                    "collision: declared child slot already contains non-git content"
+                );
+            }
             // v1.3.1 (B4) — gate the clone subprocess + parent-mkdir
             // behind `dry_run`. When `dry_run = true` we record what
             // WOULD have been cloned (id = folder name = repo name)
