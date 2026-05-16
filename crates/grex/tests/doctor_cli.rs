@@ -196,12 +196,15 @@ fn doctor_lint_config_flag_runs_config_check() {
     fs::create_dir_all(dir.path().join("openspec")).unwrap();
     fs::write(dir.path().join("openspec").join("config.yaml"), ": : : [bad").unwrap();
 
+    // v1.4.1 — `config-lint` here reports a WARN/ERROR, which the
+    // doctor renderer now routes to stderr (b07 real-smoke
+    // invariant). Stdout still carries the table header + any OK rows.
     bin()
         .current_dir(dir.path())
         .args(["doctor", "--lint-config"])
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("config-lint"));
+        .stderr(predicate::str::contains("config-lint"));
 }
 
 #[test]

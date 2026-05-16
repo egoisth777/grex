@@ -69,6 +69,14 @@ pub fn run(args: DoctorArgs, global: &GlobalFlags, _cancel: &CancellationToken) 
 }
 
 /// Render the report as a table. One row per finding.
+///
+/// v1.4.1 stdout/stderr discipline: the table header and `OK` rows
+/// land on stdout (so `grex doctor | grep manifest-schema` keeps
+/// working for happy-path callers); `WARN` / `ERROR` rows route to
+/// stderr so they (a) never collide with a stdout pipe consumer's
+/// shape expectations and (b) match the rest of the CLI's "diagnostics
+/// to stderr" contract. The b07 real-smoke regression pins this
+/// invariant.
 fn print_table(report: &DoctorReport) {
     println!("{:<18} {:<8} DETAIL", "CHECK", "STATUS");
     for f in &report.findings {
@@ -84,7 +92,11 @@ fn print_table(report: &DoctorReport) {
         } else {
             format!("{}[{}]", f.check.label(), pack)
         };
-        println!("{label:<18} {status:<8} {detail}");
+        let line = format!("{label:<18} {status:<8} {detail}");
+        match f.severity {
+            Severity::Ok => println!("{line}"),
+            Severity::Warning | Severity::Error => eprintln!("{line}"),
+        }
     }
 }
 

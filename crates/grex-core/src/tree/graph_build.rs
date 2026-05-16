@@ -255,9 +255,14 @@ fn handle_child(
         Err(TreeError::ManifestNotFound(_)) if dest_has_git_repo(&dest) => {
             (synthesize_plain_git_manifest(child), true)
         }
-        Err(TreeError::ManifestNotFound(_))
-            if opts.tolerate_unsynced_children && !dest.exists() =>
-        {
+        Err(TreeError::ManifestNotFound(_)) if opts.tolerate_unsynced_children => {
+            // v1.4.1 — synthesize a placeholder for any un-materialised
+            // child when the caller opted in. Don't guard on
+            // `!dest.exists()` — Windows verbatim paths (`\\?\C:\...`)
+            // can defeat that probe, and a synthesized placeholder for
+            // an empty pre-existing dir is still safe (Phase 1 already
+            // skipped a clone on dry-run, so the executor will plan
+            // against the placeholder and produce a `[noop]` line).
             (synthesize_plain_git_manifest(child), true)
         }
         Err(e) => return Err(e),
