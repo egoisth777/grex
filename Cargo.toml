@@ -45,8 +45,15 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 
 # git (pure Rust)
+#
+# `blocking-http-transport-reqwest-rust-tls` enables HTTPS clone/fetch via
+# reqwest + rustls. Without it the real-smoke suite explodes with
+# "'https' is not compiled in" when it tries to clone the fixture repos
+# from github.com. SSH stays handled by the gix-built-in SSH transport
+# under `blocking-network-client`.
 gix = { version = "0.70", default-features = false, features = [
     "blocking-network-client",
+    "blocking-http-transport-reqwest-rust-tls",
     "worktree-mutation",
     "revision",
     "status",

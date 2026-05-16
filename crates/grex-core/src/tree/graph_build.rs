@@ -77,6 +77,38 @@ pub fn build_graph(
     loader: &dyn PackLoader,
     ref_override: Option<&str>,
 ) -> Result<PackGraph, TreeError> {
+    build_graph_with(workspace, backend, loader, ref_override, BuildOptions::default())
+}
+
+/// v1.4.1 — non-default knobs for [`build_graph`]. Marked
+/// `#[non_exhaustive]` so additive options (ref override, max-depth,
+/// post-sync filters) can land without churning the call sites.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuildOptions {
+    /// When `true`, a child whose destination does not yet exist on
+    /// disk is synthesized as an "unsynced" placeholder rather than
+    /// surfaced as [`TreeError::ManifestNotFound`]. The sync
+    /// orchestrator sets this on dry-run so a never-synced meta-pack
+    /// (where Phase 1 records would-clone records but does not
+    /// materialise child clones) can still build a complete graph for
+    /// the planner. Defaults to `false` to preserve the strict
+    /// pre-v1.4.1 read contract for non-sync callers (graph queries,
+    /// doctor, MCP).
+    pub tolerate_unsynced_children: bool,
+}
+
+/// v1.4.1 — knob-bearing variant of [`build_graph`]. Forwarded to by
+/// the legacy entry-point so existing test callers keep their
+/// pre-v1.4.1 signature; new orchestrator code threads the knobs
+/// explicitly.
+pub fn build_graph_with(
+    workspace: &Path,
+    backend: &dyn GitBackend,
+    loader: &dyn PackLoader,
+    ref_override: Option<&str>,
+    opts: BuildOptions,
+) -> Result<PackGraph, TreeError> {
     let _ = ref_override; // currently unused by the reader; see fn doc
     let root_manifest = loader.load(workspace)?;
     validate_children_paths(&root_manifest)?;
@@ -105,6 +137,7 @@ pub fn build_graph(
         &root_manifest,
         &mut state,
         &mut vec![root_identity],
+        opts,
     )?;
     Ok(PackGraph::new(state.nodes, state.edges))
 }
@@ -130,6 +163,7 @@ impl BuildState {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_recursive(
     backend: &dyn GitBackend,
     loader: &dyn PackLoader,
@@ -138,9 +172,10 @@ fn walk_recursive(
     manifest: &PackManifest,
     state: &mut BuildState,
     ancestors: &mut Vec<String>,
+    opts: BuildOptions,
 ) -> Result<(), TreeError> {
     record_depends_on(parent_id, manifest, state);
-    process_children(backend, loader, parent_id, parent_meta, manifest, state, ancestors)
+    process_children(backend, loader, parent_id, parent_meta, manifest, state, ancestors, opts)
 }
 
 fn record_depends_on(parent_id: usize, manifest: &PackManifest, state: &mut BuildState) {
@@ -151,6 +186,7 @@ fn record_depends_on(parent_id: usize, manifest: &PackManifest, state: &mut Buil
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_children(
     backend: &dyn GitBackend,
     loader: &dyn PackLoader,
@@ -159,13 +195,15 @@ fn process_children(
     manifest: &PackManifest,
     state: &mut BuildState,
     ancestors: &mut Vec<String>,
+    opts: BuildOptions,
 ) -> Result<(), TreeError> {
     for child in &manifest.children {
-        handle_child(backend, loader, parent_id, parent_meta, child, state, ancestors)?;
+        handle_child(backend, loader, parent_id, parent_meta, child, state, ancestors, opts)?;
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_child(
     backend: &dyn GitBackend,
     loader: &dyn PackLoader,
@@ -174,6 +212,7 @@ fn handle_child(
     child: &ChildRef,
     state: &mut BuildState,
     ancestors: &mut Vec<String>,
+    opts: BuildOptions,
 ) -> Result<(), TreeError> {
     // `ancestors` is the in-progress identity path from the root down
     // to (but excluding) this child's parent — a path-prefix set, NOT
@@ -202,9 +241,23 @@ fn handle_child(
     // Load child manifest — fall back to plain-git synthesis if dest has
     // `.git/` but no `.grex/pack.yaml`. Matches `Walker::handle_child`'s
     // load-fallback contract (v1.1.1 plain-git children).
+    //
+    // v1.4.1 — when the caller opted into
+    // [`BuildOptions::tolerate_unsynced_children`] (sync's dry-run path),
+    // a wholly-missing dest is ALSO synthesized as a placeholder. Without
+    // this branch a fresh `grex sync --dry-run` on a never-synced
+    // meta-pack panics with `ManifestNotFound` for every declared child,
+    // because Phase 1 records would-clone but does not materialise the
+    // tree. Synthesis lets the planner produce a complete graph the
+    // executor then no-ops over.
     let (child_manifest, is_synthetic) = match loader.load(&dest) {
         Ok(m) => (m, false),
         Err(TreeError::ManifestNotFound(_)) if dest_has_git_repo(&dest) => {
+            (synthesize_plain_git_manifest(child), true)
+        }
+        Err(TreeError::ManifestNotFound(_))
+            if opts.tolerate_unsynced_children && !dest.exists() =>
+        {
             (synthesize_plain_git_manifest(child), true)
         }
         Err(e) => return Err(e),
@@ -230,7 +283,7 @@ fn handle_child(
 
     ancestors.push(identity);
     let result =
-        walk_recursive(backend, loader, child_id, &dest, &child_manifest, state, ancestors);
+        walk_recursive(backend, loader, child_id, &dest, &child_manifest, state, ancestors, opts);
     ancestors.pop();
     result
 }
