@@ -1063,9 +1063,12 @@ fn phase1_handle_child(
                 // RUST_LOG / EnvFilter state. The previous `tracing::
                 // warn!` route raced against the subscriber's
                 // initialization on the rayon worker pool and the line
-                // dropped out of the captured CliResult.stderr.
+                // dropped out of the captured CliResult.stderr. Use
+                // "collides" rather than "collision" so the substring
+                // match in the dogfood B15 assertion (`contains("collid")`)
+                // matches.
                 eprintln!(
-                    "warning: collision: declared child slot `{}` already contains non-git content",
+                    "warning: declared child slot `{}` collides with pre-existing non-git content",
                     dest.display(),
                 );
             }
