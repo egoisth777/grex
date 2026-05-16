@@ -98,6 +98,7 @@ fn emit_json(report: &AddReport) -> Result<()> {
         "appended": report.appended,
         "refdir": report.refdir,
         "ref_action": report.ref_action.map(|a| format!("{a:?}")),
+        "pack_yaml_updated": report.pack_yaml_updated,
     });
     println!("{}", serde_json::to_string(&out)?);
     Ok(())

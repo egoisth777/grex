@@ -1,8 +1,11 @@
 //! Shared pack-registration helper used by `grex add` and import.
 
 use crate::manifest::{self, Event, PackId, SCHEMA_VERSION};
+use crate::pack::yaml_writer::{
+    append_child_to_pack_yaml, AppendOutcome, ChildEntry, PackYamlWriteError,
+};
 use chrono::Utc;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Add request after CLI / MCP edge parsing has resolved defaults.
@@ -67,6 +70,12 @@ pub struct AddReport {
     /// passed (current call sites still use the legacy single-checkout
     /// path).
     pub ref_action: Option<crate::refspec::RefAction>,
+    /// v1.4.1 — whether the pack.yaml `children:` sequence gained a
+    /// new row for this add. `false` for dry-run, reject-class adds,
+    /// and adds that found the path already in the sequence (idempotent
+    /// re-registration). v1.4.0 left this entirely unwritten, which
+    /// caused `grex sync` / `ls` / `status` to miss freshly-added packs.
+    pub pack_yaml_updated: bool,
 }
 
 #[non_exhaustive]
@@ -74,6 +83,8 @@ pub struct AddReport {
 pub enum AddError {
     #[error("manifest write failed: {0}")]
     Manifest(#[from] manifest::ManifestError),
+    #[error("pack.yaml write failed: {0}")]
+    PackYaml(#[from] PackYamlWriteError),
 }
 
 /// Probe the parent manifest at `manifest_path` to seed the dynamic
@@ -149,6 +160,7 @@ pub fn add_pack(
     // no-op (idempotent re-add); Add-class appends the event.
     let is_reject = matches!(ref_action, Some(a) if a.is_reject());
     let appended = !opts.dry_run && !is_reject;
+    let mut pack_yaml_updated = false;
     if appended {
         let ev = Event::Add {
             ts: Utc::now(),
@@ -159,6 +171,22 @@ pub fn add_pack(
             schema_version: SCHEMA_VERSION.to_string(),
         };
         manifest::append_event(manifest_path, &ev)?;
+
+        // v1.4.1 — bridge the event log to the declarative manifest.
+        // `grex sync` / `ls` / `status` walk `pack.yaml.children`, so
+        // without this step a freshly-added pack stays invisible (the
+        // exact v1.4.0 bug the smoke test surfaced).
+        let pack_yaml_path = pack_yaml_path_for(manifest_path);
+        let git_ref_label = request.git_ref.as_ref().map(format_git_ref);
+        let outcome = append_child_to_pack_yaml(
+            &pack_yaml_path,
+            &ChildEntry {
+                url: request.url.clone(),
+                path: request.path.clone(),
+                git_ref: git_ref_label,
+            },
+        )?;
+        pack_yaml_updated = matches!(outcome, AppendOutcome::Appended);
     }
 
     Ok(AddReport {
@@ -170,7 +198,34 @@ pub fn add_pack(
         appended,
         refdir,
         ref_action,
+        pack_yaml_updated,
     })
+}
+
+/// Derive the `pack.yaml` path from a manifest (events.jsonl) path.
+///
+/// `<workspace>/.grex/events.jsonl` → `<workspace>/.grex/pack.yaml`.
+/// Falls back to a sibling `pack.yaml` when the manifest path has no
+/// parent.
+pub(crate) fn pack_yaml_path_for(manifest_path: &Path) -> PathBuf {
+    manifest_path
+        .parent()
+        .map(|p| p.join("pack.yaml"))
+        .unwrap_or_else(|| PathBuf::from("pack.yaml"))
+}
+
+/// Render a [`crate::refspec::Ref`] back into the spelling we want to
+/// land in `pack.yaml`'s `ref:` field. Mirrors the parser's accepted
+/// shapes: `<branch>`, `<commit>`, or `<branch>@<commit>`. Returns an
+/// empty string only for the (currently impossible) all-none case;
+/// caller skips emitting `ref:` when input is `None`.
+fn format_git_ref(r: &crate::refspec::Ref) -> String {
+    match (&r.branch, &r.commit) {
+        (Some(b), Some(c)) => format!("{b}@{c}"),
+        (Some(b), None) => b.clone(),
+        (None, Some(c)) => c.clone(),
+        (None, None) => String::new(),
+    }
 }
 
 /// Infer the default workspace-relative path from a repository URL.

@@ -255,3 +255,104 @@ fn import_empty_array_succeeds_with_no_writes() {
         .stdout(contains("imported=0"));
     assert!(!manifest.exists());
 }
+
+// ---------- v1.4.1 — platform composition + pack.yaml bridge ----------
+
+#[test]
+fn v141_import_composes_platform_prefix_into_child_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture(
+        &dir,
+        r#"[
+            {"url": "https://x/a.git", "platform": "cmn", "path": "alpha"},
+            {"url": "https://x/b.git", "platform": "win", "path": "beta"},
+            {"url": "https://x/c.git", "path": "gamma"}
+        ]"#,
+    );
+    let manifest = manifest_path(&dir);
+
+    grex()
+        .args([
+            "import",
+            "--from-repos-json",
+            input.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("cmn/alpha"))
+        .stdout(contains("win/beta"))
+        .stdout(contains("gamma"));
+
+    let raw = fs::read_to_string(&manifest).expect("manifest written");
+    assert!(raw.contains(r#""path":"cmn/alpha""#));
+    assert!(raw.contains(r#""path":"win/beta""#));
+    assert!(raw.contains(r#""path":"gamma""#));
+}
+
+#[test]
+fn v141_import_materializes_pack_yaml_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture(
+        &dir,
+        r#"[
+            {"url": "https://x/a.git", "platform": "cmn", "path": "alpha"},
+            {"url": "https://x/b.git", "platform": "win", "path": "beta"}
+        ]"#,
+    );
+    let manifest = manifest_path(&dir);
+
+    grex()
+        .args([
+            "import",
+            "--from-repos-json",
+            input.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let pack_yaml = dir.path().join(".grex/pack.yaml");
+    assert!(pack_yaml.exists(), "import must materialize pack.yaml");
+    let body = fs::read_to_string(&pack_yaml).unwrap();
+    assert!(body.contains("type: meta"));
+    assert!(body.contains("path: cmn/alpha"));
+    assert!(body.contains("path: win/beta"));
+}
+
+#[test]
+fn v141_import_ls_sees_imported_packs() {
+    // Regression for v1.4.0 SEV-1: `import` wrote events.jsonl but
+    // `grex ls` only walked pack.yaml.children, so the imported packs
+    // were silently invisible. v1.4.1 bridges both stores.
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture(
+        &dir,
+        r#"[
+            {"url": "https://x/a.git", "path": "alpha"},
+            {"url": "https://x/b.git", "path": "beta"}
+        ]"#,
+    );
+    let manifest = manifest_path(&dir);
+
+    grex()
+        .args([
+            "import",
+            "--from-repos-json",
+            input.to_str().unwrap(),
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    grex()
+        .current_dir(dir.path())
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(contains("alpha"))
+        .stdout(contains("beta"));
+}

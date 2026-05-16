@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT OR Apache-2.0"
@@ -77,9 +77,9 @@ comfy-table = "7"
 owo-colors = "4"
 
 # internal workspace crates
-grex-core = { path = "crates/grex-core", version = "1.4.0" }
-grex-mcp = { path = "crates/grex-mcp", version = "1.4.0" }
-grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.4.0" }
+grex-core = { path = "crates/grex-core", version = "1.4.1" }
+grex-mcp = { path = "crates/grex-mcp", version = "1.4.1" }
+grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.4.1" }
 
 # dev-dependencies (shared via workspace)
 assert_cmd = "2"

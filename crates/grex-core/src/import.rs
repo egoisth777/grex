@@ -40,11 +40,19 @@ impl ImportedKind {
 }
 
 /// One entry from a `REPOS.json` array.
+///
+/// `platform` is the legacy cfg-style platform-bucket key (`cmn` / `win`
+/// / `lnx` / `mac`). When set, v1.4.1 composes the final child path as
+/// `<platform>/<path>` so the on-disk layout the source metarepo
+/// already uses round-trips through grex without manual fixup.
+/// v1.4.0 silently dropped this field.
 #[derive(Debug, Clone, Deserialize)]
 struct RawEntry {
     #[serde(default)]
     url: String,
     path: String,
+    #[serde(default)]
+    platform: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +115,8 @@ pub enum ImportError {
         #[source]
         source: std::io::Error,
     },
+    #[error("pack.yaml write failed: {0}")]
+    PackYaml(#[from] crate::pack::yaml_writer::PackYamlWriteError),
 }
 
 /// Classify a `REPOS.json` entry into a pack kind.
@@ -208,7 +218,12 @@ fn classify_entry(
     plan: &mut ImportPlan,
     dry_run: bool,
 ) {
-    let path = entry.path.clone();
+    // v1.4.1 — preserve cfg-style platform bucketing by composing the
+    // final child path as `<platform>/<path>`. Per-segment validation
+    // still applies (see `child_path::reject_reason`), so each segment
+    // must match `^[a-z][a-z0-9-]*$`. `path:` is always the source of
+    // truth for the bare name; `platform:` is purely a prefix hint.
+    let path = compose_path(&entry);
     // Bare-name validation BEFORE any manifest write — refuses to
     // ingest a `path` that would later trip `ChildPathValidator`
     // (separators, `.` / `..`, regex mismatch, empty). Without this
@@ -236,6 +251,15 @@ fn classify_entry(
     plan.imported.push(ImportEntry { path, url: entry.url, kind, would_dispatch: dry_run });
 }
 
+/// v1.4.1 — fold the optional `platform:` field into a slash-separated
+/// child path. Empty `platform:` (`""` or `null`) is treated as absent.
+fn compose_path(entry: &RawEntry) -> String {
+    match entry.platform.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => format!("{p}/{}", entry.path),
+        None => entry.path.clone(),
+    }
+}
+
 fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportError> {
     for entry in &plan.imported {
         add_pack(
@@ -251,6 +275,7 @@ fn commit_plan(plan: &ImportPlan, manifest_path: &Path) -> Result<(), ImportErro
 fn add_error_to_import_error(err: AddError) -> ImportError {
     match err {
         AddError::Manifest(err) => ImportError::Manifest(err),
+        AddError::PackYaml(err) => ImportError::PackYaml(err),
     }
 }
 
@@ -663,5 +688,79 @@ mod tests {
         for entry in &plan.imported {
             assert_eq!(entry.kind, classify(&entry.url));
         }
+    }
+
+    // ---------- v1.4.1 — platform-prefix composition ----------
+
+    #[test]
+    fn v141_import_composes_platform_prefix_into_path() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let manifest = dir.path().join(".grex/events.jsonl");
+        write_json(
+            &input,
+            r#"[
+                {"url": "https://x/a.git", "platform": "cmn", "path": "alpha"},
+                {"url": "https://x/b.git", "platform": "win", "path": "beta"},
+                {"url": "https://x/c.git", "path": "gamma"}
+            ]"#,
+        );
+        let plan =
+            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
+        assert_eq!(plan.imported.len(), 3);
+        assert_eq!(plan.imported[0].path, "cmn/alpha");
+        assert_eq!(plan.imported[1].path, "win/beta");
+        assert_eq!(plan.imported[2].path, "gamma");
+
+        let events = manifest::read_all(&manifest).unwrap();
+        let paths: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Add { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths, vec!["cmn/alpha", "win/beta", "gamma"]);
+    }
+
+    #[test]
+    fn v141_empty_platform_is_treated_as_absent() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let manifest = dir.path().join(".grex/events.jsonl");
+        write_json(
+            &input,
+            r#"[
+                {"url": "https://x/a.git", "platform": "", "path": "alpha"},
+                {"url": "https://x/b.git", "platform": "   ", "path": "beta"}
+            ]"#,
+        );
+        let plan =
+            import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
+        assert_eq!(plan.imported.len(), 2);
+        assert_eq!(plan.imported[0].path, "alpha");
+        assert_eq!(plan.imported[1].path, "beta");
+    }
+
+    #[test]
+    fn v141_import_materializes_pack_yaml_children() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("REPOS.json");
+        let manifest = dir.path().join(".grex/events.jsonl");
+        write_json(
+            &input,
+            r#"[
+                {"url": "https://x/a.git", "platform": "cmn", "path": "alpha"},
+                {"url": "https://x/b.git", "platform": "win", "path": "beta"}
+            ]"#,
+        );
+        let _ = import_from_repos_json(&input, &manifest, ImportOpts { dry_run: false }).unwrap();
+
+        let pack_yaml_path = dir.path().join(".grex/pack.yaml");
+        assert!(pack_yaml_path.exists(), "import must materialize pack.yaml");
+        let yaml_body = std::fs::read_to_string(&pack_yaml_path).unwrap();
+        assert!(yaml_body.contains("path: cmn/alpha"));
+        assert!(yaml_body.contains("path: win/beta"));
+        assert!(yaml_body.contains("url: https://x/a.git"));
     }
 }
