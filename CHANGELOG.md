@@ -20,6 +20,82 @@ of the grex manifest schema, CLI surface, MCP tool surface, and `pack.yaml` sche
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-05-16
+
+Bug-fix release closing the seven issues surfaced by the v1.4.0 cfg
+metarepo smoke test plus the `real-smoke` harness extensions needed to
+keep those bugs from recurring.
+
+### Fixed
+
+- **`grex add` / `grex import` now materialize `pack.yaml.children`.**
+  v1.4.0 wrote the `Event::Add` row to `.grex/events.jsonl` but left
+  `.grex/pack.yaml` untouched, so `grex sync` / `ls` / `status` walked
+  an empty `children:` sequence and silently missed every newly-added
+  pack. Both verbs now insert a `{url, path, ref?}` row into
+  `pack.yaml.children` after appending the audit event; `pack.yaml` is
+  auto-created from the minimal v1 skeleton when absent. Idempotent on
+  duplicate paths.
+  (`crates/grex-core/src/pack/yaml_writer.rs`,
+  `crates/grex-core/src/add.rs:152`,
+  `crates/grex-core/src/import.rs:247`)
+- **`grex import` honours the `platform:` field in `REPOS.json`.**
+  v1.4.0 silently dropped the field on deserialization, so cfg-style
+  platform-bucketed layouts (`cmn/`, `win/`, `lnx/`, `mac/`) collapsed
+  to flat root paths. v1.4.1 composes the final child path as
+  `<platform>/<path>` per row, preserving the source metarepo's
+  on-disk layout end-to-end.
+  (`crates/grex-core/src/import.rs:43`,
+  `crates/grex-core/src/import.rs:212`)
+- **`grex doctor` and `grex ls` / `sync` / `status` now agree on the
+  registered pack set.** With the bridge in place, doctor's
+  `on-disk-drift` walk and ls's tree walk share `pack.yaml.children`
+  as the canonical view; previously doctor folded `events.jsonl` while
+  ls walked pack.yaml, producing contradictory reports against the same
+  manifest.
+- **`grex add --json` envelope exposes a new `pack_yaml_updated`
+  boolean** so machine callers can distinguish "appended a new row"
+  from "already present" without re-reading the manifest.
+  (`crates/grex-core/src/add.rs:54`,
+  `crates/grex/src/cli/verbs/add.rs:99`)
+- **CLI help text for `add` and `import` documents the bridge** so
+  users no longer need to hand-edit `pack.yaml.children` after a
+  registration round-trip.
+  (`crates/grex/src/cli/args.rs:46`,
+  `crates/grex/src/cli/args.rs:62`)
+
+### Added
+
+- **`real-smoke::seed`** — local bare-repo seeder backed by `git init
+  --bare`. Powers the offline tier so smoke tests can model a
+  cfg-shape metarepo (six children across `cmn` / `win` / `lnx` /
+  `mac` buckets) without touching the network. Companion
+  `render_repos_json` builder + `file_url` helper.
+  (`crates/real-smoke/src/seed.rs`)
+- **`real-smoke::journey`** — scripted user-journey DSL. A `Journey`
+  is an ordered list of `Step`s; each step runs a `grex` invocation
+  via the subprocess driver, asserts on exit code + stdout/stderr +
+  on-disk state, and the runner emits a single human-readable
+  transcript on failure. Assertion helpers: `stdout_contains_all`,
+  `file_exists`, `path_absent`, `events_jsonl_add_count`,
+  `pack_yaml_has_children`.
+  (`crates/real-smoke/src/journey.rs`)
+- **`tests/cfg_shape.rs`** — first end-to-end journey using the
+  offline seeder. Walks `init` → `import` (platform-prefixed) → `ls`
+  → `sync` → `doctor`, with one assertion per v1.4.0 smoke-test bug
+  so a regression flips the same byte that caused the original
+  outage.
+  (`crates/real-smoke/tests/cfg_shape.rs`)
+
+### Changed
+
+- `AddReport` gains a `pack_yaml_updated: bool` field. Marked
+  `#[non_exhaustive]` since v1.0; this is a non-breaking additive
+  change for downstream consumers using struct-update syntax.
+- `AddError` and `ImportError` gain a `PackYaml(PackYamlWriteError)`
+  variant for failures inside the new bridge path. Both enums were
+  already `#[non_exhaustive]`.
+
 ## [1.4.0] - 2026-05-15
 
 Six previously-stub CLI verbs (`init`, `rm`, `update`, `status`, `run`,

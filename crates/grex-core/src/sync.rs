@@ -52,7 +52,8 @@ use crate::pack::{Action, PackValidationError};
 use crate::plugin::{PackTypeRegistry, Registry};
 use crate::scheduler::Scheduler;
 use crate::tree::{
-    build_graph, sync_meta, FsPackLoader, PackGraph, PackNode, SyncMetaOptions, TreeError,
+    build_graph_with, sync_meta, BuildOptions, FsPackLoader, PackGraph, PackNode, SyncMetaOptions,
+    TreeError,
 };
 use crate::vars::VarEnv;
 
@@ -605,7 +606,12 @@ pub fn run(
     // `Walker::walk` is retired from the prod path; the symbol is kept
     // for test-suite compat. See `crates/grex-core/src/tree/graph_build.rs`.
     run_sync_meta(&workspace, opts)?;
-    let graph = build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
+    let graph = build_and_validate_graph(
+        &workspace,
+        opts.validate,
+        opts.ref_override.as_deref(),
+        opts.dry_run,
+    )?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
     log_force_flag(opts.force);
 
@@ -877,10 +883,18 @@ fn build_and_validate_graph(
     workspace: &Path,
     validate: bool,
     ref_override: Option<&str>,
+    dry_run: bool,
 ) -> Result<PackGraph, SyncError> {
     let loader = FsPackLoader::new();
     let backend = GixBackend::new();
-    let graph = build_graph(workspace, &backend, &loader, ref_override)?;
+    // v1.4.1 — under `--dry-run`, Phase 1 records would-clone but does
+    // not materialise child clones. Tell `build_graph` to synthesize
+    // placeholders for the un-cloned children so the planner can still
+    // emit a complete graph rather than `ManifestNotFound`-panicking on
+    // the first declared child.
+    let build_opts =
+        BuildOptions { tolerate_unsynced_children: dry_run, ..BuildOptions::default() };
+    let graph = build_graph_with(workspace, &backend, &loader, ref_override, build_opts)?;
     if validate {
         validate_graph(&graph)?;
     }
@@ -2221,7 +2235,13 @@ pub fn teardown(
     // v1.2.1 path (iii) — teardown is read-only against the existing
     // disk state (no clones / fetches / prunes). It only needs the
     // graph build pass; `sync_meta` is intentionally skipped here.
-    let graph = build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref())?;
+    // Teardown always operates against materialised packs (it removes
+    // their on-disk artifacts), so `tolerate_unsynced_children = false`
+    // is the right default — surfacing `ManifestNotFound` is more useful
+    // here than silently no-opping over a child the user expected to
+    // tear down.
+    let graph =
+        build_and_validate_graph(&workspace, opts.validate, opts.ref_override.as_deref(), false)?;
     let prep = prepare_run_context(pack_root, &graph, &workspace)?;
 
     let mut report = SyncReport {

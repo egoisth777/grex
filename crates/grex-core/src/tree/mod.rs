@@ -30,7 +30,7 @@ pub use consent::{phase2_prune, recursive_consent_walk, ConsentResult};
 pub use dest_class::{aggregate_untracked, classify_dest, git_in_progress_at, DestClass};
 pub use error::TreeError;
 pub use graph::{EdgeKind, PackEdge, PackGraph, PackNode};
-pub use graph_build::build_graph;
+pub use graph_build::{build_graph, build_graph_with, BuildOptions};
 pub use loader::{FsPackLoader, PackLoader};
 pub use ls::{build_ls_tree, LsNode, LsNodeError, LsTree};
 pub use quarantine::{

@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.4.0"
+version = "1.4.1"
 edition = "2021"
 rust-version = "1.79"
 license = "MIT OR Apache-2.0"
@@ -45,8 +45,15 @@ serde_yaml = "0.9"
 sha2 = "0.10"
 
 # git (pure Rust)
+#
+# `blocking-http-transport-reqwest-rust-tls` enables HTTPS clone/fetch via
+# reqwest + rustls. Without it the real-smoke suite explodes with
+# "'https' is not compiled in" when it tries to clone the fixture repos
+# from github.com. SSH stays handled by the gix-built-in SSH transport
+# under `blocking-network-client`.
 gix = { version = "0.70", default-features = false, features = [
     "blocking-network-client",
+    "blocking-http-transport-reqwest-rust-tls",
     "worktree-mutation",
     "revision",
     "status",
@@ -77,9 +84,9 @@ comfy-table = "7"
 owo-colors = "4"
 
 # internal workspace crates
-grex-core = { path = "crates/grex-core", version = "1.4.0" }
-grex-mcp = { path = "crates/grex-mcp", version = "1.4.0" }
-grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.4.0" }
+grex-core = { path = "crates/grex-core", version = "1.4.1" }
+grex-mcp = { path = "crates/grex-mcp", version = "1.4.1" }
+grex-plugins-builtin = { path = "crates/grex-plugins-builtin", version = "1.4.1" }
 
 # dev-dependencies (shared via workspace)
 assert_cmd = "2"

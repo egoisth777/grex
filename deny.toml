@@ -33,6 +33,12 @@ allow = [
     "CC0-1.0",
     "0BSD",
     "BSL-1.0",
+    # v1.4.1 — pulled in transitively by `gix` HTTPS support (webpki-roots
+    # carries the Mozilla CA bundle under CDLA-Permissive-2.0). The
+    # license is permissive, attribution-required, and considered
+    # OSI-compatible for distribution; matches what reqwest/rustls users
+    # ship across the ecosystem.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 

@@ -23,4 +23,6 @@
 pub mod assertions;
 pub mod fixtures;
 pub mod grex_cli;
+pub mod journey;
+pub mod seed;
 pub mod worktree;

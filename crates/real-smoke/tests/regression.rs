@@ -65,16 +65,41 @@ impl WtFixture {
 /// (`serde_yaml::Value` is a JSON superset for our purposes).
 fn read_lockfile(worktree: &Path) -> Result<(PathBuf, serde_yaml::Value)> {
     let grex_dir = worktree.join(".grex");
-    let candidates = ["grex.lock", "grex.lock.yaml", "grex.lock.json", ".grex.sync.lock"];
+    // v1.4.1 — the canonical resolution lockfile is JSONL at
+    // `<workspace>/.grex/grex.lock.jsonl` (see
+    // `grex_core::sync::lockfile_path`). The legacy `.grex.sync.lock`
+    // is a workspace concurrency lock, not the resolution registry —
+    // tests that walked it found a permanently empty file. We try
+    // the JSONL form first (decoded as a YAML sequence of single-line
+    // documents) and fall back to the historical names.
+    let candidates =
+        ["grex.lock.jsonl", "grex.lock", "grex.lock.yaml", "grex.lock.json", ".grex.sync.lock"];
     for name in candidates {
         let p = grex_dir.join(name);
-        if p.exists() {
-            let text = std::fs::read_to_string(&p)
-                .with_context(|| format!("read lockfile {}", p.display()))?;
-            let v: serde_yaml::Value = serde_yaml::from_str(&text)
-                .with_context(|| format!("parse lockfile {}", p.display()))?;
-            return Ok((p, v));
+        if !p.exists() {
+            continue;
         }
+        let text = std::fs::read_to_string(&p)
+            .with_context(|| format!("read lockfile {}", p.display()))?;
+        let v = if name == "grex.lock.jsonl" {
+            // Parse JSONL into a Value::Sequence so the existing
+            // walk(...) closure can recurse uniformly.
+            let mut entries = Vec::new();
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let one: serde_yaml::Value = serde_yaml::from_str(line)
+                    .with_context(|| format!("parse lockfile line `{line}`"))?;
+                entries.push(one);
+            }
+            serde_yaml::Value::Sequence(entries)
+        } else {
+            serde_yaml::from_str(&text)
+                .with_context(|| format!("parse lockfile {}", p.display()))?
+        };
+        return Ok((p, v));
     }
     Err(anyhow!("no lockfile found under {}/.grex/ (tried {:?})", worktree.display(), candidates))
 }
@@ -384,18 +409,29 @@ fn t_b08_event_log_id_and_schema_version() -> Result<()> {
 #[test]
 #[ignore = "requires network + SSH key + provisioned GH fixtures"]
 fn t_b09_stub_verbs_exit_nonzero() -> Result<()> {
+    // v1.4.0 wired `status` and `update` against grex-core (see
+    // CHANGELOG 1.4.0 §Added). Both verbs now run real
+    // sync-with-dry-run / sync-with-install pipelines, so the v1.3.0
+    // "stub marker" expectation is the regression now — the verbs
+    // MUST succeed with no stub markers on stdout/stderr.
     let f = WtFixture::new(FIXTURE_LEAF)?;
 
     for verb in ["status", "update"] {
         let result = grex_cli::run(&[verb], f.path())?;
+        assert!(
+            result.is_success(),
+            "B9 regressed: `grex {verb}` failed post-v1.4.0\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            result.stdout,
+            result.stderr,
+        );
         let stub_marker = result.stdout.contains("\"stub\":true")
             || result.stdout.contains("unimplemented")
             || result.stderr.contains("unimplemented");
         assert!(
-            !result.is_success() || stub_marker,
-            "B9 regressed: `grex {verb}` exited 0 with no stub marker\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            !stub_marker,
+            "B9 regressed: `grex {verb}` still advertises a stub marker post-v1.4.0\n--- stdout ---\n{}\n--- stderr ---\n{}",
             result.stdout,
-            result.stderr
+            result.stderr,
         );
     }
     Ok(())
@@ -421,9 +457,12 @@ fn t_b10_add_ref_flag() -> Result<()> {
     );
 
     // Parse-only: a real `add` would attempt a clone. We use --dry-run so the
-    // assertion is purely about flag acceptance.
+    // assertion is purely about flag acceptance. v1.4.1 — `grex add` takes
+    // URL as the first positional argument (not `--url`); the original
+    // helper string passed `--url FIXTURE_LEAF` which clap rejected as an
+    // unknown flag. Use the documented positional surface.
     let parsed = grex_cli::run(
-        &["add", "--url", FIXTURE_LEAF, "--ref", "main", "--dry-run", "leaf-pinned"],
+        &["add", FIXTURE_LEAF, "leaf-pinned", "--ref", "main", "--dry-run"],
         f.path(),
     )?;
     assert!(
@@ -525,6 +564,48 @@ fn t_b13_nested_slash_path_supported() -> Result<()> {
 // B14 — Lockfile entries carry `branch` from manifest `ref:`.
 // ---------------------------------------------------------------------------
 
+/// v1.4.1 — walk a lockfile YAML/JSON tree looking for `LockEntry`
+/// records (mappings with `id` + `path` + `sha` keys). Returns
+/// `(child_count, empties)` where `empties` collects the `id` of every
+/// entry whose `branch` (or legacy `ref`) field is missing/empty.
+/// Extracted from `t_b14_lockfile_branch_carries_ref` to keep its
+/// cyclomatic budget under the workspace gate.
+fn collect_lockfile_branch_state(v: &serde_yaml::Value) -> (usize, Vec<String>) {
+    let mut count = 0usize;
+    let mut empties = Vec::<String>::new();
+    walk_lockfile_value(v, &mut count, &mut empties);
+    (count, empties)
+}
+
+fn walk_lockfile_value(v: &serde_yaml::Value, children: &mut usize, empties: &mut Vec<String>) {
+    match v {
+        serde_yaml::Value::Mapping(m) => {
+            inspect_mapping(m, children, empties);
+            for (_, val) in m {
+                walk_lockfile_value(val, children, empties);
+            }
+        }
+        serde_yaml::Value::Sequence(s) => {
+            for item in s {
+                walk_lockfile_value(item, children, empties);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn inspect_mapping(m: &serde_yaml::Mapping, children: &mut usize, empties: &mut Vec<String>) {
+    if !(m.contains_key("id") && m.contains_key("path") && m.contains_key("sha")) {
+        return;
+    }
+    *children += 1;
+    let branch = m.get("branch").or_else(|| m.get("ref")).and_then(|x| x.as_str()).unwrap_or("");
+    if branch.is_empty() {
+        let id = m.get("id").and_then(|u| u.as_str()).unwrap_or("<no id>").to_string();
+        empties.push(id);
+    }
+}
+
 /// B14 (lockfile branch carries ref).
 /// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
@@ -535,46 +616,15 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
     assert_success(&result, "grex sync (branch field check)");
 
     let (lock_path, lock) = read_lockfile(f.path())?;
-
-    // Walk lockfile entries: any mapping with a `url` key represents a child.
-    let mut child_count = 0usize;
-    let mut empty_branches = Vec::<String>::new();
-    fn walk(v: &serde_yaml::Value, children: &mut usize, empties: &mut Vec<String>) {
-        match v {
-            serde_yaml::Value::Mapping(m) => {
-                if m.contains_key("url") {
-                    *children += 1;
-                    let branch = m
-                        .get("branch")
-                        .or_else(|| m.get("ref"))
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("");
-                    if branch.is_empty() {
-                        let url =
-                            m.get("url").and_then(|u| u.as_str()).unwrap_or("<no url>").to_string();
-                        empties.push(url);
-                    }
-                }
-                for (_, v) in m {
-                    walk(v, children, empties);
-                }
-            }
-            serde_yaml::Value::Sequence(s) => {
-                for item in s {
-                    walk(item, children, empties);
-                }
-            }
-            _ => {}
-        }
-    }
-    walk(&lock, &mut child_count, &mut empty_branches);
+    let (child_count, empty_branches) = collect_lockfile_branch_state(&lock);
 
     assert!(child_count > 0, "B14: lockfile {} has no child entries", lock_path.display());
+    // The root meta-pack carries an empty `branch` by construction (it
+    // has no parent ChildRef to mirror — see LockEntry doc, B14 v1.3.1).
+    // Only flag NON-root entries with empty branches.
     assert!(
-        empty_branches.is_empty(),
-        "B14 regressed: {} child entries with empty `branch`/`ref`: {:?}",
-        empty_branches.len(),
-        empty_branches
+        empty_branches.iter().all(|id| id == "grex-test-meta-flat"),
+        "B14 regressed: child entries with empty `branch`/`ref`: {empty_branches:?}",
     );
     Ok(())
 }

@@ -110,3 +110,80 @@ fn add_path_collision_json_envelope_carries_existing_url() {
         Some("https://example.com/a/first.git")
     );
 }
+
+// ---------- v1.4.1 — add bridges events.jsonl <-> pack.yaml.children ----------
+
+#[test]
+fn v141_add_materializes_pack_yaml_children_when_missing() {
+    let dir = tempfile::tempdir().unwrap();
+
+    grex()
+        .current_dir(dir.path())
+        .args(["add", "https://example.com/org/foo.git", "foo"])
+        .assert()
+        .success();
+
+    let pack_yaml = dir.path().join(".grex/pack.yaml");
+    assert!(pack_yaml.exists(), "add must materialize pack.yaml on first call");
+    let body = fs::read_to_string(&pack_yaml).unwrap();
+    assert!(body.contains("schema_version"));
+    assert!(body.contains("type: meta"));
+    assert!(body.contains("path: foo"));
+    assert!(body.contains("url: https://example.com/org/foo.git"));
+}
+
+#[test]
+fn v141_add_appends_to_existing_pack_yaml_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let grex_dir = dir.path().join(".grex");
+    fs::create_dir_all(&grex_dir).unwrap();
+    fs::write(
+        grex_dir.join("pack.yaml"),
+        "schema_version: \"1\"\nname: ws\ntype: meta\nactions: []\nchildren:\n  - url: pre\n    path: pre-existing\n",
+    )
+    .unwrap();
+
+    grex()
+        .current_dir(dir.path())
+        .args(["add", "https://example.com/org/foo.git", "foo"])
+        .assert()
+        .success();
+
+    let body = fs::read_to_string(dir.path().join(".grex/pack.yaml")).unwrap();
+    assert!(body.contains("path: pre-existing"), "must preserve existing child");
+    assert!(body.contains("path: foo"), "must append new child");
+}
+
+#[test]
+fn v141_add_json_envelope_reports_pack_yaml_updated() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let out = grex()
+        .current_dir(dir.path())
+        .args(["--json", "add", "https://example.com/x.git", "x"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(v["pack_yaml_updated"].as_bool(), Some(true));
+}
+
+#[test]
+fn v141_add_dry_run_leaves_pack_yaml_alone() {
+    let dir = tempfile::tempdir().unwrap();
+
+    grex()
+        .current_dir(dir.path())
+        .args(["add", "https://example.com/x.git", "x", "--dry-run"])
+        .assert()
+        .success();
+
+    assert!(!dir.path().join(".grex/pack.yaml").exists(), "dry-run must not create pack.yaml");
+    assert!(
+        !dir.path().join(".grex/events.jsonl").exists(),
+        "dry-run must not create events.jsonl"
+    );
+}

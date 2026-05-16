@@ -25,6 +25,7 @@ pub mod action;
 pub mod error;
 pub mod predicate;
 pub mod validate;
+pub mod yaml_writer;
 
 use std::collections::BTreeMap;
 

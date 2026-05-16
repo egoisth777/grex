@@ -834,6 +834,15 @@ fn collect_disk_to_manifest_findings(
     findings: &mut Vec<Finding>,
 ) {
     let Ok(entries) = std::fs::read_dir(workspace) else { return };
+    // v1.4.1 B5 — honour the parent meta-repo's `.gitignore`. A
+    // directory the operator has explicitly told git to ignore is by
+    // definition not a managed pack and not drift-worthy noise. The
+    // matcher is intentionally minimal (literal-line / trailing-slash
+    // / leading-slash trimming) — that covers cfg-shape and the
+    // dogfood-finding-B5 fixture without pulling in the full
+    // `.gitignore` grammar; an opt-in upgrade to a `gix-glob`-backed
+    // matcher is tracked in `inst/doctor.md`.
+    let gitignored = read_gitignore_top_level(workspace);
     for ent in entries.flatten() {
         let Ok(ft) = ent.file_type() else { continue };
         if !ft.is_dir() {
@@ -850,6 +859,9 @@ fn collect_disk_to_manifest_findings(
         if lock.contains_key(name_str) {
             continue;
         }
+        if gitignored.contains(name_str) {
+            continue;
+        }
         findings.push(Finding {
             check: CheckKind::OnDiskDrift,
             severity: Severity::Warning,
@@ -859,6 +871,30 @@ fn collect_disk_to_manifest_findings(
             synthetic: false,
         });
     }
+}
+
+/// Read top-level directory patterns from `<workspace>/.gitignore`. Each
+/// non-blank, non-comment line is stripped of a leading `/` and trailing
+/// `/`; the remaining bare name is added to the ignore set. Wildcards
+/// (`*`, `**`) and nested paths are intentionally out of scope here —
+/// we only need to suppress workspace-root directories like
+/// `pseudo-ignored-dir/`, which is the v1.4.1 B5 contract.
+fn read_gitignore_top_level(workspace: &Path) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let path = workspace.join(".gitignore");
+    let Ok(body) = std::fs::read_to_string(&path) else { return out };
+    for raw in body.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+            continue;
+        }
+        let stripped = line.trim_start_matches('/').trim_end_matches('/');
+        if stripped.is_empty() || stripped.contains('/') || stripped.contains('*') {
+            continue;
+        }
+        out.insert(stripped.to_string());
+    }
+    out
 }
 
 /// Shorthand — build a pack-scoped on-disk-drift error finding.

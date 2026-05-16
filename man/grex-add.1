@@ -2,11 +2,11 @@
 .el .ds Aq '
 .TH grex-add 1  "grex-add "
 .SH NAME
-grex\-add \- Register and clone a pack
+grex\-add \- Register a pack — appends an `Event::Add` to `.grex/events.jsonl` and inserts a `{url, path, ref?}` row into `.grex/pack.yaml`\*(Aqs `children:` sequence. `pack.yaml` is created from the minimal v1 skeleton when absent so `sync`/`ls`/`status` see the pack immediately (v1.4.1: closes the bridge that v1.4.0 left unwired)
 .SH SYNOPSIS
 \fBgrex\-add\fR [\fB\-\-ref\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIURL\fR> [\fIPATH\fR]
 .SH DESCRIPTION
-Register and clone a pack
+Register a pack — appends an `Event::Add` to `.grex/events.jsonl` and inserts a `{url, path, ref?}` row into `.grex/pack.yaml`\*(Aqs `children:` sequence. `pack.yaml` is created from the minimal v1 skeleton when absent so `sync`/`ls`/`status` see the pack immediately (v1.4.1: closes the bridge that v1.4.0 left unwired)
 .SH OPTIONS
 .TP
 \fB\-\-ref\fR \fI<GIT\-REF>\fR

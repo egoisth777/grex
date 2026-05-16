@@ -43,7 +43,12 @@ pub struct GlobalFlags {
 pub enum Verb {
     /// Initialize a grex workspace.
     Init(InitArgs),
-    /// Register and clone a pack.
+    /// Register a pack — appends an `Event::Add` to
+    /// `.grex/events.jsonl` and inserts a `{url, path, ref?}` row into
+    /// `.grex/pack.yaml`'s `children:` sequence. `pack.yaml` is created
+    /// from the minimal v1 skeleton when absent so `sync`/`ls`/`status`
+    /// see the pack immediately (v1.4.1: closes the bridge that v1.4.0
+    /// left unwired).
     Add(AddArgs),
     /// Teardown and remove a pack.
     Rm(RmArgs),
@@ -59,7 +64,12 @@ pub enum Verb {
     Doctor(DoctorArgs),
     /// Start MCP stdio server.
     Serve(ServeArgs),
-    /// Import legacy REPOS.json.
+    /// Import a legacy flat `REPOS.json` array. v1.4.1: every accepted
+    /// entry is materialized as both an `Event::Add` row in
+    /// `.grex/events.jsonl` AND a `children:` entry in
+    /// `.grex/pack.yaml`. Optional `platform:` keys (cfg-style
+    /// `cmn`/`win`/`lnx`/`mac` buckets) compose into `<platform>/<path>`
+    /// so the source metarepo's on-disk layout survives the migration.
     Import(ImportArgs),
     /// Run a named action across packs.
     Run(RunArgs),
