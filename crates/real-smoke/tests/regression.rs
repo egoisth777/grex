@@ -564,6 +564,48 @@ fn t_b13_nested_slash_path_supported() -> Result<()> {
 // B14 — Lockfile entries carry `branch` from manifest `ref:`.
 // ---------------------------------------------------------------------------
 
+/// v1.4.1 — walk a lockfile YAML/JSON tree looking for `LockEntry`
+/// records (mappings with `id` + `path` + `sha` keys). Returns
+/// `(child_count, empties)` where `empties` collects the `id` of every
+/// entry whose `branch` (or legacy `ref`) field is missing/empty.
+/// Extracted from `t_b14_lockfile_branch_carries_ref` to keep its
+/// cyclomatic budget under the workspace gate.
+fn collect_lockfile_branch_state(v: &serde_yaml::Value) -> (usize, Vec<String>) {
+    let mut count = 0usize;
+    let mut empties = Vec::<String>::new();
+    walk_lockfile_value(v, &mut count, &mut empties);
+    (count, empties)
+}
+
+fn walk_lockfile_value(v: &serde_yaml::Value, children: &mut usize, empties: &mut Vec<String>) {
+    match v {
+        serde_yaml::Value::Mapping(m) => {
+            inspect_mapping(m, children, empties);
+            for (_, val) in m {
+                walk_lockfile_value(val, children, empties);
+            }
+        }
+        serde_yaml::Value::Sequence(s) => {
+            for item in s {
+                walk_lockfile_value(item, children, empties);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn inspect_mapping(m: &serde_yaml::Mapping, children: &mut usize, empties: &mut Vec<String>) {
+    if !(m.contains_key("id") && m.contains_key("path") && m.contains_key("sha")) {
+        return;
+    }
+    *children += 1;
+    let branch = m.get("branch").or_else(|| m.get("ref")).and_then(|x| x.as_str()).unwrap_or("");
+    if branch.is_empty() {
+        let id = m.get("id").and_then(|u| u.as_str()).unwrap_or("<no id>").to_string();
+        empties.push(id);
+    }
+}
+
 /// B14 (lockfile branch carries ref).
 /// Source: inst/var/dogfood-findings-v1.3.0.md
 #[test]
@@ -574,44 +616,7 @@ fn t_b14_lockfile_branch_carries_ref() -> Result<()> {
     assert_success(&result, "grex sync (branch field check)");
 
     let (lock_path, lock) = read_lockfile(f.path())?;
-
-    // v1.4.1 — the JSONL lockfile schema keys child entries by `id`
-    // (parent-relative path) rather than `url`. Walk every mapping
-    // that carries `id` AND `path` AND `branch` (the LockEntry
-    // tuple) and assert each carries a non-empty `branch`.
-    let mut child_count = 0usize;
-    let mut empty_branches = Vec::<String>::new();
-    fn walk(v: &serde_yaml::Value, children: &mut usize, empties: &mut Vec<String>) {
-        match v {
-            serde_yaml::Value::Mapping(m) => {
-                let is_entry =
-                    m.contains_key("id") && m.contains_key("path") && m.contains_key("sha");
-                if is_entry {
-                    *children += 1;
-                    let branch = m
-                        .get("branch")
-                        .or_else(|| m.get("ref"))
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("");
-                    if branch.is_empty() {
-                        let id =
-                            m.get("id").and_then(|u| u.as_str()).unwrap_or("<no id>").to_string();
-                        empties.push(id);
-                    }
-                }
-                for (_, v) in m {
-                    walk(v, children, empties);
-                }
-            }
-            serde_yaml::Value::Sequence(s) => {
-                for item in s {
-                    walk(item, children, empties);
-                }
-            }
-            _ => {}
-        }
-    }
-    walk(&lock, &mut child_count, &mut empty_branches);
+    let (child_count, empty_branches) = collect_lockfile_branch_state(&lock);
 
     assert!(child_count > 0, "B14: lockfile {} has no child entries", lock_path.display());
     // The root meta-pack carries an empty `branch` by construction (it
