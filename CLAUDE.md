@@ -1,1 +1,1 @@
-.omne/schemas/SCHEMAS.md
+inst/schemas/SCHEMAS.md
